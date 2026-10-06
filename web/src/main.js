@@ -5,6 +5,7 @@
 import { PagedViewer } from './paged-viewer.js';
 import { openSheet } from './sheet.js';
 import { t } from './strings.js';
+import { connect } from './worker-client.js';
 
 const RENDERERS = {
   pdf: () => import('./renderers/pdf.js'),
@@ -21,6 +22,7 @@ const RENDERERS = {
 };
 
 const PASSWORD_CANCELLED = 'password cancelled';
+const CFB_MAGIC = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
 const container = document.getElementById('doc');
 const status = document.getElementById('status');
 let fmt = null;
@@ -85,7 +87,16 @@ async function open({ fmt: format, src, mode = 'scroll', fit, page = 0, scroll =
   try {
     const load = RENDERERS[fmt];
     if (!load) throw new Error(`지원하지 않는 형식입니다: ${fmt}`);
-    const [renderer, bytes] = await Promise.all([load(), fetchDocument(src)]);
+    let [renderer, bytes] = await Promise.all([load(), fetchDocument(src)]);
+    if (await isEncryptedOoxml(bytes)) {
+      bytes = await unlockOoxml(bytes, ctx);
+      // 확장자와 실제 형식이 다를 수 있어(암호 문서는 앱이 확장자로 형식을 정한다) 풀린 ZIP의 경로로 다시 정한다.
+      const actual = await ooxmlFormat(bytes);
+      if (actual && actual !== fmt) {
+        fmt = ctx.fmt = actual;
+        renderer = await RENDERERS[fmt]();
+      }
+    }
     const loadMs = Math.round(performance.now() - t0);
     const size = bytes.length; // 워커로 넘기면 bytes가 비워지므로 미리 잰다.
     const result = (await renderer.render(bytes, container, ctx)) ?? {};
@@ -123,6 +134,45 @@ async function showFallback(src) {
   const extracted = await extractFallback(bytes);
   if (extracted?.encrypted) return 'encrypted';
   return extracted && renderFallback(extracted, container) ? 'text' : 'empty';
+}
+
+/** CFB 안에 EncryptedPackage가 있으면 암호 걸린 docx·xlsx·pptx다. */
+async function isEncryptedOoxml(bytes) {
+  if (bytes.length < 512 || !CFB_MAGIC.every((b, i) => bytes[i] === b)) return false;
+  const { readCompound } = await import('./containers.js');
+  try {
+    return readCompound(bytes).has('EncryptedPackage');
+  } catch {
+    return false; // CFB가 깨졌으면 렌더러와 최후 대안이 처리한다.
+  }
+}
+
+/** 암호를 물어 워커에서 푼다. 틀리면 다시 묻고, 취소하면 PASSWORD_CANCELLED로 끝난다. */
+async function unlockOoxml(bytes, ctx) {
+  const worker = new Worker(new URL('./workers/decrypt-worker.js', import.meta.url), { type: 'module' });
+  try {
+    const request = connect(worker);
+    await request({ type: 'open', bytes: bytes.slice().buffer }, 'opened');
+    for (let incorrect = false; ; incorrect = true) {
+      const password = await ctx.askPassword(incorrect);
+      status.textContent = t.unlocking;
+      const reply = await request({ type: 'decrypt', password }, 'decrypted');
+      status.textContent = '';
+      if (reply.zip) return new Uint8Array(reply.zip);
+    }
+  } finally {
+    status.textContent = '';
+    worker.terminate();
+  }
+}
+
+async function ooxmlFormat(bytes) {
+  const { readZip } = await import('./containers.js');
+  const zip = readZip(bytes);
+  if (zip.has('word/document.xml')) return 'docx';
+  if (zip.has('xl/workbook.xml')) return 'xlsx';
+  if (zip.has('ppt/presentation.xml')) return 'pptx';
+  return null;
 }
 
 /** 쪽 구분이 없는 문서(doc·마크다운·엑셀)는 스크롤 비율로 이어본다. */

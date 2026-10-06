@@ -11,6 +11,7 @@ const STRINGS = {
     passwordTitle: '암호 입력',
     passwordPrompt: '암호가 걸린 문서입니다.',
     passwordWrong: '암호가 맞지 않습니다. 다시 입력하세요.',
+    unlocking: '암호를 푸는 중…',
     goToPageTitle: '쪽 이동',
     go: '이동',
     ok: '확인',
