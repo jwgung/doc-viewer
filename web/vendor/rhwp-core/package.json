@@ -1,0 +1,24 @@
+{
+  "name": "@rhwp/core",
+  "version": "0.8.7-docviewer.1",
+  "description": "HWP/HWPX file parser and renderer — Rust + WebAssembly (doc-viewer 성능 패치판, PATCHES.md 참고)",
+  "type": "module",
+  "main": "rhwp.js",
+  "types": "rhwp.d.ts",
+  "files": [
+    "rhwp_bg.wasm",
+    "rhwp.js",
+    "rhwp.d.ts",
+    "rhwp_bg.wasm.d.ts",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/edwardkim/rhwp.git"
+  },
+  "license": "MIT",
+  "author": "Edward Kim",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}

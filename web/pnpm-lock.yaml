@@ -12,8 +12,8 @@ importers:
         specifier: file:vendor/file-viewer-doc
         version: file:vendor/file-viewer-doc
       '@rhwp/core':
-        specifier: 0.8.7
-        version: 0.8.7
+        specifier: file:vendor/rhwp-core
+        version: file:vendor/rhwp-core
       '@web-ppt/core':
         specifier: file:vendor/web-ppt-core
         version: file:vendor/web-ppt-core
@@ -126,8 +126,8 @@ packages:
   '@oxc-project/types@0.152.0':
     resolution: {integrity: sha512-oM/5rLBm2tPkg0iBgkH/FOeR3PCDpY19GTgAZjMFM8h9WI9VW7cLgzp6nwtarYKmovavIQZ+Fe/RKX/8C8O/Rw==}
 
-  '@rhwp/core@0.8.7':
-    resolution: {integrity: sha512-qgNpY9aclCvy9D7cPnpuplu42kUFZCCPhdjAS5HBso4Z4XeHG3uchYdUleQBoas/zEuwfJ7H4/ulepqdL/LXDA==}
+  '@rhwp/core@file:vendor/rhwp-core':
+    resolution: {directory: vendor/rhwp-core, type: directory}
 
   '@rolldown/binding-android-arm-eabi@1.2.12':
     resolution: {integrity: sha512-dB/a1214qKfHMXCpgqR4OZT+jS4kTyEXbQGJPqzobt5EwH5rX080pxE37alt3RzvR1bf1Yz/yGqRfrYAxuPw0A==}
@@ -527,7 +527,7 @@ snapshots:
 
   '@oxc-project/types@0.152.0': {}
 
-  '@rhwp/core@0.8.7': {}
+  '@rhwp/core@file:vendor/rhwp-core': {}
 
   '@rolldown/binding-android-arm-eabi@1.2.12':
     optional: true
