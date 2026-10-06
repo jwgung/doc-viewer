@@ -18,8 +18,8 @@ importers:
         specifier: file:vendor/web-ppt-core
         version: file:vendor/web-ppt-core
       docx-preview:
-        specifier: 0.4.1
-        version: 0.4.1
+        specifier: file:vendor/docx-preview
+        version: file:vendor/docx-preview
       dompurify:
         specifier: 3.4.16
         version: 3.4.16
@@ -241,8 +241,8 @@ packages:
     resolution: {integrity: sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ==}
     engines: {node: '>=8'}
 
-  docx-preview@0.4.1:
-    resolution: {integrity: sha512-Dv4g+LeE0swHpPvNC0lAT0YsR5Zq5pAxw7d3vHQ8EChBLgIrqqe9VPL5nVt2HBJap8bEZbXUI0TJob7kBeNU9w==}
+  docx-preview@file:vendor/docx-preview:
+    resolution: {directory: vendor/docx-preview, type: directory}
 
   dompurify@3.4.16:
     resolution: {integrity: sha512-sqo+pNp3qRhCIpbgRi1y8Tgk27Bo2Ry7w0dC1NBeNTdZChWjz9Xb/KOoZbRP/R6pQZ80Qw8YhXw13hWWBbMRnQ==}
@@ -587,7 +587,7 @@ snapshots:
 
   detect-libc@2.1.2: {}
 
-  docx-preview@0.4.1:
+  docx-preview@file:vendor/docx-preview:
     dependencies:
       jszip: 3.10.1
 
