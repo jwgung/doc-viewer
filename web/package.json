@@ -10,7 +10,7 @@
   "dependencies": {
     "@file-viewer/doc": "file:vendor/file-viewer-doc",
     "@rhwp/core": "0.8.7",
-    "@web-ppt/core": "0.4.5",
+    "@web-ppt/core": "file:vendor/web-ppt-core",
     "docx-preview": "0.4.1",
     "dompurify": "3.4.16",
     "jszip": "3.10.1",
