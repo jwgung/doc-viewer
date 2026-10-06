@@ -78,3 +78,21 @@ cp pkg/rhwp.js pkg/rhwp_bg.wasm pkg/rhwp.d.ts pkg/rhwp_bg.wasm.d.ts pkg/LICENSE 
 업스트림 npm 배포와 같은 절차(`wasm-pack build --target web --release`, 기본 `wasm-opt -O`)다. `package.json`은 npm 패키지의 것을 따르되 버전만 `0.8.7-docviewer.1`로 표시했다.
 
 포크는 샘플(수 GB)을 빼고 받았다: `git clone --filter=blob:none --depth 1 --branch v0.8.7 --no-checkout` 뒤 non-cone sparse-checkout으로 `src/ crates/ bindings/ tests/ vendor/ saved/ ...`만 꺼냈다.
+
+## 보기 전용으로 줄이기 (A5, 0.8.7-docviewer.2)
+
+rhwp는 편집·내보내기·서명 API까지 `HwpDocument` 한 클래스로 내보내서(내보내기 497개) 링커가 안 쓰는 코드를
+지우지 못한다. 위 패치판을 빌드한 뒤 `web/scripts/slim-rhwp.py`로 앱(`hwp-worker.js`)이 부르는 메서드 7개와
+wasm-bindgen 내부 내보내기만 남기고 `wasm-opt -all -Oz`로 닿지 않는 코드를 지웠다. `rhwp.js`·`rhwp.d.ts`는 그대로다.
+
+| | 패치판 전체 | 보기 전용 |
+|---|---|---|
+| rhwp_bg.wasm | 11,841,530 바이트 | 7,864,921 바이트 |
+| gzip -9 | 4,399,407 바이트 | 3,081,082 바이트 |
+
+- 확인: 문서 묶음 hwp·hwpx 171개에서 쪽 수, 모든 쪽 정보, 쪽 SVG(처음·가운데·끝 등 5쪽), 글자 위치, 개요가
+  전체판과 같고, 암호 문서 열기도 같다(노드, 같은 글자 폭 함수).
+- 주의: 남긴 목록 밖의 메서드를 부르면 `wasm.xxx is not a function`으로 실패한다. 새 메서드를 쓰려면
+  `slim-rhwp.py`의 `KEEP`에 더하고, 패치판 전체 wasm으로 다시 만든다.
+- 다시 만들기: 포크에서 `wasm-pack build --target web --release --out-dir pkg -- --locked`로 전체판을 만든 뒤
+  `python3 -I web/scripts/slim-rhwp.py pkg/rhwp_bg.wasm web/vendor/rhwp-core/rhwp_bg.wasm <wasm-opt 경로>`.

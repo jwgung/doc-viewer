@@ -1,6 +1,6 @@
 {
   "name": "@rhwp/core",
-  "version": "0.8.7-docviewer.1",
+  "version": "0.8.7-docviewer.2",
   "description": "HWP/HWPX file parser and renderer — Rust + WebAssembly (doc-viewer 성능 패치판, PATCHES.md 참고)",
   "type": "module",
   "main": "rhwp.js",

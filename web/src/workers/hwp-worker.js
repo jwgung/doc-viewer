@@ -6,6 +6,8 @@
 //   text(index)          → text{index, text}  쪽 SVG의 글자(검색용, 화면에 그린 글자와 같게)
 //   layout(index)        → layout{index, runs} 글자 조각의 위치(선택·복사용 글자 층)
 //   outline()            → outline{items}     개요 번호가 붙은 문단(목차용)
+// rhwp wasm은 보기 전용으로 줄여 두었다(web/scripts/slim-rhwp.py). 여기서 새 HwpDocument 메서드를 쓰려면
+// 그 스크립트의 KEEP에 더하고 wasm을 다시 만든다(목록 밖 메서드는 wasm에서 지워져 있다).
 import init, { HwpDocument } from '@rhwp/core';
 import wasmUrl from '@rhwp/core/rhwp_bg.wasm?url';
 
