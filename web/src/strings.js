@@ -1,4 +1,4 @@
-// 웹 렌더러가 화면에 띄우는 문구. 다국어를 지원할 때 여기에 언어별 묶음을 더한다.
+// 웹 렌더러가 화면에 띄우는 문구. 언어를 더할 때는 여기에 묶음을 더하고, 앱의 res/values-<언어>도 함께 만든다.
 // WebView의 navigator.language는 기기 언어를 따른다.
 const STRINGS = {
   ko: {
@@ -19,4 +19,22 @@ const STRINGS = {
   },
 };
 
-export const t = STRINGS[navigator.language?.slice(0, 2)] ?? STRINGS.ko;
+STRINGS.en = {
+  renderFailed: "Couldn't display this document.",
+  fallbackNotice: "This document couldn't be shown in its original layout, so only its text is shown.",
+  fallbackSlide: (n) => `Slide ${n}`,
+  encryptedUnsupported: "This document is password-protected. Password-protected files of this type can't be opened yet.",
+  passwordRequired: 'A password is required to view this document.',
+  rowsLimited: (shown, total) => `Showing the first ${shown} rows (of ${total}).`,
+  passwordTitle: 'Password',
+  passwordPrompt: 'This document is password-protected.',
+  passwordWrong: 'Wrong password. Try again.',
+  unlocking: 'Unlocking…',
+  goToPageTitle: 'Go to page',
+  go: 'Go',
+  ok: 'OK',
+  cancel: 'Cancel',
+};
+
+// 한국어가 아니면 영어로 보인다(앱의 기본 문구와 같은 규칙).
+export const t = STRINGS[navigator.language?.slice(0, 2)] ?? STRINGS.en;

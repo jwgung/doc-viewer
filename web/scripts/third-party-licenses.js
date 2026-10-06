@@ -26,7 +26,7 @@ function collect(id) {
   const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
   const files = readdirSync(dir).filter((f) => LICENSE_FILE.test(f)).sort();
   const text = files.map((f) => readFileSync(join(dir, f), 'utf8').trim()).join('\n\n');
-  collected.set(dir, { name: pkg.name, version: pkg.version, license: pkg.license ?? '(라이선스 정보 없음)', text });
+  collected.set(dir, { name: pkg.name, version: pkg.version, license: pkg.license ?? '(no license information)', text });
   for (const inner of INLINED[pkg.name] ?? []) collect(installedDir(dir, inner) + '/');
 }
 
@@ -40,10 +40,11 @@ function installedDir(parentDir, inner) {
 function render() {
   const entries = [...collected.values()].sort((a, b) => a.name.localeCompare(b.name));
   const line = '='.repeat(60);
-  const header = '이 앱에 포함된 오픈소스 소프트웨어와 라이선스입니다.\n';
+  // 앱 정보 화면에 그대로 보이는 파일이다. 라이선스 원문이 영어라 머리말도 영어로 둔다.
+  const header = 'Open source software included in this app, and its licenses.\n';
   return (
     header +
-    entries.map((e) => `\n${line}\n${e.name} ${e.version} (${e.license})\n${line}\n${e.text || '(라이선스 파일 없음)'}`).join('\n') +
+    entries.map((e) => `\n${line}\n${e.name} ${e.version} (${e.license})\n${line}\n${e.text || '(no license file)'}`).join('\n') +
     '\n'
   );
 }
