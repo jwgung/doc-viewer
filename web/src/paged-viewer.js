@@ -7,11 +7,15 @@
 //   page:  쪽 전체가 한 화면에 들어오게 줄인다(용지 맞춤).
 // doc은 { count, sizes: [{width, height}], renderInto(index, element) } 형태다.
 // renderInto는 element 크기에 맞춰 그 쪽을 그리고, 끝나면 resolve한다.
+import { openSheet } from './sheet.js';
 import { t } from './strings.js';
 
 const KEEP_RENDERED = 8;
 const SWIPE_MIN_PX = 50;
 const EDGE_TAP_RATIO = 0.3;
+const THUMB_PX = 44;
+// 이 요소 위에서 시작한 터치는 쪽 넘기기 제스처로 보지 않는다.
+const UI_SELECTOR = '.scrubber, .page-indicator, .sheet-backdrop';
 
 export class PagedViewer {
   constructor(container, doc, { mode = 'scroll', fit, onPageChange } = {}) {
@@ -27,6 +31,7 @@ export class PagedViewer {
     this.indicator.className = 'page-indicator';
     this.indicator.addEventListener('click', () => this.askPage());
     document.body.appendChild(this.indicator);
+    this.buildScrubber();
     // 화면 크기가 바뀌면(회전 등) 쪽 크기를 다시 맞춘다. 연속 스크롤·화면 가득은 CSS 비율로 따라간다.
     addEventListener('resize', debounce(() => (this.mode !== 'scroll' || this.fit === 'page') && this.render(), 200));
     this.bindGestures();
@@ -54,27 +59,73 @@ export class PagedViewer {
   }
 
   /** 쪽 번호를 입력받아 그 쪽으로 이동한다. */
-  askPage() {
-    if (document.querySelector('.dialog')) return;
-    const form = document.createElement('form');
-    form.className = 'dialog';
-    form.innerHTML = '<p></p><input type="number" inputmode="numeric" min="1"><div><button type="button"></button><button type="submit"></button></div>';
-    form.querySelector('p').textContent = t.goToPage(this.doc.count);
-    const input = form.querySelector('input');
-    input.max = String(this.doc.count);
-    input.value = String(this.current + 1);
-    const [cancel, go] = form.querySelectorAll('button');
-    cancel.textContent = t.cancel;
-    go.textContent = t.go;
-    cancel.addEventListener('click', () => form.remove());
-    form.addEventListener('submit', (event) => {
-      event.preventDefault();
-      const page = Number.parseInt(input.value, 10);
-      form.remove();
-      if (Number.isFinite(page)) this.goTo(page - 1);
+  async askPage() {
+    const value = await openSheet({
+      title: t.goToPageTitle,
+      inputType: 'number',
+      inputMode: 'numeric',
+      value: this.current + 1,
+      min: 1,
+      max: this.doc.count,
+      suffix: `/ ${this.doc.count}`,
+      confirmLabel: t.go,
+      cancelLabel: t.cancel,
     });
-    document.body.appendChild(form);
-    input.select();
+    const page = Number.parseInt(value ?? '', 10);
+    if (Number.isFinite(page)) this.goTo(page - 1);
+  }
+
+  /**
+   * 오른쪽 가장자리의 빠른 이동 손잡이. 끌면 쪽 번호 말풍선을 띄우고,
+   * 연속 스크롤은 끄는 동안 따라가며 한 쪽씩·두 쪽씩은 손을 뗄 때 그 쪽으로 간다.
+   */
+  buildScrubber() {
+    if (this.doc.count < 2) return;
+    const track = document.createElement('div');
+    track.className = 'scrubber';
+    const thumb = document.createElement('div');
+    thumb.className = 'scrubber-thumb';
+    const bubble = document.createElement('div');
+    bubble.className = 'scrubber-bubble';
+    track.append(thumb, bubble);
+    document.body.appendChild(track);
+
+    const pageAt = (y) => {
+      const rect = track.getBoundingClientRect();
+      const ratio = Math.min(1, Math.max(0, (y - rect.top - THUMB_PX / 2) / (rect.height - THUMB_PX)));
+      return Math.round(ratio * (this.doc.count - 1));
+    };
+    let dragging = false;
+    let target = this.current;
+    const move = (y) => {
+      target = pageAt(y);
+      this.placeThumb(target);
+      bubble.textContent = String(target + 1);
+      if (this.mode === 'scroll') this.goTo(target);
+    };
+    track.addEventListener('pointerdown', (e) => {
+      dragging = true;
+      track.setPointerCapture(e.pointerId);
+      track.classList.add('active');
+      move(e.clientY);
+    });
+    track.addEventListener('pointermove', (e) => dragging && move(e.clientY));
+    const end = () => {
+      if (!dragging) return;
+      dragging = false;
+      track.classList.remove('active');
+      if (this.mode !== 'scroll') this.goTo(target);
+    };
+    track.addEventListener('pointerup', end);
+    track.addEventListener('pointercancel', end);
+    this.isScrubbing = () => dragging;
+    this.placeThumb = (index) => {
+      const ratio = this.doc.count > 1 ? index / (this.doc.count - 1) : 0;
+      const top = `calc(${ratio} * (100% - ${THUMB_PX}px))`;
+      thumb.style.top = top;
+      bubble.style.top = top;
+    };
+    this.placeThumb(this.current);
   }
 
   goTo(index) {
@@ -173,7 +224,8 @@ export class PagedViewer {
       'touchstart',
       (e) => {
         const touch = e.touches.length === 1 ? e.touches[0] : null;
-        start = touch ? { x: touch.clientX, y: touch.clientY, t: performance.now() } : null;
+        const onUi = e.target instanceof Element && e.target.closest(UI_SELECTOR);
+        start = touch && !onUi ? { x: touch.clientX, y: touch.clientY, t: performance.now() } : null;
       },
       { passive: true },
     );
@@ -212,6 +264,7 @@ export class PagedViewer {
     this.current = index;
     const last = this.mode === 'spread' ? Math.min(index + 2, this.doc.count) : index + 1;
     this.indicator.textContent = last > index + 1 ? `${index + 1}-${last} / ${this.doc.count}` : `${index + 1} / ${this.doc.count}`;
+    if (!this.isScrubbing?.()) this.placeThumb?.(index);
     this.onPageChange?.(index);
   }
 }
