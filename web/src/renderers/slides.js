@@ -7,7 +7,7 @@ export async function render(bytes, container, ctx) {
   const renderInto = async (index, el) => {
     el.innerHTML = renderSlideToSvg(pres, pres.slides[index], { textMode: 'html' });
   };
-  const viewer = new PagedViewer(container, { count: pres.slides.length, sizes: pres.slides.map(() => size), renderInto }, { mode: ctx.mode });
+  const viewer = new PagedViewer(container, { count: pres.slides.length, sizes: pres.slides.map(() => size), renderInto }, { mode: ctx.mode, fit: ctx.fit });
   ctx.setViewer(viewer);
   await viewer.render();
   ctx.markFirstPage();

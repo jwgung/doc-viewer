@@ -23,7 +23,7 @@ export async function render(bytes, container, ctx) {
     sections[index].style.zoom = String(el.clientWidth / sizes[index].width);
     el.replaceChildren(sections[index]);
   };
-  const viewer = new PagedViewer(container, { count: sections.length, sizes, renderInto }, { mode: ctx.mode });
+  const viewer = new PagedViewer(container, { count: sections.length, sizes, renderInto }, { mode: ctx.mode, fit: ctx.fit });
   ctx.setViewer(viewer);
   await viewer.render();
   ctx.markFirstPage();

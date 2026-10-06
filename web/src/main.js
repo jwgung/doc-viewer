@@ -21,8 +21,12 @@ const params = new URLSearchParams(location.search);
 const fmt = params.get('fmt');
 const src = params.get('src');
 const mode = params.get('mode') ?? 'scroll';
+const fit = params.get('fit') ?? undefined;
 let viewer = null;
-window.viewer = { setMode: (next) => viewer?.setMode(next) };
+window.viewer = {
+  setMode: (next) => viewer?.setMode(next),
+  setFit: (next) => viewer?.setFit(next),
+};
 const container = document.getElementById('doc');
 const status = document.getElementById('status');
 
@@ -51,6 +55,7 @@ async function main() {
     },
     fmt,
     mode,
+    fit,
     setViewer(paged) {
       viewer = paged;
     },

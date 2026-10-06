@@ -8,7 +8,7 @@ export async function render(bytes, container, ctx) {
   const renderInto = async (index, el) => {
     el.innerHTML = (await request({ type: 'page', index }, 'page')).svg;
   };
-  const viewer = new PagedViewer(container, { count: opened.pages, sizes: opened.sizes, renderInto }, { mode: ctx.mode });
+  const viewer = new PagedViewer(container, { count: opened.pages, sizes: opened.sizes, renderInto }, { mode: ctx.mode, fit: ctx.fit });
   ctx.setViewer(viewer);
   await viewer.render();
   ctx.markFirstPage();

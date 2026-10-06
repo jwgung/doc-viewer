@@ -54,6 +54,20 @@ body {
   flex: none;
 }
 
+/* 한 쪽씩·두 쪽씩 + 화면 가득: 쪽이 화면보다 길면 세로로 스크롤한다. */
+#doc[data-mode='page'][data-fit='width'],
+#doc[data-mode='spread'][data-fit='width'] {
+  overflow-y: auto;
+}
+
+#doc[data-fit='width'] .flip-stage {
+  align-items: flex-start;
+  height: auto;
+  min-height: 100%;
+  padding: 8px 0;
+  box-sizing: border-box;
+}
+
 .page-indicator {
   position: fixed;
   bottom: 12px;

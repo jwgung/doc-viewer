@@ -2,6 +2,9 @@
 //   scroll: 쪽을 세로로 이어 붙이고 화면 근처의 쪽만 그린다.
 //   page:   한 쪽을 화면에 맞춰 보여주고 스와이프나 좌우 탭으로 넘긴다.
 //   spread: 두 쪽을 나란히 보여주고 두 쪽씩 넘긴다.
+// 맞춤(fit)은 두 가지다.
+//   width: 쪽 너비를 화면 너비에 맞춘다(화면 가득). 쪽이 화면보다 길면 세로로 스크롤한다.
+//   page:  쪽 전체가 한 화면에 들어오게 줄인다(용지 맞춤).
 // doc은 { count, sizes: [{width, height}], renderInto(index, element) } 형태다.
 // renderInto는 element 크기에 맞춰 그 쪽을 그리고, 끝나면 resolve한다.
 const KEEP_RENDERED = 8;
@@ -9,17 +12,18 @@ const SWIPE_MIN_PX = 50;
 const EDGE_TAP_RATIO = 0.3;
 
 export class PagedViewer {
-  constructor(container, doc, { mode = 'scroll', onPageChange } = {}) {
+  constructor(container, doc, { mode = 'scroll', fit, onPageChange } = {}) {
     this.container = container;
     this.doc = doc;
     this.mode = mode;
+    this.fit = fit ?? (mode === 'scroll' ? 'width' : 'page');
     this.onPageChange = onPageChange;
     this.current = 0;
     this.indicator = document.createElement('div');
     this.indicator.className = 'page-indicator';
     document.body.appendChild(this.indicator);
-    // 화면 크기가 바뀌면(회전 등) 한 쪽씩·두 쪽씩은 쪽 크기를 다시 맞춘다. 연속 스크롤은 비율로 따라간다.
-    addEventListener('resize', debounce(() => this.mode !== 'scroll' && this.render(), 200));
+    // 화면 크기가 바뀌면(회전 등) 쪽 크기를 다시 맞춘다. 연속 스크롤·화면 가득은 CSS 비율로 따라간다.
+    addEventListener('resize', debounce(() => (this.mode !== 'scroll' || this.fit === 'page') && this.render(), 200));
     this.bindGestures();
   }
 
@@ -28,12 +32,19 @@ export class PagedViewer {
     this.observer?.disconnect();
     this.container.replaceChildren();
     this.container.dataset.mode = this.mode;
+    this.container.dataset.fit = this.fit;
     return this.mode === 'scroll' ? this.renderScroll() : this.renderFlip();
   }
 
   setMode(mode) {
     if (mode === this.mode) return;
     this.mode = mode;
+    return this.render();
+  }
+
+  setFit(fit) {
+    if (fit === this.fit) return;
+    this.fit = fit;
     return this.render();
   }
 
@@ -52,10 +63,14 @@ export class PagedViewer {
 
   // ---- 연속 스크롤 -------------------------------------------------------
   renderScroll() {
+    const fitWidth = this.container.clientWidth - 16;
+    const fitHeight = innerHeight - 16;
     const pages = this.doc.sizes.map(({ width, height }, index) => {
       const el = document.createElement('div');
       el.className = 'page';
       el.style.aspectRatio = `${width} / ${height}`;
+      // 용지 맞춤이면 쪽 하나가 화면 높이 안에 들어오게 너비를 줄인다.
+      if (this.fit === 'page') el.style.width = `${Math.floor(Math.min(fitWidth, (fitHeight * width) / height))}px`;
       el.dataset.index = String(index);
       this.container.appendChild(el);
       return el;
@@ -98,7 +113,7 @@ export class PagedViewer {
     const availHeight = innerHeight - 16;
     const slots = indexes.map((index) => {
       const { width, height } = this.doc.sizes[index];
-      const scale = Math.min(availWidth / width, availHeight / height);
+      const scale = this.fit === 'width' ? availWidth / width : Math.min(availWidth / width, availHeight / height);
       const el = document.createElement('div');
       el.className = 'page';
       el.style.width = `${Math.floor(width * scale)}px`;
@@ -107,6 +122,7 @@ export class PagedViewer {
       return [index, el];
     });
     this.container.replaceChildren(stage);
+    this.container.scrollTop = 0;
     this.changed(this.current);
     // 다음·이전 쪽은 미리 준비할 필요가 없을 만큼 빠르므로 보이는 쪽만 그린다.
     return Promise.all(slots.map(([index, el]) => this.doc.renderInto(index, el)));

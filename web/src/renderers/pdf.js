@@ -48,7 +48,7 @@ export async function render(bytes, container, ctx) {
     page.cleanup();
   };
 
-  const viewer = new PagedViewer(container, { count: pdf.numPages, sizes, renderInto }, { mode: ctx.mode });
+  const viewer = new PagedViewer(container, { count: pdf.numPages, sizes, renderInto }, { mode: ctx.mode, fit: ctx.fit });
   ctx.setViewer(viewer);
   await viewer.render();
   ctx.markFirstPage();
