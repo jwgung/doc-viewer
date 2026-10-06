@@ -674,3 +674,31 @@ body.searching #doc {
   }
 }
 
+/* HWP 선택·복사용 글자 층(투명 글자를 그림 글자 위에 겹친다) */
+.hwp-text-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  line-height: 1;
+}
+
+.hwp-text-layer span {
+  position: absolute;
+  font-family: sans-serif;
+  white-space: pre;
+  color: transparent;
+  cursor: text;
+  transform-origin: 0 0;
+}
+
+.hwp-text-layer ::selection {
+  background: rgb(0 90 255 / 25%);
+}
+
+/* 그림 글자는 고르지 못하게(글자마다 줄이 바뀌던 원인). 검색 표시는 그대로 그림 글자에 한다. */
+.hwp-page svg text {
+  user-select: none;
+  -webkit-user-select: none;
+}
+

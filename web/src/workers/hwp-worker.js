@@ -4,6 +4,7 @@
 //   unlock(password)     → opened{pages, sizes} 또는 opened{wrongPassword}
 //   page(index)          → page{index, svg}
 //   text(index)          → text{index, text}  쪽 SVG의 글자(검색용, 화면에 그린 글자와 같게)
+//   layout(index)        → layout{index, runs} 글자 조각의 위치(선택·복사용 글자 층)
 //   outline()            → outline{items}     개요 번호가 붙은 문단(목차용)
 import init, { HwpDocument } from '@rhwp/core';
 import wasmUrl from '@rhwp/core/rhwp_bg.wasm?url';
@@ -82,6 +83,24 @@ self.onmessage = async ({ data }) => {
       self.postMessage({ type: 'page', index: data.index, svg: doc.renderPageSvg(data.index) });
     } else if (data.type === 'text') {
       self.postMessage({ type: 'text', index: data.index, text: svgText(doc.renderPageSvg(data.index)) });
+    } else if (data.type === 'layout') {
+      let runs = [];
+      try {
+        runs = (JSON.parse(doc.getPageTextLayout(data.index)).runs ?? [])
+          .filter((run) => run.text)
+          .map((run) => ({
+            text: run.text,
+            x: run.x,
+            y: run.y,
+            w: run.w,
+            size: run.fontSize,
+            // 같은 문단(표 칸 안 문단 포함)인지 가리는 열쇠: 복사할 때 줄을 이을지 끊을지 정한다.
+            p: `${run.secIdx}:${run.paraIdx}:${run.controlIdx ?? ''}:${(run.cellPath ?? []).map((c) => `${c.controlIndex}.${c.cellIndex}.${c.cellParaIndex}`).join('/')}`,
+          }));
+      } catch {
+        // 글자 위치를 못 얻으면 선택 층 없이 그림만 보인다.
+      }
+      self.postMessage({ type: 'layout', index: data.index, runs });
     } else if (data.type === 'outline') {
       let items = [];
       try {

@@ -226,7 +226,8 @@ function textIndex(root) {
   let text = '';
   let at = new Uint32Array(1024); // 글자 i → (노드 번호, 노드 안 위치)를 번갈아
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-    acceptNode: (node) => (node.parentElement?.closest('style, script, .search-bar') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+    // HWP 선택용 글자 층은 그림 글자와 겹치므로 빼고 그림 글자에 표시한다.
+    acceptNode: (node) => (node.parentElement?.closest('style, script, .search-bar, .hwp-text-layer') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
   });
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
     const data = node.data;
