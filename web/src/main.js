@@ -10,6 +10,7 @@ const RENDERERS = {
   xls: () => import('./renderers/sheet.js'),
   xlsx: () => import('./renderers/sheet.js'),
   csv: () => import('./renderers/sheet.js'),
+  md: () => import('./renderers/md.js'),
 };
 
 const params = new URLSearchParams(location.search);

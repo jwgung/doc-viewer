@@ -118,3 +118,59 @@ body {
   font-size: 12px;
   color: #666;
 }
+
+/* 마크다운 */
+.markdown {
+  font-size: 16px;
+  line-height: 1.65;
+  color: #1f2328;
+  overflow-wrap: anywhere;
+}
+
+.markdown h1,
+.markdown h2 {
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid #d8dee4;
+}
+
+.markdown pre {
+  padding: 12px;
+  overflow-x: auto;
+  background: #f6f8fa;
+  border-radius: 6px;
+}
+
+.markdown code {
+  font-size: 0.9em;
+  font-family: ui-monospace, monospace;
+}
+
+.markdown :not(pre) > code {
+  padding: 0.15em 0.35em;
+  background: #eff1f3;
+  border-radius: 4px;
+}
+
+.markdown blockquote {
+  margin: 0;
+  padding: 0 1em;
+  color: #59636e;
+  border-left: 4px solid #d1d9e0;
+}
+
+.markdown table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+
+.markdown th,
+.markdown td {
+  padding: 6px 12px;
+  border: 1px solid #d1d9e0;
+}
+
+.markdown img {
+  max-width: 100%;
+}
