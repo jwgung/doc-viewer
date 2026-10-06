@@ -125,6 +125,18 @@ export const RT = {
   InteractiveInfo: 0x0ff2,
   InteractiveInfoAtom: 0x0ff3,
   PersistDirectoryAtom: 0x1772,
+  /** [doc-viewer] 증분 저장 사슬: 저장할 때마다 하나씩 붙고, 그때의 지속성 디렉터리와 직전 편집을 가리킨다 */
+  UserEditAtom: 0x0ff5,
+  /** [doc-viewer] 머리글·바닥글 설정: 문서 단위(instance 3 = 슬라이드, 4 = 메모) 또는 슬라이드별 덮어쓰기 */
+  HeadersFooters: 0x0fd9,
+  HeadersFootersAtom: 0x0fda,
+  /** [doc-viewer] 텍스트 안의 필드(쪽 번호·날짜·머리글·바닥글) 자리 문자 위치 */
+  SlideNumberMCAtom: 0x0fd8,
+  DateTimeMCAtom: 0x0ff7,
+  GenericDateMCAtom: 0x0ff8,
+  HeaderMCAtom: 0x0ff9,
+  FooterMCAtom: 0x0ffa,
+  RTFDateTimeMCAtom: 0x1015,
   /** PowerPoint 97 之后追加的能力都塞在 ProgTags 下的二进制扩展块里 */
   ProgTags: 0x1388,
   ProgBinaryTag: 0x138a,

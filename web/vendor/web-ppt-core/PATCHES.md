@@ -28,4 +28,40 @@ Android의 `buildWebViewer` 작업은 `web/vendor/`도 입력으로 보므로 �
 
 ## 업스트림 0.4.5 대비 변경
 
-아직 없음.
+전체 차이는 [upstream-0.4.5.diff](upstream-0.4.5.diff)에 있다(업스트림 저장소 루트에서 `git apply upstream-0.4.5.diff`).
+고친 곳은 모두 .ppt(PowerPoint 97~2003) 경로인 `src/ppt/`뿐이고 pptx 경로는 건드리지 않았다. 코드에는 `[doc-viewer]` 표시를 달았다.
+
+### 글자 누락
+
+| 원인 | 고친 곳 |
+|---|---|
+| PowerPoint 97~2003이 저장한 제목·본문 자리표시자는 글자를 `SlideListWithText`에 두고 도형에는 순번(`OutlineTextRefAtom`)만 남기는데, 이 순번을 읽지 않았다. 실제 문서에서 글자가 통째로 빠진 가장 큰 원인이다. | `parser.ts` `persistList`(슬라이드별 텍스트 묶음 수집), `styledText`, `parseSpContainer` |
+| '빠른 저장' 파일은 저장할 때마다 Document·Slide·디렉터리가 스트림 뒤에 덧붙는다. 스트림의 첫(가장 오래된) Document를 써서 슬라이드 목록과 글자가 옛 판으로 나왔다(쪽 수 12/71 같은 불일치). `Current User` → `UserEditAtom` 사슬로 지속성 디렉터리와 현재 Document를 찾고, 레코드는 디렉터리 오프셋에서 바로 읽는다. | `parser.ts` `editChain`, `recAt`, `parsePpt` |
+| 마스터의 바닥글·쪽 번호·날짜 자리표시자를 그리지 않았다. 문서·슬라이드의 `HeadersFooters` 설정에 따라 그리고, 글 속 필드 자리 문자(`*` + `*MCAtom`)를 실제 값으로 바꾼다. | `parser.ts` `hfPlaceholders`, `readHeadersFooters`, `spliceField`, `parseSlide` |
+| 메모가 `SlideListWithText`(메모 목록)에만 있는 파일은 메모 글을 놓쳤다. | `parser.ts` `outlineNotes` |
+
+### 글자 모양
+
+| 원인 | 고친 곳 |
+|---|---|
+| 글자 색(`ColorIndexStruct`)을 도형 색 규칙으로 풀어 구성표 1번(본문 글자색)이 0번(배경색)으로, 2~7번이 검정으로 나왔다(어두운 배경에서 글자가 안 보임). | `parser.ts` `textColor` |
+| 마스터 글자 스타일을 해당 단계 하나만 봤다. 아래 단계와 기준 종류(가운데 제목 → 제목, 가운데 본문 → 본문)에서 물려받게 했다. 제목 마스터는 기본 마스터의 스타일을 쓴다. | `parser.ts` `levelStyleOf`, `TX_BASE`, `parseMaster` |
+| 슬라이드 자리표시자가 마스터 도형(`hspMaster`)의 세로 정렬·여백·채우기를 물려받지 않았다. 글 상자 여백도 고정값 대신 도형 속성을 쓴다. `anchorText` 5·6번 해석도 바로잡았다. | `escher.ts` `inheritProps`, `parser.ts` `textBoxProps`, `buildTextBody` |
+| 글머리표 글꼴(Wingdings 'l' → ●)·색·크기, 줄 간격·문단 앞뒤 간격, 첫 줄 들여쓰기를 읽지 않았다. 줄 바꿈(`\v`)으로 이어진 줄에도 글머리표를 붙였다. | `parser.ts` `readParaProps`, `bulletLook`, `bulletChar`, `buildTextBody` |
+
+### 마스터·배경 깨짐
+
+| 원인 | 고친 곳 |
+|---|---|
+| 배열 속성(꼭짓점·구간 등)의 길이에 6바이트 머리가 빠진 파일(PowerPoint·LibreOffice 모두 그렇게 쓴다)에서 뒤따르는 복합 속성 위치가 밀렸고, 원소 크기 0xFFF0(4바이트)을 음수로 써서 꼭짓점을 거꾸로 읽었다. 자유형 도형이 사각형 조각으로 그려진 원인이다. | `escher.ts` `parseOpt`, `arrayElementSize`, `parser.ts` `customPath` |
+| 경로 구간을 잘못 풀었다(곡선 `0x2001`을 직선으로, 꼭짓점 종류 표시 `0xB300`을 곡선으로). [MS-ODRAW] MSOPATHINFO대로 풀고 타원 사분호·2차 베지어도 그린다. | `parser.ts` `customPath` |
+| `fSysIndex` 색(채우기색을 어둡게·밝게 등)을 RGB로 읽어 그라데이션 끝색이 자주색으로 나왔다. LibreOffice `MSO_CLR_ToColor`와 같은 규칙으로 푼다. | `escher.ts` `colorRgb`, `propColorRef` |
+| 그라데이션 각도·초점을 무시하고 늘 위→아래로 그렸다. LibreOffice `ImportGradientColor`와 같은 방향·색 순서(축 대칭·사각형형 포함)로 그린다. | `escher.ts` `gradientFill` |
+| 슬라이드 색 구성표가 마스터와 다를 때도 마스터 도형·배경을 마스터 구성표로 칠했다. 구성표마다 마스터를 따로 해석한다. | `parser.ts` `masterFor` |
+
+### 열지 못하던 파일
+
+| 원인 | 고친 곳 |
+|---|---|
+| 문서 구조는 멀쩡한데 슬라이드가 없는 빈 프레젠테이션(`empty.ppt`)을 오류로 처리했다. 마스터 배경의 빈 슬라이드 한 장으로 연다. | `parser.ts` `parsePpt` |
+| 중간 레코드 길이가 깨져 순차 탐색이 멈춘 파일(퍼즈 파일)은 슬라이드를 찾지 못했다. 디렉터리 오프셋에서 바로 읽어 연다. | `parser.ts` `recAt`, `parsePpt` |
