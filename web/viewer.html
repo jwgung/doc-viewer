@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=0.25, maximum-scale=5, user-scalable=yes" />
+    <!-- 문서 안의 외부 링크·이미지가 네트워크로 나가지 않도록 앱 자체 출처만 허용한다. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data: blob:; media-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>Viewer</title>
+    <link rel="stylesheet" href="./src/viewer.css" />
+  </head>
+  <body>
+    <main id="doc"></main>
+    <div id="status" role="status"></div>
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>

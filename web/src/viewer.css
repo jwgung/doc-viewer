@@ -1,0 +1,120 @@
+:root {
+  color-scheme: light;
+  --bg: #e9e9ec;
+  --page-shadow: 0 1px 3px rgb(0 0 0 / 20%);
+  --accent: #2f6fde;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--bg);
+  font-family: system-ui, sans-serif;
+}
+
+#doc {
+  padding: 8px 0 24px;
+}
+
+/* 고정 배치 문서(hwp·ppt)의 쪽. 크기는 렌더러가 aspect-ratio로 잡아 두고 화면에 들어올 때 그린다. */
+.page {
+  width: calc(100% - 16px);
+  margin: 0 auto 8px;
+  background: #fff;
+  box-shadow: var(--page-shadow);
+  overflow: hidden;
+}
+
+.page > svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+#status {
+  position: fixed;
+  inset: auto 0 0;
+  padding: 12px;
+  font-size: 14px;
+  text-align: center;
+  color: #555;
+  background: rgb(255 255 255 / 90%);
+}
+
+#status:empty {
+  display: none;
+}
+
+#status[data-kind='error'] {
+  color: #b00020;
+}
+
+/* docx-preview: 쪽 너비를 화면 너비에 맞춰 줄인다(zoom은 main에서 계산). */
+.docx-wrapper {
+  padding: 0 !important;
+  background: transparent !important;
+}
+
+.docx-wrapper > section.docx {
+  margin: 0 auto 8px !important;
+  box-shadow: var(--page-shadow);
+}
+
+/* doc: 쪽 구분 없이 한 흐름으로 그린다. */
+.flow {
+  margin: 0 8px;
+  padding: 16px;
+  background: #fff;
+  box-shadow: var(--page-shadow);
+  overflow-x: auto;
+}
+
+/* 스프레드시트 */
+.sheet-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  gap: 4px;
+  padding: 6px 8px;
+  overflow-x: auto;
+  background: var(--bg);
+}
+
+.sheet-tabs button {
+  padding: 4px 10px;
+  font-size: 13px;
+  white-space: nowrap;
+  background: #fff;
+  border: 1px solid #bbb;
+  border-radius: 4px;
+}
+
+.sheet-tabs button[aria-selected='true'] {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.sheet-body {
+  margin: 0 8px;
+  overflow: auto;
+  background: #fff;
+}
+
+.sheet-body table {
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.sheet-body td {
+  padding: 2px 6px;
+  white-space: nowrap;
+  border: 1px solid #ddd;
+}
+
+.sheet-note {
+  margin: 8px;
+  font-size: 12px;
+  color: #666;
+}
