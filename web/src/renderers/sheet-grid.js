@@ -287,6 +287,24 @@ export class SheetGrid {
     };
   }
 
+  /** 검색 결과로 옮겨 간다: 그 칸이 본문 가운데에 오게 스크롤하고 테두리로 표시한다. */
+  reveal(row, col) {
+    this.found = { r: row, c: col };
+    const { rowTop, colLeft, rowHead, fr, fc, fw, fh } = this.geo;
+    const sc = this.scroller;
+    const mainW = Math.max(1, sc.clientWidth - rowHead - fw);
+    const mainH = Math.max(1, sc.clientHeight - HEAD_HEIGHT - fh);
+    if (row >= fr) sc.scrollTop = Math.max(0, (rowTop[row] + rowTop[row + 1]) / 2 - fh - mainH / 2);
+    if (col >= fc) sc.scrollLeft = Math.max(0, (colLeft[col] + colLeft[col + 1]) / 2 - fw - mainW / 2);
+    this.render(true);
+  }
+
+  clearFound() {
+    if (!this.found) return;
+    this.found = null;
+    this.render(true);
+  }
+
   /** 맨 위에 보이는 행 번호(0부터) */
   topRow() {
     return this.visibleRange().r0;
@@ -508,6 +526,7 @@ export class SheetGrid {
     const st = this.style(xf);
     if (kind === BLANK && !st.paint) return '';
     let cls = `c x${xf}`;
+    if (this.found?.r === r && this.found.c === c) cls += ' sg-found';
     let span = '';
     let attrs = '';
     if (text) {
@@ -587,6 +606,7 @@ export class SheetGrid {
     const xf = at ? at.block.xfs[at.i] : this.rowStyles.get(r1) ?? this.colStyles.get(c1) ?? 0;
     const st = this.style(xf);
     let cls = `c m x${xf}`;
+    if (this.found?.r === r1 && this.found.c === c1) cls += ' sg-found';
     if (!st.fill) cls += ' mw';
     let span = '';
     const text = at?.block.texts[at.i];

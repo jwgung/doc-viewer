@@ -225,3 +225,12 @@
 .sg-cells .ac {
   text-align: center;
 }
+
+/* 문서 안 검색에서 지금 결과인 칸 */
+.sheet-body .sg-cells .sg-found {
+  z-index: 3;
+  background-color: rgb(255 213 0 / 45%) !important;
+  outline: 2px solid rgb(255 140 0);
+  outline-offset: -2px;
+}
+

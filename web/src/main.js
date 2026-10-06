@@ -30,6 +30,8 @@ let viewer = null;
 let opened = false;
 /** 쪽 있는 문서의 쪽별 글자(검색용). 렌더러가 ctx.setTextSource로 준다. */
 let textSource = null;
+/** 렌더러가 직접 찾고 보여 주는 검색(가상 스크롤 표). ctx.setSearchProvider로 준다. */
+let searchProvider = null;
 let search = null;
 
 window.viewer = {
@@ -42,7 +44,7 @@ window.viewer = {
   openSearch: async () => {
     if (!search) {
       const { createSearch } = await import('./search.js');
-      search ??= createSearch({ container, viewer: () => viewer, textOf: () => textSource });
+      search ??= createSearch({ container, viewer: () => viewer, textOf: () => textSource, provider: () => searchProvider });
     }
     search.open();
   },
@@ -110,6 +112,9 @@ async function open({ fmt: format, src, mode = 'scroll', fit, page = 0, scroll =
     /** 쪽 있는 렌더러가 쪽별 글자를 주면, 아직 그리지 않은 쪽까지 검색할 수 있다. */
     setTextSource(source) {
       textSource = source;
+    },
+    setSearchProvider(provider) {
+      searchProvider = provider;
     },
   };
   try {

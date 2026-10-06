@@ -16,8 +16,10 @@ const ICONS = {
  * @param {HTMLElement} options.container 문서를 그리는 곳
  * @param {() => import('./paged-viewer.js').PagedViewer | null} options.viewer 쪽 뷰어(없으면 쪽 없는 문서)
  * @param {() => ((index: number) => Promise<string>) | null} options.textOf 쪽별 글자(없으면 DOM에서 찾는다)
+ * @param {() => {find(query: string): Promise<object[]>, show(hit: object): Promise<void>, clear(): void} | null} options.provider
+ *   렌더러가 직접 찾고 보여 주는 경우(가상 스크롤 표처럼 DOM에 일부만 있는 문서)
  */
-export function createSearch({ container, viewer, textOf }) {
+export function createSearch({ container, viewer, textOf, provider }) {
   const bar = document.createElement('div');
   bar.className = 'search-bar';
   bar.setAttribute('role', 'search');
@@ -56,6 +58,7 @@ export function createSearch({ container, viewer, textOf }) {
   }
 
   function clearHighlights() {
+    provider()?.clear();
     if (!supported) return;
     CSS.highlights.delete('search-hit');
     CSS.highlights.delete('search-current');
@@ -70,6 +73,20 @@ export function createSearch({ container, viewer, textOf }) {
     clearHighlights();
     if (!query) {
       count.textContent = '';
+      return;
+    }
+    const custom = provider();
+    if (custom) {
+      count.textContent = t.searching;
+      const found = await custom.find(query).catch(() => []);
+      if (token !== generation) return;
+      hits = found;
+      if (!hits.length) {
+        count.textContent = t.searchNone;
+        return;
+      }
+      current = 0;
+      await show();
       return;
     }
     const paged = viewer();
@@ -121,6 +138,12 @@ export function createSearch({ container, viewer, textOf }) {
 
   async function show() {
     const token = generation;
+    const custom = provider();
+    if (custom) {
+      updateCount();
+      await custom.show(hits[current]);
+      return;
+    }
     const paged = viewer();
     let range;
     if (paged && textOf()) {

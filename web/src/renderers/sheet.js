@@ -48,19 +48,35 @@ export async function render(bytes, container, ctx) {
     await grid.show(index, payload);
     scrubber.reset();
   };
+  const select = async (index) => {
+    if (index === current) return;
+    wanted = index;
+    const reply = await request({ type: 'sheet', index }, 'sheet');
+    if (wanted === index) await show(index, reply);
+  };
   for (const sheet of list) {
     const button = document.createElement('button');
     button.type = 'button';
     button.textContent = sheet.name;
     button.dataset.index = String(sheet.index);
-    button.addEventListener('click', async () => {
-      if (sheet.index === current) return;
-      wanted = sheet.index;
-      const reply = await request({ type: 'sheet', index: sheet.index }, 'sheet');
-      if (wanted === sheet.index) show(sheet.index, reply);
-    });
+    button.addEventListener('click', () => select(sheet.index));
     tabs.appendChild(button);
   }
+  // 문서 안 검색: 표는 보이는 칸만 그리므로 워커가 모든 칸의 표시 문자열에서 찾고, 결과 칸으로 스크롤해 표시한다.
+  ctx.setSearchProvider({
+    async find(query) {
+      const reply = await request({ type: 'search', index: ++requestId, sheet: Math.max(0, current), query }, 'found');
+      const hits = [];
+      for (let i = 0; i < reply.hits.length; i += 3) hits.push({ sheet: reply.hits[i], row: reply.hits[i + 1], col: reply.hits[i + 2] });
+      return hits;
+    },
+    async show(hit) {
+      await select(hit.sheet);
+      tabs.querySelector(`[data-index="${hit.sheet}"]`)?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+      grid.reveal(hit.row, hit.col);
+    },
+    clear: () => grid.clearFound(),
+  });
   await show(opened.initial, opened.sheet);
   tabs.querySelector('[aria-selected="true"]')?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
   ctx.markFirstPage();
