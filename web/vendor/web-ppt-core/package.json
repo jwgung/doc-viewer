@@ -1,0 +1,30 @@
+{
+  "name": "@web-ppt/core",
+  "version": "0.4.5-docviewer.1",
+  "description": "@web-ppt/core 0.4.5(MIT) 소스에 구형 .ppt 렌더링 보강 패치를 얹은 사본. 변경 내역은 PATCHES.md 참고.",
+  "license": "MIT",
+  "author": "unStone",
+  "homepage": "https://github.com/unStone/web-ppt#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/unStone/web-ppt.git",
+    "directory": "packages/core"
+  },
+  "private": true,
+  "type": "module",
+  "sideEffects": [
+    "./src/index.ts"
+  ],
+  "main": "./src/index.ts",
+  "module": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./worker": "./src/worker.ts",
+    "./geometry": "./src/geometry/index.ts",
+    "./package.json": "./package.json"
+  },
+  "dependencies": {
+    "fflate": "^0.8.2"
+  }
+}

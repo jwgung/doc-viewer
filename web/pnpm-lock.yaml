@@ -15,8 +15,8 @@ importers:
         specifier: 0.8.7
         version: 0.8.7
       '@web-ppt/core':
-        specifier: 0.4.5
-        version: 0.4.5
+        specifier: file:vendor/web-ppt-core
+        version: file:vendor/web-ppt-core
       docx-preview:
         specifier: 0.4.1
         version: 0.4.1
@@ -231,8 +231,8 @@ packages:
   '@types/trusted-types@2.0.7':
     resolution: {integrity: sha512-ScaPdn1dQczgbl0QFTeTOmVHFULt394XJgOQNoyVhZ6r2vLnMLJfBPd53SB52T/3G36VI1/g2MZaX0cwDuXsfw==}
 
-  '@web-ppt/core@0.4.5':
-    resolution: {integrity: sha512-c5iDtEKJDoVjNegErQb7v6I8khCk98bmEGBbulvyERA5JsFIK0KTncrUzcrBitUq1zjacrgGZ5e0uIqcqZj5vA==}
+  '@web-ppt/core@file:vendor/web-ppt-core':
+    resolution: {directory: vendor/web-ppt-core, type: directory}
 
   core-util-is@1.0.3:
     resolution: {integrity: sha512-ZQBvi1DcpJ4GDqanjucZ2Hj3wEO5pZDS89BWbkcrvdxksJorwUDDZamX9ldFkp9aw2lmBDLgkObEA4DWNJ9FYQ==}
@@ -582,7 +582,7 @@ snapshots:
   '@types/trusted-types@2.0.7':
     optional: true
 
-  '@web-ppt/core@0.4.5':
+  '@web-ppt/core@file:vendor/web-ppt-core':
     dependencies:
       fflate: 0.8.3
 
