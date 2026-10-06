@@ -28,6 +28,9 @@ const status = document.getElementById('status');
 let fmt = null;
 let viewer = null;
 let opened = false;
+/** 쪽 있는 문서의 쪽별 글자(검색용). 렌더러가 ctx.setTextSource로 준다. */
+let textSource = null;
+let search = null;
 
 window.viewer = {
   open: (options) => open(options),
@@ -35,6 +38,27 @@ window.viewer = {
   applyFit: (next) => viewer?.applyFit(next),
   /** 읽기 모드: 앱이 상단바를 숨기면 쪽 번호·빠른 이동 손잡이도 숨긴다. */
   setChrome: (visible) => document.body.classList.toggle('reading', !visible),
+  /** 문서 안 검색 막대를 연다(앱 상단바의 검색 버튼). */
+  openSearch: async () => {
+    if (!search) {
+      const { createSearch } = await import('./search.js');
+      search ??= createSearch({ container, viewer: () => viewer, textOf: () => textSource });
+    }
+    search.open();
+  },
+  /** 앱의 뒤로 가기: 열린 검색 막대·입력 시트가 있으면 그것만 닫고 true를 돌려준다. */
+  closeOverlay: () => {
+    const cancel = document.querySelector('.sheet-backdrop .sheet-cancel');
+    if (cancel) {
+      cancel.click();
+      return true;
+    }
+    if (search?.isOpen()) {
+      search.close();
+      return true;
+    }
+    return false;
+  },
 };
 
 function report(event, data = {}) {
@@ -82,6 +106,10 @@ async function open({ fmt: format, src, mode = 'scroll', fit, page = 0, scroll =
     askPassword(incorrect) {
       report('needsPassword', { incorrect });
       return promptPassword(incorrect);
+    },
+    /** 쪽 있는 렌더러가 쪽별 글자를 주면, 아직 그리지 않은 쪽까지 검색할 수 있다. */
+    setTextSource(source) {
+      textSource = source;
     },
   };
   try {

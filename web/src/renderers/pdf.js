@@ -50,6 +50,11 @@ export async function render(bytes, container, ctx) {
 
   const viewer = new PagedViewer(container, { count: pdf.numPages, sizes, renderInto }, { mode: ctx.mode, fit: ctx.fit });
   ctx.setViewer(viewer);
+  // 검색: 쪽 글자를 텍스트 층과 같은 방식(항목을 그대로 이어 붙임)으로 만들어, 그린 뒤 찾은 위치와 맞춘다.
+  ctx.setTextSource(async (index) => {
+    const content = await (await pdf.getPage(index + 1)).getTextContent();
+    return content.items.map((item) => item.str ?? '').join('');
+  });
   await viewer.render();
   ctx.markFirstPage();
   addEventListener('pagehide', () => pdf.destroy(), { once: true });

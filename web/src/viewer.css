@@ -535,3 +535,69 @@ body.reading .scrubber {
 .fallback img {
   max-width: 100%;
 }
+
+/* 문서 안 검색 */
+.search-bar {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 20;
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  padding: 6px 6px 6px 10px;
+  background: var(--surface);
+  box-shadow: 0 1px 4px rgb(0 0 0 / 20%);
+}
+
+.search-bar[hidden] {
+  display: none;
+}
+
+.search-bar input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  font-size: 16px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.search-count {
+  min-width: 3em;
+  padding: 0 4px;
+  font-size: 13px;
+  text-align: center;
+  white-space: nowrap;
+  color: var(--text-2);
+}
+
+.search-bar button {
+  width: 40px;
+  height: 40px;
+  padding: 8px;
+  background: none;
+  border: 0;
+  border-radius: 20px;
+}
+
+.search-bar button svg {
+  width: 24px;
+  height: 24px;
+  fill: var(--text);
+}
+
+/* 막대가 첫 쪽 위를 가리지 않게 문서를 그만큼 내린다. */
+body.searching #doc {
+  padding-top: 52px;
+}
+
+::highlight(search-hit) {
+  background-color: rgb(255 213 0 / 45%);
+}
+
+::highlight(search-current) {
+  background-color: rgb(255 140 0 / 75%);
+}
+

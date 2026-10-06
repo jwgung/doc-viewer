@@ -28,6 +28,8 @@ export class PagedViewer {
     this.fit = fit ?? (mode === 'scroll' ? 'width' : 'page');
     this.onPageChange = onPageChange;
     this.current = 0;
+    /** 쪽 번호 → 그 쪽을 그리는 중인(또는 다 그린) 약속 */
+    this.rendering = new Map();
     // 쪽 번호는 늘 보여주고, 누르면 쪽 번호를 입력해 바로 이동한다.
     this.indicator = document.createElement('button');
     this.indicator.type = 'button';
@@ -136,6 +138,8 @@ export class PagedViewer {
     const target = Math.max(0, Math.min(this.doc.count - 1, index));
     if (this.mode === 'scroll') {
       this.container.children[target]?.scrollIntoView();
+      // 관찰자가 알아채기 전에 바로 그리기 시작해, 기다리는 쪽(검색 등)이 그 쪽을 곧 쓸 수 있게 한다.
+      this.showPage?.(target);
       return;
     }
     const start = target - (target % step);
@@ -162,12 +166,15 @@ export class PagedViewer {
     const show = async (index) => {
       if (wanted.has(index)) return;
       wanted.add(index);
-      await this.doc.renderInto(index, pages[index]);
+      const rendering = this.doc.renderInto(index, pages[index]);
+      this.rendering.set(index, rendering);
+      await rendering;
       if (wanted.size <= KEEP_RENDERED) return;
       const farthest = [...wanted].sort((a, b) => Math.abs(b - index) - Math.abs(a - index))[0];
       wanted.delete(farthest);
       pages[farthest].replaceChildren();
     };
+    this.showPage = show;
     this.observer = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
@@ -203,6 +210,7 @@ export class PagedViewer {
       el.className = 'page';
       el.style.width = `${Math.floor(width * scale)}px`;
       el.style.height = `${Math.floor(height * scale)}px`;
+      el.dataset.index = String(index);
       stage.appendChild(el);
       return [index, el];
     });
@@ -210,7 +218,23 @@ export class PagedViewer {
     this.container.scrollTop = 0;
     this.changed(this.current);
     // 다음·이전 쪽은 미리 준비할 필요가 없을 만큼 빠르므로 보이는 쪽만 그린다.
-    return Promise.all(slots.map(([index, el]) => this.doc.renderInto(index, el)));
+    return Promise.all(
+      slots.map(([index, el]) => {
+        const rendering = this.doc.renderInto(index, el);
+        this.rendering.set(index, rendering);
+        return rendering;
+      }),
+    );
+  }
+
+  /** 그 쪽이 그려질 때까지 기다린다(검색 결과로 옮겨 간 뒤 그려진 글자를 찾을 때 쓴다). */
+  whenRendered(index) {
+    return (this.rendering.get(index) ?? Promise.resolve()).catch(() => {});
+  }
+
+  /** 지금 화면에 있는 그 쪽의 요소(없으면 null) */
+  pageElement(index) {
+    return this.container.querySelector(`.page[data-index="${index}"]`);
   }
 
   next() {
