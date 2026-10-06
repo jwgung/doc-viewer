@@ -18,6 +18,9 @@ const THUMB_PX = 44;
 const UI_SELECTOR = '.scrubber, .page-indicator, .sheet-backdrop';
 
 export class PagedViewer {
+  /** 마지막으로 탭·스와이프로 쪽을 넘긴 시각. 같은 탭을 읽기 모드 전환으로 다시 쓰지 않게 한다. */
+  static lastFlipAt = 0;
+
   constructor(container, doc, { mode = 'scroll', fit, onPageChange } = {}) {
     this.container = container;
     this.doc = doc;
@@ -178,6 +181,8 @@ export class PagedViewer {
     );
     pages.forEach((el) => this.observer.observe(el));
     pages[this.current]?.scrollIntoView();
+    // 시작 쪽이 곧 보이는 쪽이면 관찰자가 바뀜을 알리지 않으므로 쪽 번호를 직접 채운다.
+    this.changed(this.current);
     return pages.length ? show(this.current) : Promise.resolve();
   }
 
@@ -209,10 +214,12 @@ export class PagedViewer {
   }
 
   next() {
+    PagedViewer.lastFlipAt = performance.now();
     this.goTo(this.current + (this.mode === 'spread' ? 2 : 1));
   }
 
   prev() {
+    PagedViewer.lastFlipAt = performance.now();
     this.goTo(this.current - (this.mode === 'spread' ? 2 : 1));
   }
 

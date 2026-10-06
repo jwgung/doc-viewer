@@ -286,6 +286,12 @@ body {
   background: var(--accent);
 }
 
+/* 읽기 모드: 문서만 보이게 쪽 번호와 빠른 이동 손잡이를 숨긴다. */
+body.reading .page-indicator,
+body.reading .scrubber {
+  display: none;
+}
+
 /* 오른쪽 가장자리 빠른 이동 손잡이 */
 .scrubber {
   position: fixed;

@@ -1,6 +1,8 @@
-// 앱의 WebView가 viewer.html?fmt=<형식>&src=<문서 URL>&mode=<보기 방식> 으로 연다.
-// 형식에 맞는 렌더러만 불러와 그리고, 측정값과 오류는 앱이 주입한 AndroidViewer 통로로 넘긴다.
-// 앱은 window.viewer.setMode('scroll' | 'page' | 'spread')로 보기 방식을 바꾼다.
+// 앱의 WebView가 viewer.html을 먼저 띄워 두고, 문서가 준비되면 window.viewer.open({...})으로 연다.
+// (WebView 준비와 파일 준비를 겹쳐 여는 시간을 줄인다. 검증 도구는 viewer.html?fmt=&src=로 바로 연다.)
+// 형식에 맞는 렌더러만 불러와 그리고, 측정값·읽던 위치·화면 탭은 앱이 주입한 AndroidViewer 통로로 넘긴다.
+// 앱은 window.viewer.setMode('scroll' | 'page' | 'spread'), applyFit('width' | 'page'), setChrome(보임 여부)를 부른다.
+import { PagedViewer } from './paged-viewer.js';
 import { openSheet } from './sheet.js';
 import { t } from './strings.js';
 
@@ -18,18 +20,19 @@ const RENDERERS = {
   md: () => import('./renderers/md.js'),
 };
 
-const params = new URLSearchParams(location.search);
-const fmt = params.get('fmt');
-const src = params.get('src');
-const mode = params.get('mode') ?? 'scroll';
-const fit = params.get('fit') ?? undefined;
-let viewer = null;
-window.viewer = {
-  setMode: (next) => viewer?.setMode(next),
-  applyFit: (next) => viewer?.applyFit(next),
-};
 const container = document.getElementById('doc');
 const status = document.getElementById('status');
+let fmt = null;
+let viewer = null;
+let opened = false;
+
+window.viewer = {
+  open: (options) => open(options),
+  setMode: (next) => viewer?.setMode(next),
+  applyFit: (next) => viewer?.applyFit(next),
+  /** 읽기 모드: 앱이 상단바를 숨기면 쪽 번호·빠른 이동 손잡이도 숨긴다. */
+  setChrome: (visible) => document.body.classList.toggle('reading', !visible),
+};
 
 function report(event, data = {}) {
   const payload = JSON.stringify({ event, fmt, ...data });
@@ -45,7 +48,17 @@ async function fetchDocument(url) {
   return new Uint8Array(await response.arrayBuffer());
 }
 
-async function main() {
+/** 읽던 위치를 앱에 알린다. 스크롤 중 너무 자주 쓰지 않게 묶어서 보낸다. */
+let positionTimer = null;
+function reportPosition(position) {
+  clearTimeout(positionTimer);
+  positionTimer = setTimeout(() => report('position', position), 500);
+}
+
+async function open({ fmt: format, src, mode = 'scroll', fit, page = 0, scroll = 0 }) {
+  if (opened) return;
+  opened = true;
+  fmt = format;
   const t0 = performance.now();
   let firstPageMs = null;
   const ctx = {
@@ -59,6 +72,9 @@ async function main() {
     fit,
     setViewer(paged) {
       viewer = paged;
+      // 이어보기: 렌더러가 첫 화면을 그리기 전에 시작 쪽을 정한다.
+      paged.current = Math.max(0, Math.min(page, paged.doc.count - 1));
+      paged.onPageChange = (index) => reportPosition({ page: index });
     },
     askPassword(incorrect) {
       report('needsPassword', { incorrect });
@@ -73,6 +89,7 @@ async function main() {
     const size = bytes.length; // 워커로 넘기면 bytes가 비워지므로 미리 잰다.
     const result = (await renderer.render(bytes, container, ctx)) ?? {};
     ctx.markFirstPage();
+    if (!viewer) restoreScroll(scroll);
     report('done', {
       loadMs,
       firstPageMs,
@@ -89,6 +106,47 @@ async function main() {
   }
 }
 
+/** 쪽 구분이 없는 문서(doc·마크다운·엑셀)는 스크롤 비율로 이어본다. */
+function restoreScroll(ratio) {
+  const max = () => document.documentElement.scrollHeight - innerHeight;
+  if (ratio > 0) scrollTo(0, ratio * max());
+  addEventListener('scroll', () => max() > 0 && reportPosition({ scroll: Math.min(1, scrollY / max()) }), { passive: true });
+}
+
+/**
+ * 문서를 한 번 탭하면 앱이 상단바를 숨기거나 다시 보인다(읽기 모드).
+ * 쪽 넘기기(가장자리 탭), 화면 위 버튼·시트, 글자 선택 중인 경우는 제외한다.
+ */
+function bindChromeToggle() {
+  let start = null;
+  addEventListener(
+    'touchstart',
+    (e) => {
+      const touch = e.touches.length === 1 ? e.touches[0] : null;
+      const onUi = e.target instanceof Element && e.target.closest('.scrubber, .page-indicator, .sheet-backdrop, .sheet-tabs, a');
+      start = touch && !onUi ? { x: touch.clientX, y: touch.clientY, t: performance.now() } : null;
+    },
+    { passive: true },
+  );
+  addEventListener(
+    'touchend',
+    (e) => {
+      const touch = e.changedTouches[0];
+      if (!start || !touch || e.touches.length > 0) return;
+      const tap = performance.now() - start.t < 400 && Math.hypot(touch.clientX - start.x, touch.clientY - start.y) < 10;
+      start = null;
+      if (!tap) return;
+      // 같은 탭을 쪽 뷰어가 쪽 넘기기로 썼는지는 모든 처리기가 끝난 뒤에 확인한다.
+      setTimeout(() => {
+        if (getSelection()?.toString()) return;
+        if (performance.now() - PagedViewer.lastFlipAt < 100) return;
+        report('toggleChrome');
+      }, 0);
+    },
+    { passive: true },
+  );
+}
+
 /** 암호 입력 시트. 확인하면 암호를, 취소하면 reject한다. */
 async function promptPassword(incorrect) {
   const value = await openSheet({
@@ -102,4 +160,15 @@ async function promptPassword(incorrect) {
   return value;
 }
 
-main();
+bindChromeToggle();
+const params = new URLSearchParams(location.search);
+if (params.get('fmt')) {
+  open({
+    fmt: params.get('fmt'),
+    src: params.get('src'),
+    mode: params.get('mode') ?? 'scroll',
+    fit: params.get('fit') ?? undefined,
+    page: Number(params.get('page') ?? 0),
+    scroll: Number(params.get('scroll') ?? 0),
+  });
+}
