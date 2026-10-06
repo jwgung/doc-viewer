@@ -14,3 +14,6 @@ DerivedData/
 # 렌더러 검증용 문서 묶음과 결과물(외부 문서라 커밋하지 않음)
 spike/**/corpus/
 spike/**/out/
+
+# Claude Code 서브에이전트 작업 공간(worktree)
+.claude/
