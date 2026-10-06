@@ -19,6 +19,26 @@ const THUMB_PX = 44;
 // 이 요소 위에서 시작한 터치는 쪽 넘기기 제스처로 보지 않는다.
 const UI_SELECTOR = '.scrubber, .page-indicator, .sheet-backdrop';
 
+/**
+ * 연속 스크롤에서 지금 쪽: 화면에 가장 많이 보이는 쪽(같으면 위쪽). 가로 슬라이드처럼 짧은 쪽이 여러 장 보일 때
+ * 맨 위 쪽이 다 보이는데도 화면 1/3 지점의 다음 쪽을 지금 쪽으로 잡던 문제를 피한다.
+ */
+function mostVisible(pages) {
+  let best = -1;
+  let bestHeight = 0;
+  for (let i = 0; i < pages.length; i++) {
+    const rect = pages[i].getBoundingClientRect();
+    if (rect.bottom <= 0) continue;
+    if (rect.top >= innerHeight) break;
+    const height = Math.min(rect.bottom, innerHeight) - Math.max(rect.top, 0);
+    if (height > bestHeight + 1) {
+      best = i;
+      bestHeight = height;
+    }
+  }
+  return best;
+}
+
 export class PagedViewer {
   /** 마지막으로 탭·스와이프로 쪽을 넘긴 시각. 같은 탭을 읽기 모드 전환으로 다시 쓰지 않게 한다. */
   static lastFlipAt = 0;
@@ -194,7 +214,7 @@ export class PagedViewer {
           const index = Number(entry.target.dataset.index);
           if (entry.isIntersecting) show(index);
         }
-        const visible = pages.findIndex((el) => el.getBoundingClientRect().bottom > innerHeight / 3);
+        const visible = mostVisible(pages);
         if (visible >= 0 && visible !== this.current) this.changed(visible);
       },
       { rootMargin: '100% 0px' },
