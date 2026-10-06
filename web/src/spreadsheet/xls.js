@@ -1,7 +1,8 @@
-// xls(BIFF8, Excel 97~2003) 읽기. 레코드를 직접 훑어 셀 값과 서식을 압축 저장소에 담는다.
+// xls(BIFF8 = Excel 97~2003, BIFF5 = Excel 95) 읽기. 레코드를 직접 훑어 셀 값과 서식을 압축 저장소에 담는다.
 // SheetJS는 셀마다 객체를 만들어 큰 파일에서 메모리를 많이 쓰고, 글꼴·테두리·정렬 같은 서식은 버린다.
+// SheetJS CE는 코드페이지 표가 없어 BIFF5의 한국어(949)·일본어(932) 글자가 깨지므로 BIFF5도 여기서 읽는다.
 // 시트는 BOUNDSHEET의 위치로 바로 찾아가 필요한 시트만 읽는다.
-// BIFF5 이하, 암호화, CFB가 아닌 파일(HTML·XML로 된 .xls)은 null을 돌려 SheetJS 경로로 넘긴다.
+// BIFF4 이하, 암호화, CFB가 아닌 파일(HTML·XML로 된 .xls)은 null을 돌려 SheetJS 경로로 넘긴다.
 import { isCfb, readCfbStream } from './cfb.js';
 import { BLANK, BOOL, BookContext, ERR, NUM, STR, SheetBuilder, SheetModel } from './sheet-store.js';
 import {
@@ -10,7 +11,7 @@ import {
 } from './styles.js';
 
 const RT = {
-  BOF: 0x0809, EOF: 0x000a, CONTINUE: 0x003c, FILEPASS: 0x002f, DATEMODE: 0x0022, FONT: 0x0031, FORMAT: 0x041e,
+  BOF: 0x0809, EOF: 0x000a, CONTINUE: 0x003c, FILEPASS: 0x002f, CODEPAGE: 0x0042, DATEMODE: 0x0022, FONT: 0x0031, FORMAT: 0x041e,
   XF: 0x00e0, XFEXT: 0x087d, PALETTE: 0x0092, BOUNDSHEET: 0x0085, SST: 0x00fc, WINDOW1: 0x003d,
   DIMENSIONS: 0x0200, DEFAULTROWHEIGHT: 0x0225, DEFCOLWIDTH: 0x0055, COLINFO: 0x007d, ROW: 0x0208,
   NUMBER: 0x0203, RK: 0x027e, MULRK: 0x00bd, LABELSST: 0x00fd, LABEL: 0x0204, RSTRING: 0x00d6, BOOLERR: 0x0205,
@@ -20,6 +21,20 @@ const ERRORS = { 0x00: '#NULL!', 0x07: '#DIV/0!', 0x0f: '#VALUE!', 0x17: '#REF!'
 
 const utf16 = new TextDecoder('utf-16le');
 const rkView = new DataView(new ArrayBuffer(8));
+
+// BIFF5 문자열의 코드페이지 → TextDecoder 이름. 모르는 것은 서유럽(1252)으로 읽는다.
+const CODEPAGES = {
+  874: 'windows-874', 932: 'shift_jis', 936: 'gbk', 949: 'euc-kr', 950: 'big5', 1250: 'windows-1250', 1251: 'windows-1251',
+  1252: 'windows-1252', 1253: 'windows-1253', 1254: 'windows-1254', 1255: 'windows-1255', 1256: 'windows-1256', 1257: 'windows-1257',
+  1258: 'windows-1258', 10000: 'macintosh', 0x8000: 'macintosh', 0x8001: 'windows-1252',
+};
+function ansiDecoder(codepage) {
+  try {
+    return new TextDecoder(CODEPAGES[codepage] ?? 'windows-1252');
+  } catch {
+    return new TextDecoder('windows-1252');
+  }
+}
 
 function latin1(bytes, start, length) {
   let out = '';
@@ -117,7 +132,9 @@ export function readXls(bytes) {
   const dv = new DataView(stream.buffer, stream.byteOffset, stream.byteLength);
   const len = stream.length;
   if (len < 8 || dv.getUint16(0, true) !== RT.BOF || dv.getUint16(6, true) !== 0x0005) return null; // 전역 부분 BOF가 아니면 넘긴다
-  if (dv.getUint16(4, true) !== 0x0600) return null; // BIFF8만
+  const version = dv.getUint16(4, true);
+  const biff = version === 0x0600 ? 8 : version === 0x0500 ? 5 : 0;
+  if (!biff) return null;
 
   const fonts = [];
   const formats = new Map();
@@ -127,6 +144,14 @@ export function readXls(bytes) {
   let strings = [];
   let date1904 = false;
   let active = 0;
+  let ansi = ansiDecoder(1252);
+  // 글자 수(1·2바이트) 뒤에 오는 문자열. BIFF8은 유니코드 문자열, BIFF5는 코드페이지 8비트 문자열이다.
+  const text = (start, end, cchBytes) => {
+    if (biff === 8) return new Segments(stream, [[start, end]]).string(cchBytes);
+    const cch = cchBytes === 1 ? stream[start] : dv.getUint16(start, true);
+    const from = start + cchBytes;
+    return ansi.decode(stream.subarray(from, Math.min(end, from + cch)));
+  };
 
   // 전역 부분: 첫 EOF까지
   let pos = 0;
@@ -139,11 +164,13 @@ export function readXls(bytes) {
     switch (type) {
       case RT.FILEPASS:
         return null; // 암호화: SheetJS가 처리(또는 암호 오류)하게 넘긴다
+      case RT.CODEPAGE:
+        if (biff === 5) ansi = ansiDecoder(dv.getUint16(body, true));
+        break;
       case RT.DATEMODE:
         date1904 = dv.getUint16(body, true) === 1;
         break;
       case RT.FONT: {
-        const seg = new Segments(stream, [[body + 14, body + size]]);
         const grbit = dv.getUint16(body + 2, true);
         const uls = stream[body + 10];
         fonts.push({
@@ -154,17 +181,16 @@ export function readXls(bytes) {
           bold: dv.getUint16(body + 6, true) >= 600,
           script: dv.getUint16(body + 8, true),
           underline: uls === 2 || uls === 0x22 ? 'double' : uls ? 'single' : null,
-          name: seg.string(1),
+          name: text(body + 14, body + size, 1),
         });
         break;
       }
-      case RT.FORMAT: {
-        const seg = new Segments(stream, [[body + 2, body + size]]);
-        formats.set(dv.getUint16(body, true), seg.string(2));
+      case RT.FORMAT:
+        formats.set(dv.getUint16(body, true), text(body + 2, body + size, biff === 8 ? 2 : 1));
         break;
-      }
       case RT.XF:
-        if (size >= 20) xfs.push(parseXf(dv, body));
+        if (biff === 8 && size >= 20) xfs.push(parseXf(dv, body));
+        else if (biff === 5 && size >= 16) xfs.push(parseXf5(dv, body));
         break;
       case RT.XFEXT:
         parseXfExt(dv, body, size, xfs);
@@ -177,15 +203,14 @@ export function readXls(bytes) {
         }
         break;
       }
-      case RT.BOUNDSHEET: {
-        const seg = new Segments(stream, [[body + 6, body + size]]);
-        sheets.push({ offset: dv.getUint32(body, true), hidden: (stream[body + 4] & 3) !== 0, dt: stream[body + 5], name: seg.string(1) });
+      case RT.BOUNDSHEET:
+        sheets.push({ offset: dv.getUint32(body, true), hidden: (stream[body + 4] & 3) !== 0, dt: stream[body + 5], name: text(body + 6, body + size, 1) });
         break;
-      }
       case RT.WINDOW1:
         if (size >= 12) active = dv.getUint16(body + 10, true);
         break;
       case RT.SST: {
+        if (biff !== 8) break;
         const ranges = [[body + 8, body + size]];
         while (pos + 4 <= len && dv.getUint16(pos, true) === RT.CONTINUE) {
           const s = dv.getUint16(pos + 2, true);
@@ -270,7 +295,7 @@ export function readXls(bytes) {
       if (!s || s.dt === 2) return SheetModel.placeholder(s?.name ?? '', 'chart');
       const offset = offsetOf(s);
       if (offset < 0) return SheetModel.placeholder(s.name, 'sheet');
-      return readSheet(stream, dv, { ...s, offset }, context, styles, mdw);
+      return readSheet(stream, dv, { ...s, offset }, { biff, text, context, styles, mdw });
     },
   };
 }
@@ -315,6 +340,29 @@ function parseXf(dv, at) {
   };
 }
 
+// BIFF5 XF(16바이트): 테두리는 3비트 선 종류, 들여쓰기 없음, 글자 방향 2비트(1 = 세로 쌓기)
+function parseXf5(dv, at) {
+  const align = dv.getUint8(at + 6);
+  const orient = dv.getUint8(at + 7) & 3;
+  const fill = dv.getUint32(at + 8, true);
+  const lines = dv.getUint32(at + 12, true);
+  return {
+    ifnt: dv.getUint16(at, true),
+    ifmt: dv.getUint16(at + 2, true),
+    alc: align & 7,
+    wrap: Boolean(align & 8),
+    alcV: (align >> 4) & 7,
+    rotate: orient === 1 ? 255 : orient === 2 ? 90 : orient === 3 ? 180 : 0,
+    indent: 0,
+    border: { l: (lines >> 3) & 7, r: (lines >> 6) & 7, t: lines & 7, b: (fill >>> 22) & 7 },
+    borderColor: { l: (lines >>> 16) & 0x7f, r: (lines >>> 23) & 0x7f, t: (lines >>> 9) & 0x7f, b: (fill >>> 25) & 0x7f },
+    fls: (fill >>> 16) & 0x3f,
+    icvFore: fill & 0x7f,
+    icvBack: (fill >>> 7) & 0x7f,
+    ext: null,
+  };
+}
+
 // XFEXT(엑셀 2007 이후가 함께 저장하는 실제 RGB 색). 테마 색은 색상표 근사값을 그대로 둔다.
 function parseXfExt(dv, at, size, xfs) {
   if (size < 20) return;
@@ -339,8 +387,15 @@ function parseXfExt(dv, at, size, xfs) {
   }
 }
 
-function readSheet(stream, dv, sheet, context, styles, mdw) {
+function readSheet(stream, dv, sheet, { biff, text: readText, context, styles, mdw }) {
   const len = stream.length;
+  // LABEL·STRING 문자열: BIFF8은 CONTINUE까지 이어 읽고, BIFF5는 코드페이지 8비트 문자열이다.
+  const recordText = (start, end) => {
+    if (biff !== 8) return readText(start, end, 2);
+    const ranges = [[start, end]];
+    pos = collectContinue(dv, pos, len, ranges);
+    return new Segments(stream, ranges).string(2);
+  };
   const builder = new SheetBuilder({ paints: (xf) => styles.paints(xf) });
   builder.defaultRowHeight = 17;
   builder.defaultColWidth = defaultColWidthPx(8, mdw);
@@ -387,9 +442,7 @@ function readSheet(stream, dv, sheet, context, styles, mdw) {
       }
       case RT.LABEL:
       case RT.RSTRING: {
-        const ranges = [[body + 6, body + size]];
-        pos = collectContinue(dv, pos, len, ranges);
-        const text = new Segments(stream, ranges).string(2);
+        const text = recordText(body + 6, body + size);
         builder.add(dv.getUint16(body, true), dv.getUint16(body + 2, true), STR, context.addString(text), dv.getUint16(body + 4, true));
         break;
       }
@@ -422,10 +475,8 @@ function readSheet(stream, dv, sheet, context, styles, mdw) {
         break;
       }
       case RT.STRING: {
-        const ranges = [[body, body + size]];
-        pos = collectContinue(dv, pos, len, ranges);
+        const text = recordText(body, body + size);
         if (pending) {
-          const text = new Segments(stream, ranges).string(2);
           builder.replaceLast(pending.row, pending.col, STR, context.addString(text));
           pending = null;
         }
@@ -501,7 +552,7 @@ function readSheet(stream, dv, sheet, context, styles, mdw) {
         }
         break;
       case RT.DIMENSIONS:
-        builder.totalRows = dv.getUint32(body + 4, true);
+        builder.totalRows = biff === 8 ? dv.getUint32(body + 4, true) : dv.getUint16(body + 2, true);
         break;
       default:
         break;
