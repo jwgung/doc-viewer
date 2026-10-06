@@ -255,7 +255,9 @@ function bindChromeToggle() {
     'touchstart',
     (e) => {
       const touch = e.touches.length === 1 ? e.touches[0] : null;
-      const onUi = e.target instanceof Element && e.target.closest('.scrubber, .page-indicator, .sheet-backdrop, .sheet-tabs, a');
+      // 화면 위 부품(검색 막대·시트·입력칸·버튼)을 누른 것은 문서 탭이 아니다.
+      const onUi =
+        e.target instanceof Element && e.target.closest('.scrubber, .page-indicator, .sheet-backdrop, .sheet-tabs, .search-bar, a, button, input, textarea, select');
       start = touch && !onUi ? { x: touch.clientX, y: touch.clientY, t: performance.now() } : null;
     },
     { passive: true },
@@ -293,6 +295,9 @@ async function promptPassword(incorrect) {
 }
 
 bindChromeToggle();
+// 시트·검색 막대가 입력칸을 열면 앱에 알려 키보드를 띄운다. 웹에서 초점을 줘도 사용자 탭이 아니면
+// Android가 키보드를 띄우지 않고, 웹뷰가 아직 초점이 없으면 focus 이벤트조차 오지 않아 직접 알린다.
+addEventListener('viewerinputopen', () => report('inputFocused'));
 const params = new URLSearchParams(location.search);
 if (params.get('fmt')) {
   open({

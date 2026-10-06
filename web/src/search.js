@@ -49,6 +49,7 @@ export function createSearch({ container, viewer, textOf, provider }) {
     document.body.classList.add('searching');
     input.focus();
     input.select();
+    dispatchEvent(new Event('viewerinputopen'));
   }
 
   function close() {

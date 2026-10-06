@@ -36,5 +36,6 @@ export function openSheet({ title, message = '', inputType = 'text', inputMode, 
     requestAnimationFrame(() => backdrop.classList.add('open'));
     input.focus();
     input.select();
+    dispatchEvent(new Event('viewerinputopen'));
   });
 }
