@@ -4,7 +4,7 @@
 //   { numFmt, font: { name, size(pt), bold, italic, underline, strike, color, script },
 //     fill: '#rrggbb' | null,
 //     border: { l, r, t, b: { style, color } | null },
-//     align: { h, v, wrap, indent, rotate } }
+//     align: { h, v, wrap, indent, rotate, shrink } }
 // h: general | left | center | right | fill | justify | centerContinuous | distributed
 // v: top | center | bottom | justify | distributed
 
@@ -185,19 +185,30 @@ export function xfToCss(xf, base) {
     const pad = 3 + align.indent * 9;
     out.push(h === 'right' ? `padding-right:${pad}px` : `padding-left:${pad}px`);
   }
-  if (align.rotate === 255) out.push('writing-mode:vertical-rl', 'text-orientation:upright');
   return out.join(';');
 }
 
-/** 화면 쪽 배치에 필요한 서식 요약: 가로 정렬, 줄 바꿈, 채우기 여부, 빈 칸이어도 그릴지(채우기·테두리). */
+/** 글자 방향은 셀이 아니라 글자(span)에 준다. 세로 쌓기와 90°(아래→위)·-90°(위→아래)만 지원하고 가운데에 둔다. */
+export function spanCss(align = {}) {
+  const vertical = 'writing-mode:vertical-rl;flex:none;margin:auto';
+  if (align.rotate === 255) return `${vertical};text-orientation:upright`;
+  if (align.rotate === 90) return `${vertical};transform:rotate(180deg)`;
+  if (align.rotate === 180) return vertical;
+  return '';
+}
+
+const ROTATED = new Set([90, 180, 255]);
+
+/** 화면 쪽 배치에 필요한 서식 요약: 가로 정렬, 줄 바꿈(넘치지 않음), 채우기, 셀에 맞춤, 빈 칸이어도 그릴지. */
 export function xfMeta(xf) {
   const align = xf.align ?? {};
   const border = xf.border ?? {};
   const h = H_CODE[align.h] ?? 0;
   return {
     h,
-    wrap: Boolean(align.wrap) || h === 5 || h === 7 || align.v === 'justify' || align.v === 'distributed' || align.rotate === 255,
+    wrap: Boolean(align.wrap) || h === 5 || h === 7 || align.v === 'justify' || align.v === 'distributed' || ROTATED.has(align.rotate),
     fill: Boolean(xf.fill),
+    shrink: Boolean(align.shrink),
     paint: Boolean(xf.fill) || Boolean(border.l || border.r || border.t || border.b),
   };
 }
@@ -219,7 +230,9 @@ export class StyleTable {
     let e = this.cache.get(index);
     if (!e) {
       const xf = this.get(index);
-      e = xf ? { css: xfToCss(xf, this.base), border: borderCss(xf.border), ...xfMeta(xf) } : { css: '', border: '', h: 0, wrap: false, fill: false, paint: false };
+      e = xf
+        ? { css: xfToCss(xf, this.base), border: borderCss(xf.border), span: spanCss(xf.align), ...xfMeta(xf) }
+        : { css: '', border: '', span: '', h: 0, wrap: false, fill: false, shrink: false, paint: false };
       this.cache.set(index, e);
     }
     return e;
@@ -229,7 +242,7 @@ export class StyleTable {
     return this.entry(index).paint;
   }
 
-  /** 아직 보내지 않은 서식만 { 번호: { css, border, h, wrap, paint } }로 돌려준다. */
+  /** 아직 보내지 않은 서식만 { 번호: { css, border, span, h, wrap, fill, shrink, paint } }로 돌려준다. */
   take(indexes) {
     const out = {};
     for (const i of indexes) {

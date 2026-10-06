@@ -215,6 +215,7 @@ function parseStyles(xml, theme) {
         wrap: truthy(al.wrapText),
         indent: Number(al.indent) || 0,
         rotate: Number(al.textRotation) || 0,
+        shrink: truthy(al.shrinkToFit),
       },
     };
   });
@@ -394,11 +395,10 @@ function readHead(head, builder, mdw) {
   }
 }
 
-const ROW_ATTR = /\s(r|ht|hidden|s|customFormat)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
+const ROW_ATTR = /\s(r|ht|hidden|s|customFormat|customHeight)\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
 
 /** <row>와 <c>를 훑는다. 셀 속성(r·s·t)은 문자열을 만들지 않고 글자 코드로 읽는다. */
 function readRows(xml, tags, state, builder, context) {
-  const n = xml.length;
   let i = 0;
   const ref = state.ref;
   for (;;) {
@@ -499,6 +499,7 @@ function readRows(xml, tags, state, builder, context) {
       let hidden = false;
       let style = 0;
       let customFormat = false;
+      let customHeight = false;
       for (const m of head.matchAll(ROW_ATTR)) {
         const v = m[2] ?? m[3];
         if (m[1] === 'r') r = Number(v) - 1;
@@ -506,18 +507,19 @@ function readRows(xml, tags, state, builder, context) {
         else if (m[1] === 'hidden') hidden = truthy(v);
         else if (m[1] === 's') style = Number(v) || 0;
         else if (m[1] === 'customFormat') customFormat = truthy(v);
+        else if (m[1] === 'customHeight') customHeight = truthy(v);
       }
       state.row = r != null && r >= 0 ? r : state.row + 1;
       state.col = -1;
       if (hidden) builder.rowHeights.set(state.row, 0);
       else if (height > 0) builder.rowHeights.set(state.row, Math.round((height * 4) / 3));
+      if (customHeight) builder.customRows.add(state.row);
       if (customFormat && style > 0 && builder.paints(style)) builder.rowStyles.set(state.row, style);
       i = gt + 1;
     } else {
       i = lt + 1;
     }
   }
-  void n;
 }
 
 function isDelimiter(c) {

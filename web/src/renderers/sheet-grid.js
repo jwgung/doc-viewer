@@ -15,6 +15,7 @@ const KEEP_BLOCKS = 32;
 const MAX_INFLIGHT = 3;
 const MAX_SPILL_COLS = 64;
 const MAX_COLS = 16384;
+const MAX_ROW_HEIGHT = 545; // 엑셀 행 높이 상한(409pt)
 // 셀 종류(워커와 같음)
 const BLANK = 0;
 const NUM = 1;
@@ -102,6 +103,7 @@ export class SheetGrid {
       this.styleMeta.set(xf, entry);
       if (entry.css) insert(`.sheet-body .sg-cells .x${xf}{${entry.css}}`);
       if (entry.border) insert(`.sheet-body .sg-cells .x${xf}::after{content:'';${entry.border}}`);
+      if (entry.span) insert(`.sheet-body .sg-cells .x${xf}>span{${entry.span}}`);
     }
   }
 
@@ -117,6 +119,11 @@ export class SheetGrid {
     this.meta = payload.meta;
     this.blocks = new Map();
     this.inflight = new Set();
+    // 저장된 행 높이는 원본 글꼴 기준이라 대체 글꼴로는 줄바꿈 글이 넘칠 수 있다.
+    // 사용자가 높이를 정하지 않은 행은 그려 본 뒤 넘치면 늘린다(LibreOffice도 다시 계산한다).
+    this.grown = new Map();
+    this.growth = new Map();
+    this.customRows = new Set(payload.meta.customRows);
     this.setBaseCss(payload.baseCss);
     this.addStyles(payload.styles);
     for (const block of payload.blocks) this.blocks.set(block.start / this.meta.blockRows, block);
@@ -160,6 +167,7 @@ export class SheetGrid {
     const rowTop = new Float64Array(nRows + 1);
     const heights = new Float32Array(nRows).fill(m.defaultRowHeight);
     for (let i = 0; i < m.rowHeights.index.length; i++) if (m.rowHeights.index[i] < nRows) heights[m.rowHeights.index[i]] = m.rowHeights.value[i];
+    for (const [r, h] of this.grown) if (r < nRows) heights[r] = h;
     rowTop[0] = 1;
     for (let r = 0; r < nRows; r++) rowTop[r + 1] = rowTop[r] + heights[r];
     const colLeft = new Float64Array(nCols + 1);
@@ -205,18 +213,50 @@ export class SheetGrid {
     this.headLeft = fc ? slice(head, 'sg-colhead sg-fz', fw, rowHead) : null;
     this.headMain = slice(head, 'sg-colhead', totalW - fw);
     if (fr) {
-      const top = band('sg-top', fh, HEAD_HEIGHT);
-      this.rowheadTop = slice(top, 'sg-rowhead', rowHead, 0);
-      this.cellsCorner = fc ? slice(top, 'sg-cells sg-fz', fw, rowHead) : null;
-      this.cellsTop = slice(top, 'sg-cells', totalW - fw);
+      this.bandTop = band('sg-top', fh, HEAD_HEIGHT);
+      this.rowheadTop = slice(this.bandTop, 'sg-rowhead', rowHead, 0);
+      this.cellsCorner = fc ? slice(this.bandTop, 'sg-cells sg-fz', fw, rowHead) : null;
+      this.cellsTop = slice(this.bandTop, 'sg-cells', totalW - fw);
     } else {
-      this.rowheadTop = this.cellsCorner = this.cellsTop = null;
+      this.bandTop = this.rowheadTop = this.cellsCorner = this.cellsTop = null;
     }
-    const main = band('sg-main', totalH - fh);
-    this.rowheadMain = slice(main, 'sg-rowhead', rowHead, 0);
-    this.cellsLeft = fc ? slice(main, 'sg-cells sg-fz', fw, rowHead) : null;
-    this.cellsMain = slice(main, 'sg-cells', totalW - fw);
+    this.bandMain = band('sg-main', totalH - fh);
+    this.rowheadMain = slice(this.bandMain, 'sg-rowhead', rowHead, 0);
+    this.cellsLeft = fc ? slice(this.bandMain, 'sg-cells sg-fz', fw, rowHead) : null;
+    this.cellsMain = slice(this.bandMain, 'sg-cells', totalW - fw);
+    this.canvas = canvas;
     this.scroller.replaceChildren(canvas);
+  }
+
+  /** 넘친 줄바꿈 칸에 맞춰 행을 늘리고, 화면 위쪽에서 늘어난 만큼 스크롤을 옮겨 보던 자리를 지킨다. */
+  applyGrowth() {
+    const g = this.geo;
+    const { rowTop, nRows } = g;
+    const topRow = upperBound(rowTop, g.fh + this.scroller.scrollTop, nRows + 1);
+    const changes = [];
+    for (const [r, need] of this.growth) {
+      const height = rowTop[r + 1] - rowTop[r];
+      if (need > height) changes.push([r, need - height]);
+    }
+    this.growth.clear();
+    if (!changes.length) return false;
+    changes.sort((a, b) => a[0] - b[0]);
+    let above = 0;
+    for (const [r, delta] of changes) {
+      this.grown.set(r, rowTop[r + 1] - rowTop[r] + delta);
+      if (r >= g.fr && r < topRow) above += delta;
+    }
+    let acc = 0;
+    for (let i = changes[0][0] + 1, k = 0; i <= nRows; i++) {
+      while (k < changes.length && changes[k][0] < i) acc += changes[k++][1];
+      rowTop[i] += acc;
+    }
+    g.fh = rowTop[g.fr] - 1;
+    if (this.bandTop) this.bandTop.style.height = `${g.fh}px`;
+    this.bandMain.style.height = `${rowTop[nRows] - g.fh}px`;
+    this.canvas.style.height = `${HEAD_HEIGHT + rowTop[nRows]}px`;
+    if (above) this.scroller.scrollTop += above;
+    return true;
   }
 
   schedule(force = false) {
@@ -252,7 +292,7 @@ export class SheetGrid {
     return this.visibleRange().r0;
   }
 
-  render(force = false) {
+  render(force = false, depth = 0) {
     const g = this.geo;
     const v = this.visibleRange();
     const w = this.rendered;
@@ -279,6 +319,11 @@ export class SheetGrid {
       this.paint(this.cellsTop, 0, fr - 1, win.c0, win.c1, fw, 0);
       this.rowheadTop.innerHTML = this.rowHeads(0, fr - 1, 0);
       if (fc) this.paint(this.cellsCorner, 0, fr - 1, 0, fc - 1, 0, 0);
+    }
+    // 넘친 줄바꿈 칸이 있으면 행을 늘려 다시 그린다(늘리기만 하므로 몇 번 안에 멈춘다).
+    if (this.growth.size && this.applyGrowth() && depth < 3) {
+      this.rendered = null;
+      this.render(true, depth + 1);
     }
   }
 
@@ -423,7 +468,8 @@ export class SheetGrid {
     }
     for (const merge of merges) html += this.mergedCell(merge, ox, oy);
     target.innerHTML = html;
-    this.fitNumbers(target);
+    this.fitText(target);
+    this.measureWrap(target);
   }
 
   colStylesIn(c0, c1) {
@@ -463,11 +509,12 @@ export class SheetGrid {
     if (kind === BLANK && !st.paint) return '';
     let cls = `c x${xf}`;
     let span = '';
+    let attrs = '';
     if (text) {
       const numeric = kind === NUM || kind === PRENUM;
       const align = st.h !== H_GENERAL ? st.h : numeric ? H_RIGHT : kind === BOOL || kind === ERR ? H_CENTER : H_LEFT;
       if (st.h === H_GENERAL && align !== H_LEFT) cls += align === H_RIGHT ? ' ar' : ' ac';
-      if (numeric) cls += ' n';
+      if (numeric || st.shrink) cls += ' fit';
       let left = 0;
       let right = 0;
       if (kind === STR && !st.wrap) {
@@ -479,8 +526,22 @@ export class SheetGrid {
       const color = block.colors?.[i];
       const css = (left || right ? `margin-left:${-left}px;margin-right:${-right}px;` : '') + (color ? `color:${color}` : '');
       span = `<span${css ? ` style="${css}"` : ''}>${escapeHtml(shownText(text, st))}</span>`;
+      // 줄바꿈 칸은 그린 뒤 넘치는지 재서, 높이를 정하지 않은 행이면 늘린다.
+      if (st.wrap && !this.customRows.has(r)) attrs = ` data-w="1" data-r="${r}"`;
     } else if (c < c0 || c > c1) return '';
-    return `<div class="${cls}" style="left:${colLeft[c] - ox - 1}px;top:${rowTop[r] - oy - 1}px;width:${w + 1}px;height:${h + 1}px">${span}</div>`;
+    return `<div class="${cls}"${attrs} style="left:${colLeft[c] - ox - 1}px;top:${rowTop[r] - oy - 1}px;width:${w + 1}px;height:${h + 1}px">${span}</div>`;
+  }
+
+  /** 줄바꿈 칸의 글이 행보다 길면 그 행에 필요한 높이를 모은다(applyGrowth가 반영). */
+  measureWrap(target) {
+    const { rowTop } = this.geo;
+    for (const cell of target.querySelectorAll('[data-w]')) {
+      const span = cell.firstElementChild;
+      if (!span) continue;
+      const r = Number(cell.dataset.r);
+      const need = Math.min(MAX_ROW_HEIGHT, Math.ceil(span.scrollHeight) + 1);
+      if (need > rowTop[r + 1] - rowTop[r] && need > (this.growth.get(r) ?? 0)) this.growth.set(r, need);
+    }
   }
 
   /** 오른쪽 빈 칸으로 넘칠 수 있는 너비. 다음 값 있는 칸이나 병합 영역에서 멈춘다. */
@@ -533,16 +594,19 @@ export class SheetGrid {
       const kind = at.block.kinds[at.i];
       const numeric = kind === NUM || kind === PRENUM;
       if (st.h === H_GENERAL && (numeric || kind === BOOL || kind === ERR)) cls += numeric ? ' ar' : ' ac';
-      if (numeric) cls += ' n';
+      if (numeric || st.shrink) cls += ' fit';
       const color = at.block.colors?.[at.i];
       span = `<span${color ? ` style="color:${color}"` : ''}>${escapeHtml(shownText(text, st))}</span>`;
     }
     return `<div class="${cls}" style="left:${colLeft[c1] - ox - 1}px;top:${rowTop[r1] - oy - 1}px;width:${w + 1}px;height:${h + 1}px">${span}</div>`;
   }
 
-  /** 칸보다 긴 숫자는 앞자리가 잘려 다른 값으로 읽히지 않게 글자를 줄인다. */
-  fitNumbers(target) {
-    const cells = target.getElementsByClassName('n');
+  /**
+   * 칸보다 긴 숫자는 앞자리가 잘려 다른 값으로 읽히지 않게 글자를 줄인다('셀에 맞춤' 서식도 같다).
+   * 대체 글꼴이 원본 글꼴보다 넓어 엑셀에서는 들어가던 숫자가 넘치는 경우가 많다.
+   */
+  fitText(target) {
+    const cells = target.getElementsByClassName('fit');
     const fixes = [];
     for (const cell of cells) {
       const span = cell.firstElementChild;

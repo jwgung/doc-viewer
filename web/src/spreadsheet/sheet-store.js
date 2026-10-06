@@ -143,6 +143,7 @@ export class SheetBuilder {
     this.totalRows = 0;
     this.colWidths = new Map(); // 열 → px (0이면 숨김)
     this.rowHeights = new Map(); // 행 → px (0이면 숨김)
+    this.customRows = new Set(); // 사용자가 높이를 정한 행(화면이 내용에 맞춰 늘리지 않는다)
     this.rowStyles = new Map(); // 행 → 빈 칸 기본 서식(xf)
     this.colStyles = new Map(); // 열 → 빈 칸 기본 서식(xf)
     this.merges = [];
@@ -265,6 +266,7 @@ export class SheetBuilder {
       geometry: {
         colWidths: this.colWidths,
         rowHeights: this.rowHeights,
+        customRows: this.customRows,
         rowStyles: this.rowStyles,
         colStyles: this.colStyles,
         merges: this.merges,
@@ -298,7 +300,7 @@ export class SheetModel {
       cellCount: 0,
       truncatedRow: -1,
       totalRows: 0,
-      geometry: { colWidths: new Map(), rowHeights: new Map(), rowStyles: new Map(), colStyles: new Map(), merges: [], freezeRows: 0, freezeCols: 0, showGrid: true, defaultRowHeight: 20, defaultColWidth: 64 },
+      geometry: { colWidths: new Map(), rowHeights: new Map(), customRows: new Set(), rowStyles: new Map(), colStyles: new Map(), merges: [], freezeRows: 0, freezeCols: 0, showGrid: true, defaultRowHeight: 20, defaultColWidth: 64 },
       showZeros: true,
       kind,
     });
@@ -325,6 +327,7 @@ export class SheetModel {
       defaultColWidth: g.defaultColWidth,
       colWidths: sparse(g.colWidths, MAX_COLS),
       rowHeights: sparse(g.rowHeights, MAX_ROWS),
+      customRows: Int32Array.from([...g.customRows].sort((a, b) => a - b)),
       rowStyles: sparse(g.rowStyles, MAX_ROWS),
       colStyles: sparse(g.colStyles, MAX_COLS),
       merges,

@@ -261,7 +261,7 @@ export function readXls(bytes) {
         : null,
       fill: patternFill(BIFF_PATTERNS[x.fls] ?? 'none', fg, bg),
       border,
-      align: { h: BIFF_HALIGN[x.alc] ?? 'general', v: BIFF_VALIGN[x.alcV] ?? 'bottom', wrap: x.wrap, indent: x.indent, rotate: x.rotate },
+      align: { h: BIFF_HALIGN[x.alc] ?? 'general', v: BIFF_VALIGN[x.alcV] ?? 'bottom', wrap: x.wrap, indent: x.indent, rotate: x.rotate, shrink: x.shrink },
     };
     resolved.set(index, out);
     return out;
@@ -331,6 +331,7 @@ function parseXf(dv, at) {
     alcV: (align >> 4) & 7,
     rotate: dv.getUint8(at + 7),
     indent: indent & 15,
+    shrink: Boolean(indent & 0x10),
     border: { l: lines & 15, r: (lines >> 4) & 15, t: (lines >> 8) & 15, b: (lines >> 12) & 15 },
     borderColor: { l: colors1 & 0x7f, r: (colors1 >> 7) & 0x7f, t: colors2 & 0x7f, b: (colors2 >> 7) & 0x7f },
     fls: (colors2 >>> 26) & 0x3f,
@@ -354,6 +355,7 @@ function parseXf5(dv, at) {
     alcV: (align >> 4) & 7,
     rotate: orient === 1 ? 255 : orient === 2 ? 90 : orient === 3 ? 180 : 0,
     indent: 0,
+    shrink: false,
     border: { l: (lines >> 3) & 7, r: (lines >> 6) & 7, t: lines & 7, b: (fill >>> 22) & 7 },
     borderColor: { l: (lines >>> 16) & 0x7f, r: (lines >>> 23) & 0x7f, t: (lines >>> 9) & 0x7f, b: (fill >>> 25) & 0x7f },
     fls: (fill >>> 16) & 0x3f,
@@ -498,6 +500,7 @@ function readSheet(stream, dv, sheet, { biff, text: readText, context, styles, m
         const flags = dv.getUint16(body + 12, true);
         if (flags & 0x20) builder.rowHeights.set(row, 0);
         else if (height > 0) builder.rowHeights.set(row, Math.round(height / 15));
+        if (flags & 0x40) builder.customRows.add(row);
         if (flags & 0x80) {
           const xf = dv.getUint16(body + 14, true) & 0x0fff;
           if (styles.paints(xf)) builder.rowStyles.set(row, xf);
