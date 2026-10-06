@@ -32,6 +32,8 @@ export async function render(bytes, container, ctx) {
   };
   viewer = new PagedViewer(container, doc, { mode: ctx.mode, fit: ctx.fit });
   ctx.setViewer(viewer);
+  // 검색: 쪽마다 그려진 글자(쪽 단위 방식은 그 쪽을 화면 밖에서 그려 읽는다).
+  ctx.setTextSource(async (index) => source.textOf(index));
   await viewer.render();
   ctx.markFirstPage();
   addEventListener('pagehide', () => source.dispose?.(), { once: true });
@@ -109,6 +111,7 @@ async function openByPage(bytes, holder) {
         return sizes[index];
       }
     },
+    textOf: (index) => build(index).page.element.textContent,
     renderInto: async (index, el, viewer) => {
       let entry;
       try {
@@ -144,6 +147,7 @@ async function openWhole(bytes, holder) {
     byPage: false,
     count: sections.length,
     sizes,
+    textOf: (index) => sections[index].textContent,
     renderInto: async (index, el) => {
       sections[index].style.zoom = String(el.clientWidth / sizes[index].width);
       el.replaceChildren(sections[index]);
