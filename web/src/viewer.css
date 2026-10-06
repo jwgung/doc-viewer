@@ -365,7 +365,7 @@ body.reading .scrubber {
   box-shadow: var(--page-shadow);
 }
 
-/* doc: 쪽 구분 없이 한 흐름으로 그린다. */
+/* 흰 카드에 그리는 문서(마크다운·txt·최후 대안, doc은 쪽마다 카드 하나 — renderers/doc.css). */
 .flow {
   margin: 0 8px;
   padding: 16px;
