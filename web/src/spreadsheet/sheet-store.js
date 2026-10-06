@@ -57,6 +57,76 @@ export class BookContext {
       return text;
     }
   }
+
+  /** 숫자 서식의 글자색([Red] 등). SSF는 색을 버리므로 값에 맞는 구역을 골라 색만 읽는다. 없으면 null. */
+  numberColor(value, xf) {
+    this.colorCache ??= new Map();
+    let sections = this.colorCache.get(xf);
+    if (sections === undefined) {
+      const fmt = this.numFmt(xf);
+      sections = typeof fmt === 'string' && fmt.includes('[') ? parseSections(fmt) : null;
+      if (sections && !sections.some((s) => s.color)) sections = null;
+      this.colorCache.set(xf, sections);
+    }
+    return sections ? chooseSection(sections, value)?.color ?? null : null;
+  }
+}
+
+const COLOR_NAMES = { black: '#000000', blue: '#0000ff', cyan: '#00ffff', green: '#00ff00', magenta: '#ff00ff', red: '#ff0000', white: '#ffffff', yellow: '#ffff00' };
+// [ColorN]은 색상표 8번부터(엑셀 97-2003 기본 색상표)
+const COLOR_N = [
+  '000000', 'ffffff', 'ff0000', '00ff00', '0000ff', 'ffff00', 'ff00ff', '00ffff', '800000', '008000', '000080', '808000', '800080', '008080',
+  'c0c0c0', '808080', '9999ff', '993366', 'ffffcc', 'ccffff', '660066', 'ff8080', '0066cc', 'ccccff', '000080', 'ff00ff', 'ffff00', '00ffff',
+  '800080', '800000', '008080', '0000ff', '00ccff', 'ccffff', 'ccffcc', 'ffff99', '99ccff', 'ff99cc', 'cc99ff', 'ffcc99', '3366ff', '33cccc',
+  '99cc00', 'ffcc00', 'ff9900', 'ff6600', '666699', '969696', '003366', '339966', '003300', '333300', '993300', '993366', '333399', '333333',
+];
+
+/** 서식 문자열을 ;로 나눈 구역마다 색과 조건([>100] 등)을 뽑는다. 따옴표·\ 뒤 글자 안의 ;는 건너뛴다. */
+function parseSections(fmt) {
+  const parts = [];
+  let start = 0;
+  for (let i = 0; i < fmt.length; i++) {
+    const ch = fmt[i];
+    if (ch === '"') i = fmt.indexOf('"', i + 1) < 0 ? fmt.length : fmt.indexOf('"', i + 1);
+    else if (ch === '\\') i++;
+    else if (ch === ';') {
+      parts.push(fmt.slice(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(fmt.slice(start));
+  return parts.map((part) => {
+    let color = null;
+    let cond = null;
+    for (const [, token] of part.matchAll(/\[([^\]]*)\]/g)) {
+      const name = token.trim().toLowerCase();
+      if (COLOR_NAMES[name]) color = COLOR_NAMES[name];
+      else if (/^color\s*\d+$/.test(name)) {
+        const hex = COLOR_N[Number(name.replace(/\D/g, '')) - 1];
+        if (hex) color = `#${hex}`;
+      } else {
+        const m = /^(<=|>=|<>|<|>|=)\s*(-?[\d.]+(?:e[-+]?\d+)?)$/.exec(name);
+        if (m) cond = [m[1], Number(m[2])];
+      }
+    }
+    return { color, cond };
+  });
+}
+
+const test = ([op, n], v) => (op === '<' ? v < n : op === '>' ? v > n : op === '<=' ? v <= n : op === '>=' ? v >= n : op === '=' ? v === n : v !== n);
+
+/** 엑셀 규칙으로 값에 쓰일 구역을 고른다: 양수;음수;0;문자, 조건이 있으면 조건 우선. */
+function chooseSection(sections, value) {
+  const [a, b, c] = sections;
+  if (a.cond || b?.cond) {
+    if (a.cond && test(a.cond, value)) return a;
+    if (b?.cond) return test(b.cond, value) ? b : c ?? null;
+    return b ?? a;
+  }
+  if (sections.length === 1) return a;
+  if (value < 0) return b;
+  if (value === 0 && c) return c;
+  return a;
 }
 
 /** 읽기 중에 셀을 받아 쌓는다. 셀은 대개 행 순서로 오지만 아니어도 finish()에서 정렬한다. */
@@ -265,30 +335,39 @@ export class SheetModel {
     };
   }
 
-  /** 행 묶음 하나의 셀(열·서식·종류·표시 문자열). 행마다 offsets로 구간을 나눈다. */
+  /**
+   * 행 묶음 하나의 셀(열·서식·종류·표시 문자열). 행마다 offsets로 구간을 나눈다.
+   * colors는 숫자 서식이 정한 글자색이 있는 칸만 { 칸 번호: 색 }으로 담는다.
+   */
   block(index) {
     const start = index * BLOCK_ROWS;
     const end = Math.min(this.rowCount, start + BLOCK_ROWS);
     const count = Math.max(0, end - start);
     const offsets = new Int32Array(count + 1);
-    if (count === 0) return { start, count, offsets, cols: new Uint16Array(0), xfs: new Uint16Array(0), kinds: new Uint8Array(0), texts: [] };
+    if (count === 0) return { start, count, offsets, cols: new Uint16Array(0), xfs: new Uint16Array(0), kinds: new Uint8Array(0), texts: [], colors: null };
     const i0 = this.rowStart[start];
     const i1 = this.rowStart[end];
     for (let r = 0; r <= count; r++) offsets[r] = this.rowStart[start + r] - i0;
     const { colA, xfA, kindA, valA } = this.cells;
     const texts = new Array(i1 - i0);
+    let colors = null;
     const ctx = this.context;
     for (let i = i0; i < i1; i++) {
       const kind = kindA[i];
       const val = valA[i];
       let text = '';
-      if (kind === NUM) text = val === 0 && !this.showZeros ? '' : ctx.formatNumber(val, xfA[i]);
-      else if (kind === STR) text = ctx.formatText(ctx.strings[val] ?? '', xfA[i]);
+      if (kind === NUM) {
+        if (val !== 0 || this.showZeros) {
+          text = ctx.formatNumber(val, xfA[i]);
+          const color = ctx.numberColor(val, xfA[i]);
+          if (color) (colors ??= {})[i - i0] = color;
+        }
+      } else if (kind === STR) text = ctx.formatText(ctx.strings[val] ?? '', xfA[i]);
       else if (kind === BOOL) text = val ? 'TRUE' : 'FALSE';
       else if (kind === ERR || kind === PRENUM) text = ctx.strings[val] ?? '';
       texts[i - i0] = text;
     }
-    return { start, count, offsets, cols: colA.slice(i0, i1), xfs: xfA.slice(i0, i1), kinds: kindA.slice(i0, i1), texts };
+    return { start, count, offsets, cols: colA.slice(i0, i1), xfs: xfA.slice(i0, i1), kinds: kindA.slice(i0, i1), texts, colors };
   }
 
   /** 행 묶음에서 쓰인 서식 번호(중복 없음) */

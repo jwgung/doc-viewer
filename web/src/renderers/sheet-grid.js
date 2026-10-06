@@ -156,13 +156,16 @@ export class SheetGrid {
     // 데이터가 적어도 화면을 채울 만큼 빈 칸을 그린다(엑셀처럼).
     const nRows = Math.min(1_048_576, Math.max(m.rowCount, m.freezeRows + 1, Math.ceil(vh / Math.max(8, m.defaultRowHeight)) + 1));
     const nCols = Math.min(MAX_COLS, Math.max(m.colCount, m.freezeCols + 1, Math.ceil(vw / Math.max(8, m.defaultColWidth)) + 1));
+    // 시트 좌표는 1부터 시작한다: 0은 A열 왼쪽·1행 위쪽 눈금선 자리라, 첫 칸의 앞쪽 테두리도 보인다.
     const rowTop = new Float64Array(nRows + 1);
     const heights = new Float32Array(nRows).fill(m.defaultRowHeight);
     for (let i = 0; i < m.rowHeights.index.length; i++) if (m.rowHeights.index[i] < nRows) heights[m.rowHeights.index[i]] = m.rowHeights.value[i];
+    rowTop[0] = 1;
     for (let r = 0; r < nRows; r++) rowTop[r + 1] = rowTop[r] + heights[r];
     const colLeft = new Float64Array(nCols + 1);
     const widths = new Float32Array(nCols).fill(m.defaultColWidth);
     for (let i = 0; i < m.colWidths.index.length; i++) if (m.colWidths.index[i] < nCols) widths[m.colWidths.index[i]] = m.colWidths.value[i];
+    colLeft[0] = 1;
     for (let c = 0; c < nCols; c++) colLeft[c + 1] = colLeft[c] + widths[c];
     const rowHead = Math.max(32, String(nRows).length * 8 + 12);
     // 휴대폰에서 고정 영역이 화면 대부분을 차지하면 고정을 푼다.
@@ -170,7 +173,8 @@ export class SheetGrid {
     let fc = Math.min(m.freezeCols, nCols - 1);
     if (rowTop[fr] > (vh - HEAD_HEIGHT) * 0.5) fr = 0;
     if (colLeft[fc] > (vw - rowHead) * 0.6) fc = 0;
-    this.geo = { nRows, nCols, rowTop, colLeft, rowHead, fr, fc, fw: colLeft[fc], fh: rowTop[fr] };
+    // 본문 영역은 고정 경계의 눈금선 자리(첫 본문 칸의 앞쪽 선)부터 시작한다. fw·fh는 고정 영역 크기다.
+    this.geo = { nRows, nCols, rowTop, colLeft, rowHead, fr, fc, fw: colLeft[fc] - 1, fh: rowTop[fr] - 1 };
     this.build();
     this.rendered = null;
   }
@@ -233,8 +237,8 @@ export class SheetGrid {
     const sc = this.scroller;
     const mainW = Math.max(1, sc.clientWidth - rowHead - fw);
     const mainH = Math.max(1, sc.clientHeight - HEAD_HEIGHT - fh);
-    const x0 = colLeft[fc] + sc.scrollLeft;
-    const y0 = rowTop[fr] + sc.scrollTop;
+    const x0 = fw + sc.scrollLeft;
+    const y0 = fh + sc.scrollTop;
     return {
       r0: Math.max(fr, upperBound(rowTop, y0, nRows + 1)),
       r1: Math.min(nRows - 1, upperBound(rowTop, y0 + mainH, nRows + 1)),
@@ -263,16 +267,16 @@ export class SheetGrid {
     };
     this.rendered = win;
     this.request(win);
-    const { rowTop, colLeft, fr, fc } = g;
-    this.paint(this.cellsMain, win.r0, win.r1, win.c0, win.c1, colLeft[fc], rowTop[fr]);
-    this.headMain.innerHTML = this.colHeads(win.c0, win.c1, colLeft[fc]);
-    this.rowheadMain.innerHTML = this.rowHeads(win.r0, win.r1, rowTop[fr]);
+    const { fr, fc, fw, fh } = g;
+    this.paint(this.cellsMain, win.r0, win.r1, win.c0, win.c1, fw, fh);
+    this.headMain.innerHTML = this.colHeads(win.c0, win.c1, fw);
+    this.rowheadMain.innerHTML = this.rowHeads(win.r0, win.r1, fh);
     if (fc) {
-      this.paint(this.cellsLeft, win.r0, win.r1, 0, fc - 1, 0, rowTop[fr]);
+      this.paint(this.cellsLeft, win.r0, win.r1, 0, fc - 1, 0, fh);
       this.headLeft.innerHTML = this.colHeads(0, fc - 1, 0);
     }
     if (fr) {
-      this.paint(this.cellsTop, 0, fr - 1, win.c0, win.c1, colLeft[fc], 0);
+      this.paint(this.cellsTop, 0, fr - 1, win.c0, win.c1, fw, 0);
       this.rowheadTop.innerHTML = this.rowHeads(0, fr - 1, 0);
       if (fc) this.paint(this.cellsCorner, 0, fr - 1, 0, fc - 1, 0, 0);
     }
@@ -434,12 +438,14 @@ export class SheetGrid {
     const height = rowTop[r1 + 1] - rowTop[r0];
     const left = colLeft[c0] - ox;
     const width = colLeft[c1 + 1] - colLeft[c0];
-    let html = '';
+    // 각 칸의 오른쪽·아래 선과, 영역 첫 칸의 왼쪽·위 선(앞 칸의 선 자리)
+    let html = `<i class="gv" style="left:${colLeft[c0] - 1 - ox}px;top:${top - 1}px;height:${height + 1}px"></i>`;
+    html += `<i class="gh" style="top:${rowTop[r0] - 1 - oy}px;left:${left - 1}px;width:${width + 1}px"></i>`;
     for (let c = c0; c <= c1; c++) {
-      if (colLeft[c + 1] > colLeft[c]) html += `<i class="gv" style="left:${colLeft[c + 1] - 1 - ox}px;top:${top}px;height:${height}px"></i>`;
+      if (colLeft[c + 1] > colLeft[c]) html += `<i class="gv" style="left:${colLeft[c + 1] - 1 - ox}px;top:${top - 1}px;height:${height + 1}px"></i>`;
     }
     for (let r = r0; r <= r1; r++) {
-      if (rowTop[r + 1] > rowTop[r]) html += `<i class="gh" style="top:${rowTop[r + 1] - 1 - oy}px;left:${left}px;width:${width}px"></i>`;
+      if (rowTop[r + 1] > rowTop[r]) html += `<i class="gh" style="top:${rowTop[r + 1] - 1 - oy}px;left:${left - 1}px;width:${width + 1}px"></i>`;
     }
     return html;
   }
@@ -470,7 +476,9 @@ export class SheetGrid {
         if (align === H_CENTER) left = right = Math.min(left, right);
       }
       if (left || right) cls += ' sp';
-      span = `<span${left || right ? ` style="margin-left:${-left}px;margin-right:${-right}px"` : ''}>${escapeHtml(shownText(text, st))}</span>`;
+      const color = block.colors?.[i];
+      const css = (left || right ? `margin-left:${-left}px;margin-right:${-right}px;` : '') + (color ? `color:${color}` : '');
+      span = `<span${css ? ` style="${css}"` : ''}>${escapeHtml(shownText(text, st))}</span>`;
     } else if (c < c0 || c > c1) return '';
     return `<div class="${cls}" style="left:${colLeft[c] - ox - 1}px;top:${rowTop[r] - oy - 1}px;width:${w + 1}px;height:${h + 1}px">${span}</div>`;
   }
@@ -526,7 +534,8 @@ export class SheetGrid {
       const numeric = kind === NUM || kind === PRENUM;
       if (st.h === H_GENERAL && (numeric || kind === BOOL || kind === ERR)) cls += numeric ? ' ar' : ' ac';
       if (numeric) cls += ' n';
-      span = `<span>${escapeHtml(shownText(text, st))}</span>`;
+      const color = at.block.colors?.[at.i];
+      span = `<span${color ? ` style="color:${color}"` : ''}>${escapeHtml(shownText(text, st))}</span>`;
     }
     return `<div class="${cls}" style="left:${colLeft[c1] - ox - 1}px;top:${rowTop[r1] - oy - 1}px;width:${w + 1}px;height:${h + 1}px">${span}</div>`;
   }
