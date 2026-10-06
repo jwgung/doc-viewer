@@ -8,6 +8,7 @@ const STRINGS = {
     encryptedUnsupported: '암호가 걸린 문서입니다. 이 형식의 암호 문서는 아직 열 수 없습니다.',
     passwordRequired: '암호를 입력해야 볼 수 있는 문서입니다.',
     rowsLimited: (shown, total) => `처음 ${shown}행만 표시합니다 (전체 ${total}행).`,
+    chartSheet: '차트 시트는 아직 표시하지 못합니다.',
     passwordTitle: '암호 입력',
     passwordPrompt: '암호가 걸린 문서입니다.',
     passwordWrong: '암호가 맞지 않습니다. 다시 입력하세요.',
