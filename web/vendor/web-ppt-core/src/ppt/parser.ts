@@ -9,11 +9,12 @@ import { Cfb } from './cfb';
 import { getPptDecryptor } from '../crypto/hook';
 import { isPptEncrypted } from '../crypto/ppt';
 import {
-  ESCHER, EscherProps, MSO_SHAPE, P, Scheme, SP_FLAG, arrayElementSize, escherColor, extractBlips,
+  ESCHER, EscherProps, MSO_SHAPE, P, Scheme, SP_FLAG, arrayElementSize, blipsFromStore, escherColor, extractBlips,
   isTableGroup, MSO_PICTURE_FRAME, parseOpt, readAnchor, readChildAnchor, readSp, readSpgr,
   inheritProps, shapeFill, shapeShadow, shapeStroke, tableRowHeights,
 } from './escher';
 import { ansi, findAll, findRec, Rec, records, RT, utf16 } from './records';
+import { isPpt95, parsePp40, parsePpt95 } from './legacy';
 import { parseAnimations, parseSlideShowInfo } from './timing';
 
 /**
@@ -531,7 +532,8 @@ interface Origin {
 /** [doc-viewer] 텍스트 필드에 들어갈 값(이 슬라이드 기준) */
 interface SlideFields {
   slideNumber: string;
-  date: string;
+  /** 날짜 필드: 형식 번호(DateTimeMCAtom.index)가 있으면 그 형식, 없으면 머리글·바닥글 설정을 따른다 */
+  date: (format?: number) => string;
   header: string;
   footer: string;
 }
@@ -644,7 +646,7 @@ function styledText(ctx: Ctx, recs: Iterable<Rec>): StyledText | null {
   let textType: number | undefined;
   const links: LinkRange[] = [];
   let pendingLink: string | undefined;
-  const fields: { pos: number; kind: keyof SlideFields }[] = [];
+  const fields: { pos: number; kind: keyof SlideFields; format?: number }[] = [];
   for (const r of recs) {
     if (r.type === RT.TextCharsAtom) text = utf16(dv, r.start, r.len);
     else if (r.type === RT.TextBytesAtom) text = ansi(dv, r.start, r.len);
@@ -658,7 +660,9 @@ function styledText(ctx: Ctx, recs: Iterable<Rec>): StyledText | null {
       if (pendingLink && end > begin) links.push({ begin, end, link: pendingLink });
       pendingLink = undefined;
     } else if (MC_FIELD[r.type] && r.len >= 4) {
-      fields.push({ pos: dv.getInt32(r.start, true), kind: MC_FIELD[r.type] });
+      // DateTimeMCAtom은 위치 뒤에 날짜 형식 번호(1바이트)가 있다
+      const format = r.type === RT.DateTimeMCAtom && r.len >= 5 ? dv.getUint8(r.start + 4) : undefined;
+      fields.push({ pos: dv.getInt32(r.start, true), kind: MC_FIELD[r.type], format });
     }
   }
   if (text === null) return null;
@@ -666,7 +670,10 @@ function styledText(ctx: Ctx, recs: Iterable<Rec>): StyledText | null {
   const out: StyledText = { text, paraProps: styles.para, charProps: styles.char, textType, links: links.length ? links : undefined };
   // 뒤쪽 필드부터 바꿔야 앞쪽 위치가 밀리지 않는다
   if (ctx.fields) {
-    for (const f of fields.sort((a, b) => b.pos - a.pos)) spliceField(out, f.pos, ctx.fields[f.kind]);
+    for (const f of fields.sort((a, b) => b.pos - a.pos)) {
+      const value = f.kind === 'date' ? ctx.fields.date(f.format) : ctx.fields[f.kind];
+      spliceField(out, f.pos, value);
+    }
   }
   return out;
 }
@@ -1370,6 +1377,16 @@ function recAt(dv: DataView, off: number, limit: number): Rec | null {
   return { type: dv.getUint16(off + 2, true), instance: verInst >> 4, version, isContainer: version === 0xf, start: off + 8, len };
 }
 
+/** [doc-viewer] 컨테이너 안을 레코드 종류 경로대로 내려가 찾는다(예: Document → PPDrawingGroup → DggContainer → BStore) */
+function findDeepIn(dv: DataView, rec: Rec, path: number[]): Rec | null {
+  let cur: Rec | null = rec;
+  for (const type of path) {
+    if (!cur) return null;
+    cur = findRec(dv, cur.start, cur.start + cur.len, type);
+  }
+  return cur;
+}
+
 interface EditChain {
   offsets: Map<number, number>;
   /** 가장 최근 UserEditAtom.docPersistIdRef: 현재 Document 컨테이너의 persist id */
@@ -1536,15 +1553,30 @@ function readHeadersFooters(dv: DataView, rec: Rec): HfSettings {
   return hf;
 }
 
-/** [doc-viewer] 오늘 날짜를 DateTimeFormat 번호에 가깝게 쓴다. 형식 표는 로캘마다 달라 대표 형식만 맞춘다 */
+/**
+ * [doc-viewer] 오늘 날짜·시각을 [MS-PPT] DateTimeFormat 번호(0~12)에 맞는 꼴로 쓴다.
+ * 실제 글자 모양은 기기 로캘을 따른다(PowerPoint도 시스템 로캘로 그린다).
+ */
+const DATE_FORMATS: Intl.DateTimeFormatOptions[] = [
+  { year: 'numeric', month: 'numeric', day: 'numeric' },
+  { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' },
+  { day: 'numeric', month: 'long', year: 'numeric' },
+  { month: 'long', day: 'numeric', year: 'numeric' },
+  { day: 'numeric', month: 'short', year: '2-digit' },
+  { month: 'long', year: '2-digit' },
+  { month: 'short', year: '2-digit' },
+  { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' },
+  { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' },
+  { hour: '2-digit', minute: '2-digit', hour12: false },
+  { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false },
+  { hour: 'numeric', minute: '2-digit', hour12: true },
+  { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true },
+];
+
 function formatToday(formatId: number): string {
   const now = new Date();
   try {
-    if (formatId === 1) return now.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-    if (formatId === 2 || formatId === 3) return now.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
-    if (formatId >= 9) return now.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-    if (formatId === 7 || formatId === 8) return now.toLocaleString();
-    return now.toLocaleDateString();
+    return now.toLocaleString(undefined, DATE_FORMATS[formatId] ?? DATE_FORMATS[0]);
   } catch {
     return now.toISOString().slice(0, 10);
   }
@@ -1677,13 +1709,29 @@ export function parsePpt(bytes: Uint8Array, password?: string): Presentation {
     throw new Error('该文件是加密的 OOXML 容器，请用 parse(input, { password })');
   }
 
-  let doc = cfb.stream('PowerPoint Document');
-  if (!doc) throw new Error('无效的 .ppt：找不到 PowerPoint Document 流');
+  // [doc-viewer] PowerPoint 95/97 이중 저장 파일은 97 형식 스트림을 PP97_DUALSTORAGE 저장소 안에 따로 둔다
+  const dual = cfb.hasStorage('PP97_DUALSTORAGE');
+  const stream = (name: string): Uint8Array | null => (dual ? cfb.streamIn('PP97_DUALSTORAGE', name) : null) ?? cfb.stream(name);
+
+  let doc = stream('PowerPoint Document');
+  if (!doc) {
+    // [doc-viewer] PowerPoint 4.0은 PP40 스트림 하나뿐이다. 글자만이라도 보여 준다
+    const pp40 = cfb.stream('PP40');
+    const legacy = pp40 ? parsePp40(pp40) : null;
+    if (legacy) return legacy;
+    throw new Error('无效的 .ppt：找不到 PowerPoint Document 流');
+  }
+  // [doc-viewer] PowerPoint 95 형식은 레코드 머리가 달라 97 파서로 읽을 수 없다. 글자만이라도 보여 준다
+  if (isPpt95(doc)) {
+    const legacy = parsePpt95(doc);
+    if (legacy) return legacy;
+    throw new Error('PowerPoint 95 格式的 .ppt：无法读取幻灯片');
+  }
 
   // 老式 .ppt 的 RC4 CryptoAPI 加密。判据在 Current User 流的 headerToken 上，
   // 不看这一处就只会得到「.ppt 中未找到幻灯片」——实测 POI 语料里 5 个加密文件
   // 全都被这样误诊过。
-  const currentUser = cfb.stream('Current User');
+  const currentUser = stream('Current User');
   if (isPptEncrypted(currentUser) && currentUser) {
     const decrypt = getPptDecryptor();
     if (!decrypt) throw new Error('该 .ppt 已加密，但未注入解密器（setPptDecryptor）');
@@ -1696,22 +1744,6 @@ export function parsePpt(bytes: Uint8Array, password?: string): Presentation {
 
   let width = 720 * (96 / 72);
   let height = 540 * (96 / 72);
-
-  // 图片
-  const pictures = cfb.stream('Pictures');
-  const blips = pictures ? extractBlips(pictures) : [];
-  const blobs = blips.map((b) => {
-    try {
-      // 图元文件浏览器无法直接解码，转成 SVG data URI。
-      // PICT 是 Mac 版存的，同样要走解码器——直接丢给 <img> 只会是裂图
-      if (b.mime === 'image/emf' || b.mime === 'image/wmf' || b.mime === 'image/pict') {
-        return metafileDataUrl(b.data);
-      }
-      return URL.createObjectURL(new Blob([b.data.slice().buffer], { type: b.mime }));
-    } catch {
-      return null;
-    }
-  });
 
   // 顶层记录索引：持久化目录里的偏移是记录头的位置
   const topLevel: Rec[] = [];
@@ -1765,6 +1797,26 @@ export function parsePpt(bytes: Uint8Array, password?: string): Presentation {
     }
   };
   if (docRec) scan(docRec.start, docRec.start + docRec.len, 0);
+
+  // 图片
+  // [doc-viewer] pib는 BStore의 BSE 순번이라 BSE가 가리키는 위치에서 읽는다(빈 BSE가 있으면 순서가 어긋난다).
+  // BStore를 못 찾을 때만 원래처럼 Pictures 스트림 순서를 쓴다
+  const pictures = stream('Pictures');
+  const dgg = docRec ? findDeepIn(dv, docRec, [RT.PPDrawingGroup, ESCHER.DggContainer, ESCHER.Bstore]) : null;
+  const blips = (dgg ? blipsFromStore(doc, dgg, pictures) : null) ?? (pictures ? extractBlips(pictures) : []);
+  const blobs = blips.map((b) => {
+    if (!b) return null;
+    try {
+      // 图元文件浏览器无法直接解码，转成 SVG data URI。
+      // PICT 是 Mac 版存的，同样要走解码器——直接丢给 <img> 只会是裂图
+      if (b.mime === 'image/emf' || b.mime === 'image/wmf' || b.mime === 'image/pict') {
+        return metafileDataUrl(b.data);
+      }
+      return URL.createObjectURL(new Blob([b.data.slice().buffer], { type: b.mime }));
+    } catch {
+      return null;
+    }
+  });
 
   const shared: Shared = { fonts, blobs, scale: MASTER_TO_PX, envStyles };
 
@@ -1851,14 +1903,22 @@ export function parsePpt(bytes: Uint8Array, password?: string): Presentation {
     if (textOnly.length) slides = textOnly;
   }
 
-  // [doc-viewer] 문서 구조는 멀쩡한데 슬라이드가 하나도 없는 빈 프레젠테이션은 오류 대신 빈 슬라이드 한 장으로 연다
-  if (!slides.length && docRec) {
+  // [doc-viewer] 문서 구조는 멀쩡한데 슬라이드가 하나도 없는 빈 프레젠테이션은 오류 대신 빈 슬라이드 한 장으로 연다.
+  // Document 안 레코드가 끝까지 온전할 때만 그렇게 한다(중간이 깨진 파일을 빈 화면으로 보여 주지 않도록)
+  if (!slides.length && docRec && wellFormed(dv, docRec)) {
     const master = masterFor(0)(null);
     slides = [{ background: master?.background ?? { type: 'solid', color: 'rgb(255,255,255)' }, elements: [...(master?.elements ?? [])] }];
   }
 
   if (!slides.length) throw new Error('.ppt 中未找到幻灯片');
   return { width, height, slides, source: 'ppt' };
+}
+
+/** [doc-viewer] 컨테이너의 자식 레코드가 길이대로 빈틈없이 끝까지 이어지는지 */
+function wellFormed(dv: DataView, rec: Rec): boolean {
+  let end = rec.start;
+  for (const r of records(dv, rec.start, rec.start + rec.len)) end = r.start + r.len;
+  return end === rec.start + rec.len;
 }
 
 /** [doc-viewer] SlideListWithText(메모)에 있는 메모 본문 */
@@ -2007,7 +2067,8 @@ function parseSlide(dv: DataView, slideRec: Rec, shared: Shared, env: SlideEnv):
   const hf = env.hf;
   const fields: SlideFields = {
     slideNumber: String(env.slideNumber),
-    date: hf && hf.flags & HF_FLAG.USER_DATE ? hf.userDate : formatToday(hf?.formatId ?? 0),
+    date: (format) => format !== undefined ? formatToday(format)
+      : hf && hf.flags & HF_FLAG.USER_DATE ? hf.userDate : formatToday(hf?.formatId ?? 0),
     header: hf?.header ?? '',
     footer: hf?.footer ?? '',
   };

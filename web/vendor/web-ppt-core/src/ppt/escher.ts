@@ -421,51 +421,126 @@ export function extractBlips(pictures: Uint8Array): { mime: string; data: Uint8A
   const out: { mime: string; data: Uint8Array }[] = [];
   if (!pictures.length) return out;
   const dv = new DataView(pictures.buffer, pictures.byteOffset, pictures.byteLength);
-
-  const RASTER: Record<number, string> = {
-    0xf01d: 'image/jpeg', 0xf01e: 'image/png', 0xf01f: 'image/bmp', 0xf029: 'image/tiff',
-    0xf02a: 'image/jpeg',
-  };
-  const METAFILE: Record<number, string> = {
-    0xf01a: 'image/emf', 0xf01b: 'image/wmf', 0xf01c: 'image/pict',
-  };
-
   for (const rec of records(dv, 0, pictures.length)) {
-    const isMeta = rec.type in METAFILE;
-    const mime = isMeta ? METAFILE[rec.type] : RASTER[rec.type];
-    if (!mime) continue;
-
-    // instance 为奇数表示带两个 UID
-    let off = rec.start + ((rec.instance & 1) === 1 ? 32 : 16);
-    const end = rec.start + rec.len;
-    if (off >= end) continue;
-
-    if (!isMeta) {
-      out.push({ mime, data: pictures.subarray(off + 1, end) });
-      continue;
-    }
-
-    if (off + 34 > end) continue;
-    const uncompressedSize = dv.getUint32(off, true);
-    const compression = dv.getUint8(off + 32);
-    const body = pictures.subarray(off + 34, end);
-    // 0 = DEFLATE，254 = 未压缩
-    if (compression === 0) {
-      try {
-        const raw = unzlibSync(body, uncompressedSize ? { out: new Uint8Array(uncompressedSize) } : undefined);
-        out.push({ mime, data: raw });
-      } catch {
-        try {
-          out.push({ mime, data: inflateSync(body) });
-        } catch {
-          // 解压失败就跳过这张图，不影响其余内容
-        }
-      }
-    } else {
-      out.push({ mime, data: body });
-    }
+    const blip = decodeBlip(pictures, dv, rec);
+    if (blip) out.push(blip);
   }
   return out;
+}
+
+const RASTER: Record<number, string> = {
+  0xf01d: 'image/jpeg', 0xf01e: 'image/png', 0xf01f: 'image/bmp', 0xf029: 'image/tiff',
+  0xf02a: 'image/jpeg',
+};
+const METAFILE: Record<number, string> = {
+  0xf01a: 'image/emf', 0xf01b: 'image/wmf', 0xf01c: 'image/pict',
+};
+
+/** BLIP 레코드 하나 → mime·바이트. 못 읽으면 null([doc-viewer]: extractBlips에서 떼어 냈다) */
+function decodeBlip(bytes: Uint8Array, dv: DataView, rec: Rec): { mime: string; data: Uint8Array } | null {
+  const isMeta = rec.type in METAFILE;
+  const mime = isMeta ? METAFILE[rec.type] : RASTER[rec.type];
+  if (!mime) return null;
+
+  // instance 为奇数表示带两个 UID
+  const off = rec.start + ((rec.instance & 1) === 1 ? 32 : 16);
+  const end = rec.start + rec.len;
+  if (off >= end) return null;
+
+  if (!isMeta) {
+    const data = bytes.subarray(off + 1, end);
+    // [doc-viewer] DIB는 BMP 파일 머리(14바이트)가 없는 비트맵이라 브라우저가 그대로 못 그린다. 머리를 붙인다
+    return { mime, data: rec.type === 0xf01f ? dibToBmp(data) ?? data : data };
+  }
+
+  if (off + 34 > end) return null;
+  const uncompressedSize = dv.getUint32(off, true);
+  const compression = dv.getUint8(off + 32);
+  const body = bytes.subarray(off + 34, end);
+  // 0 = DEFLATE，254 = 未压缩
+  if (compression === 0) {
+    try {
+      return { mime, data: unzlibSync(body, uncompressedSize ? { out: new Uint8Array(uncompressedSize) } : undefined) };
+    } catch {
+      try {
+        return { mime, data: inflateSync(body) };
+      } catch {
+        // 解压失败就跳过这张图，不影响其余内容
+        return null;
+      }
+    }
+  }
+  return { mime, data: body };
+}
+
+/** [doc-viewer] DIB(BITMAPINFOHEADER로 시작) 앞에 BITMAPFILEHEADER를 붙여 .bmp로 만든다 */
+function dibToBmp(dib: Uint8Array): Uint8Array | null {
+  if (dib.length < 16) return null;
+  const dv = new DataView(dib.buffer, dib.byteOffset, dib.byteLength);
+  const headerSize = dv.getUint32(0, true);
+  if (headerSize < 12 || headerSize > dib.length) return null;
+  let palette = 0;
+  let masks = 0;
+  if (headerSize >= 40) {
+    const bitCount = dv.getUint16(14, true);
+    const compression = dv.getUint32(16, true);
+    const clrUsed = dv.getUint32(32, true);
+    palette = (clrUsed || (bitCount <= 8 ? 1 << bitCount : 0)) * 4;
+    if (headerSize === 40 && (compression === 3 || compression === 6)) masks = compression === 3 ? 12 : 16;
+  } else {
+    const bitCount = dv.getUint16(10, true);
+    palette = (bitCount <= 8 ? 1 << bitCount : 0) * 3;
+  }
+  const out = new Uint8Array(14 + dib.length);
+  const odv = new DataView(out.buffer);
+  out[0] = 0x42;
+  out[1] = 0x4d;
+  odv.setUint32(2, out.length, true);
+  odv.setUint32(10, 14 + headerSize + palette + masks, true);
+  out.set(dib, 14);
+  return out;
+}
+
+/**
+ * [doc-viewer] 도형의 pib(1부터)는 BStore의 BSE 순번이고, BSE의 foDelay가 Pictures 스트림 안 위치를 가리킨다.
+ * 원본은 Pictures 스트림의 n번째 그림을 썼는데, 지운 그림의 빈 BSE가 남은 파일에서는 번호가 밀려
+ * 엉뚱한 그림(다른 OLE 미리보기 등)이 나왔다. BSE마다 위치를 따라가 읽고, 빈 칸은 null로 둔다.
+ * BStore를 못 찾으면 null을 돌려주어 호출 쪽이 원래 방식으로 돌아가게 한다.
+ */
+export function blipsFromStore(
+  doc: Uint8Array, bstore: Rec, pictures: Uint8Array | null,
+): ({ mime: string; data: Uint8Array } | null)[] | null {
+  const ddv = new DataView(doc.buffer, doc.byteOffset, doc.byteLength);
+  const pdv = pictures ? new DataView(pictures.buffer, pictures.byteOffset, pictures.byteLength) : null;
+  const out: ({ mime: string; data: Uint8Array } | null)[] = [];
+  for (const bse of records(ddv, bstore.start, bstore.start + bstore.len)) {
+    if (bse.type !== ESCHER.BSE) continue;
+    let blip: { mime: string; data: Uint8Array } | null = null;
+    if (bse.len >= 36) {
+      const size = ddv.getUint32(bse.start + 20, true);
+      const foDelay = ddv.getUint32(bse.start + 28, true);
+      const cbName = ddv.getUint8(bse.start + 33);
+      if (size > 0 && pictures && pdv && foDelay + 8 <= pictures.length) {
+        const len = pdv.getUint32(foDelay + 4, true);
+        if (foDelay + 8 + len <= pictures.length) {
+          const verInst = pdv.getUint16(foDelay, true);
+          blip = decodeBlip(pictures, pdv, {
+            type: pdv.getUint16(foDelay + 2, true), instance: verInst >> 4, version: verInst & 0xf,
+            isContainer: false, start: foDelay + 8, len,
+          });
+        }
+      }
+      // BLIP을 BSE 안에 바로 담은 파일
+      if (!blip && bse.len >= 36 + cbName + 8) {
+        for (const inner of records(ddv, bse.start + 36 + cbName, bse.start + bse.len)) {
+          blip = decodeBlip(doc, ddv, inner);
+          if (blip) break;
+        }
+      }
+    }
+    out.push(blip);
+  }
+  return out.length ? out : null;
 }
 
 /** ClientAnchor：4 个 int16，顺序为 top,left,bottom(右),right —— 与 POI 的读法一致 */

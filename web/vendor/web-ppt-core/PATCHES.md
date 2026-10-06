@@ -37,7 +37,7 @@ Android의 `buildWebViewer` 작업은 `web/vendor/`도 입력으로 보므로 �
 |---|---|
 | PowerPoint 97~2003이 저장한 제목·본문 자리표시자는 글자를 `SlideListWithText`에 두고 도형에는 순번(`OutlineTextRefAtom`)만 남기는데, 이 순번을 읽지 않았다. 실제 문서에서 글자가 통째로 빠진 가장 큰 원인이다. | `parser.ts` `persistList`(슬라이드별 텍스트 묶음 수집), `styledText`, `parseSpContainer` |
 | '빠른 저장' 파일은 저장할 때마다 Document·Slide·디렉터리가 스트림 뒤에 덧붙는다. 스트림의 첫(가장 오래된) Document를 써서 슬라이드 목록과 글자가 옛 판으로 나왔다(쪽 수 12/71 같은 불일치). `Current User` → `UserEditAtom` 사슬로 지속성 디렉터리와 현재 Document를 찾고, 레코드는 디렉터리 오프셋에서 바로 읽는다. | `parser.ts` `editChain`, `recAt`, `parsePpt` |
-| 마스터의 바닥글·쪽 번호·날짜 자리표시자를 그리지 않았다. 문서·슬라이드의 `HeadersFooters` 설정에 따라 그리고, 글 속 필드 자리 문자(`*` + `*MCAtom`)를 실제 값으로 바꾼다. | `parser.ts` `hfPlaceholders`, `readHeadersFooters`, `spliceField`, `parseSlide` |
+| 마스터의 바닥글·쪽 번호·날짜 자리표시자를 그리지 않았다. 문서·슬라이드의 `HeadersFooters` 설정에 따라 그리고, 글 속 필드 자리 문자(`*` + `*MCAtom`)를 실제 값으로 바꾼다. 날짜 필드는 필드마다 정한 형식(`DateTimeMCAtom.index`)으로 오늘 날짜를 쓴다. | `parser.ts` `hfPlaceholders`, `readHeadersFooters`, `spliceField`, `formatToday`, `parseSlide` |
 | 메모가 `SlideListWithText`(메모 목록)에만 있는 파일은 메모 글을 놓쳤다. | `parser.ts` `outlineNotes` |
 
 ### 글자 모양
@@ -59,9 +59,18 @@ Android의 `buildWebViewer` 작업은 `web/vendor/`도 입력으로 보므로 �
 | 그라데이션 각도·초점을 무시하고 늘 위→아래로 그렸다. LibreOffice `ImportGradientColor`와 같은 방향·색 순서(축 대칭·사각형형 포함)로 그린다. | `escher.ts` `gradientFill` |
 | 슬라이드 색 구성표가 마스터와 다를 때도 마스터 도형·배경을 마스터 구성표로 칠했다. 구성표마다 마스터를 따로 해석한다. | `parser.ts` `masterFor` |
 
+### 그림
+
+| 원인 | 고친 곳 |
+|---|---|
+| 도형의 그림 번호(pib)는 BStore의 BSE 순번인데 Pictures 스트림의 n번째 그림으로 읽었다. 지운 그림의 빈 BSE가 남은 파일에서 번호가 밀려 다른 그림(다른 OLE 미리보기 등)이 나왔다. BSE의 `foDelay` 위치에서 읽는다. | `escher.ts` `blipsFromStore`, `parser.ts` `parsePpt` |
+| DIB 그림을 BMP 파일 머리 없이 `image/bmp`로 넘겨 브라우저가 그리지 못했다. 14바이트 머리를 붙인다. | `escher.ts` `dibToBmp` |
+
 ### 열지 못하던 파일
 
 | 원인 | 고친 곳 |
 |---|---|
-| 문서 구조는 멀쩡한데 슬라이드가 없는 빈 프레젠테이션(`empty.ppt`)을 오류로 처리했다. 마스터 배경의 빈 슬라이드 한 장으로 연다. | `parser.ts` `parsePpt` |
-| 중간 레코드 길이가 깨져 순차 탐색이 멈춘 파일(퍼즈 파일)은 슬라이드를 찾지 못했다. 디렉터리 오프셋에서 바로 읽어 연다. | `parser.ts` `recAt`, `parsePpt` |
+| 문서 구조는 멀쩡한데 슬라이드가 없는 빈 프레젠테이션(`empty.ppt`)을 오류로 처리했다. Document 안 레코드가 끝까지 온전하면 마스터 배경의 빈 슬라이드 한 장으로 연다. 중간이 깨진 파일은 지금처럼 오류로 둔다. | `parser.ts` `parsePpt`, `wellFormed` |
+| 중간 레코드 길이가 깨져 순차 탐색이 멈춘 파일은 슬라이드를 찾지 못했다. 지속성 디렉터리 오프셋에서 바로 읽는다. | `parser.ts` `recAt`, `parsePpt` |
+| PowerPoint 95/97 이중 저장 파일은 루트에 95 형식, `PP97_DUALSTORAGE` 저장소 안에 97 형식 스트림을 같은 이름으로 둔다. 이름만으로 찾아 95 형식을 잡았다. 저장소 안 스트림을 먼저 쓴다. | `cfb.ts` `hasStorage`, `streamIn` |
+| PowerPoint 95(레코드 머리 16바이트)와 4.0(`PP40` 스트림)은 읽지 못했다. 글자만이라도 보여 준다. 95는 슬라이드별 글 상자 위치와 글자를, 4.0은 길이가 붙은 글자 레코드를 골라 레코드 사이 간격으로 슬라이드를 나눈다(공개 명세가 없어 도형·서식은 읽지 않는다). | 새 파일 `legacy.ts`, `parser.ts` `parsePpt` |

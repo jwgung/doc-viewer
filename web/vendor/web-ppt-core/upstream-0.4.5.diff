@@ -1,3 +1,83 @@
+diff -ruN a/packages/core/src/ppt/cfb.ts b/packages/core/src/ppt/cfb.ts
+--- a/packages/core/src/ppt/cfb.ts
++++ b/packages/core/src/ppt/cfb.ts
+@@ -12,6 +12,8 @@
+   private fat: number[] = [];
+   private miniFat: number[] = [];
+   private dir: { name: string; type: number; start: number; size: number }[] = [];
++  /** [doc-viewer] 디렉터리 항목을 id 그대로(빈 항목 포함) 담는다. 저장소(storage) 안 스트림을 찾을 때 쓴다 */
++  private entries: ({ name: string; type: number; start: number; size: number; left: number; right: number; child: number } | null)[] = [];
+   private miniStream: Uint8Array = new Uint8Array(0);
+ 
+   constructor(bytes: Uint8Array) {
+@@ -80,14 +82,24 @@
+     const dv = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
+     for (let off = 0; off + 128 <= raw.length; off += 128) {
+       const nameLen = dv.getUint16(off + 64, true);
+-      if (nameLen === 0 || nameLen > 64) continue;
++      if (nameLen === 0 || nameLen > 64) {
++        this.entries.push(null);
++        continue;
++      }
+       let name = '';
+       for (let i = 0; i < nameLen - 2; i += 2) name += String.fromCharCode(dv.getUint16(off + i, true));
+-      this.dir.push({
++      const entry = {
+         name,
+         type: dv.getUint8(off + 66),
+         start: dv.getUint32(off + 116, true),
+         size: dv.getUint32(off + 120, true),
++      };
++      this.dir.push(entry);
++      this.entries.push({
++        ...entry,
++        left: dv.getInt32(off + 68, true),
++        right: dv.getInt32(off + 72, true),
++        child: dv.getInt32(off + 76, true),
+       });
+     }
+   }
+@@ -108,9 +120,40 @@
+     return this.dir.filter((e) => e.type === 2).map((e) => e.name);
+   }
+ 
++  /** [doc-viewer] 이름이 같은 저장소(storage)가 있는지 */
++  hasStorage(name: string): boolean {
++    return this.dir.some((e) => e.type === 1 && e.name.toLowerCase() === name.toLowerCase());
++  }
++
++  /**
++   * [doc-viewer] 저장소 안의 스트림. 형제 항목은 디렉터리의 왼쪽·오른쪽 링크로 이어진 트리라 그것을 따라간다.
++   * PowerPoint 95/97 이중 저장 파일은 루트에 95 형식, PP97_DUALSTORAGE 저장소 안에 97 형식 스트림을
++   * 같은 이름으로 둔다. 이름만으로 찾으면 95 형식 스트림을 잡아 슬라이드를 못 찾는다.
++   */
++  streamIn(storage: string, name: string): Uint8Array | null {
++    const parent = this.entries.find((e) => e?.type === 1 && e.name.toLowerCase() === storage.toLowerCase());
++    if (!parent) return null;
++    const seen = new Set<number>();
++    const stack = [parent.child];
++    while (stack.length) {
++      const id = stack.pop()!;
++      if (id < 0 || seen.has(id) || seen.size > 10000) continue;
++      seen.add(id);
++      const e = this.entries[id];
++      if (!e) continue;
++      if (e.type === 2 && e.name.toLowerCase() === name.toLowerCase()) return this.read(e);
++      stack.push(e.left, e.right);
++    }
++    return null;
++  }
++
+   stream(name: string): Uint8Array | null {
+     const entry = this.dir.find((e) => e.type === 2 && e.name.toLowerCase() === name.toLowerCase());
+     if (!entry) return null;
++    return this.read(entry);
++  }
++
++  private read(entry: { start: number; size: number }): Uint8Array {
+     if (entry.size >= this.miniCutoff) return this.readChain(entry.start, entry.size);
+     const sects = this.chain(entry.start, this.miniFat);
+     const out = new Uint8Array(sects.length * this.miniSectorSize);
 diff -ruN a/packages/core/src/ppt/escher.ts b/packages/core/src/ppt/escher.ts
 --- a/packages/core/src/ppt/escher.ts
 +++ b/packages/core/src/ppt/escher.ts
@@ -294,22 +374,382 @@ diff -ruN a/packages/core/src/ppt/escher.ts b/packages/core/src/ppt/escher.ts
  }
  
  /**
+@@ -263,53 +421,128 @@
+   const out: { mime: string; data: Uint8Array }[] = [];
+   if (!pictures.length) return out;
+   const dv = new DataView(pictures.buffer, pictures.byteOffset, pictures.byteLength);
++  for (const rec of records(dv, 0, pictures.length)) {
++    const blip = decodeBlip(pictures, dv, rec);
++    if (blip) out.push(blip);
++  }
++  return out;
++}
+ 
+-  const RASTER: Record<number, string> = {
+-    0xf01d: 'image/jpeg', 0xf01e: 'image/png', 0xf01f: 'image/bmp', 0xf029: 'image/tiff',
+-    0xf02a: 'image/jpeg',
+-  };
+-  const METAFILE: Record<number, string> = {
+-    0xf01a: 'image/emf', 0xf01b: 'image/wmf', 0xf01c: 'image/pict',
+-  };
++const RASTER: Record<number, string> = {
++  0xf01d: 'image/jpeg', 0xf01e: 'image/png', 0xf01f: 'image/bmp', 0xf029: 'image/tiff',
++  0xf02a: 'image/jpeg',
++};
++const METAFILE: Record<number, string> = {
++  0xf01a: 'image/emf', 0xf01b: 'image/wmf', 0xf01c: 'image/pict',
++};
+ 
+-  for (const rec of records(dv, 0, pictures.length)) {
+-    const isMeta = rec.type in METAFILE;
+-    const mime = isMeta ? METAFILE[rec.type] : RASTER[rec.type];
+-    if (!mime) continue;
+-
+-    // instance 为奇数表示带两个 UID
+-    let off = rec.start + ((rec.instance & 1) === 1 ? 32 : 16);
+-    const end = rec.start + rec.len;
+-    if (off >= end) continue;
+-
+-    if (!isMeta) {
+-      out.push({ mime, data: pictures.subarray(off + 1, end) });
+-      continue;
+-    }
++/** BLIP 레코드 하나 → mime·바이트. 못 읽으면 null([doc-viewer]: extractBlips에서 떼어 냈다) */
++function decodeBlip(bytes: Uint8Array, dv: DataView, rec: Rec): { mime: string; data: Uint8Array } | null {
++  const isMeta = rec.type in METAFILE;
++  const mime = isMeta ? METAFILE[rec.type] : RASTER[rec.type];
++  if (!mime) return null;
++
++  // instance 为奇数表示带两个 UID
++  const off = rec.start + ((rec.instance & 1) === 1 ? 32 : 16);
++  const end = rec.start + rec.len;
++  if (off >= end) return null;
++
++  if (!isMeta) {
++    const data = bytes.subarray(off + 1, end);
++    // [doc-viewer] DIB는 BMP 파일 머리(14바이트)가 없는 비트맵이라 브라우저가 그대로 못 그린다. 머리를 붙인다
++    return { mime, data: rec.type === 0xf01f ? dibToBmp(data) ?? data : data };
++  }
+ 
+-    if (off + 34 > end) continue;
+-    const uncompressedSize = dv.getUint32(off, true);
+-    const compression = dv.getUint8(off + 32);
+-    const body = pictures.subarray(off + 34, end);
+-    // 0 = DEFLATE，254 = 未压缩
+-    if (compression === 0) {
++  if (off + 34 > end) return null;
++  const uncompressedSize = dv.getUint32(off, true);
++  const compression = dv.getUint8(off + 32);
++  const body = bytes.subarray(off + 34, end);
++  // 0 = DEFLATE，254 = 未压缩
++  if (compression === 0) {
++    try {
++      return { mime, data: unzlibSync(body, uncompressedSize ? { out: new Uint8Array(uncompressedSize) } : undefined) };
++    } catch {
+       try {
+-        const raw = unzlibSync(body, uncompressedSize ? { out: new Uint8Array(uncompressedSize) } : undefined);
+-        out.push({ mime, data: raw });
++        return { mime, data: inflateSync(body) };
+       } catch {
+-        try {
+-          out.push({ mime, data: inflateSync(body) });
+-        } catch {
+-          // 解压失败就跳过这张图，不影响其余内容
+-        }
++        // 解压失败就跳过这张图，不影响其余内容
++        return null;
+       }
+-    } else {
+-      out.push({ mime, data: body });
+     }
+   }
++  return { mime, data: body };
++}
++
++/** [doc-viewer] DIB(BITMAPINFOHEADER로 시작) 앞에 BITMAPFILEHEADER를 붙여 .bmp로 만든다 */
++function dibToBmp(dib: Uint8Array): Uint8Array | null {
++  if (dib.length < 16) return null;
++  const dv = new DataView(dib.buffer, dib.byteOffset, dib.byteLength);
++  const headerSize = dv.getUint32(0, true);
++  if (headerSize < 12 || headerSize > dib.length) return null;
++  let palette = 0;
++  let masks = 0;
++  if (headerSize >= 40) {
++    const bitCount = dv.getUint16(14, true);
++    const compression = dv.getUint32(16, true);
++    const clrUsed = dv.getUint32(32, true);
++    palette = (clrUsed || (bitCount <= 8 ? 1 << bitCount : 0)) * 4;
++    if (headerSize === 40 && (compression === 3 || compression === 6)) masks = compression === 3 ? 12 : 16;
++  } else {
++    const bitCount = dv.getUint16(10, true);
++    palette = (bitCount <= 8 ? 1 << bitCount : 0) * 3;
++  }
++  const out = new Uint8Array(14 + dib.length);
++  const odv = new DataView(out.buffer);
++  out[0] = 0x42;
++  out[1] = 0x4d;
++  odv.setUint32(2, out.length, true);
++  odv.setUint32(10, 14 + headerSize + palette + masks, true);
++  out.set(dib, 14);
+   return out;
+ }
+ 
++/**
++ * [doc-viewer] 도형의 pib(1부터)는 BStore의 BSE 순번이고, BSE의 foDelay가 Pictures 스트림 안 위치를 가리킨다.
++ * 원본은 Pictures 스트림의 n번째 그림을 썼는데, 지운 그림의 빈 BSE가 남은 파일에서는 번호가 밀려
++ * 엉뚱한 그림(다른 OLE 미리보기 등)이 나왔다. BSE마다 위치를 따라가 읽고, 빈 칸은 null로 둔다.
++ * BStore를 못 찾으면 null을 돌려주어 호출 쪽이 원래 방식으로 돌아가게 한다.
++ */
++export function blipsFromStore(
++  doc: Uint8Array, bstore: Rec, pictures: Uint8Array | null,
++): ({ mime: string; data: Uint8Array } | null)[] | null {
++  const ddv = new DataView(doc.buffer, doc.byteOffset, doc.byteLength);
++  const pdv = pictures ? new DataView(pictures.buffer, pictures.byteOffset, pictures.byteLength) : null;
++  const out: ({ mime: string; data: Uint8Array } | null)[] = [];
++  for (const bse of records(ddv, bstore.start, bstore.start + bstore.len)) {
++    if (bse.type !== ESCHER.BSE) continue;
++    let blip: { mime: string; data: Uint8Array } | null = null;
++    if (bse.len >= 36) {
++      const size = ddv.getUint32(bse.start + 20, true);
++      const foDelay = ddv.getUint32(bse.start + 28, true);
++      const cbName = ddv.getUint8(bse.start + 33);
++      if (size > 0 && pictures && pdv && foDelay + 8 <= pictures.length) {
++        const len = pdv.getUint32(foDelay + 4, true);
++        if (foDelay + 8 + len <= pictures.length) {
++          const verInst = pdv.getUint16(foDelay, true);
++          blip = decodeBlip(pictures, pdv, {
++            type: pdv.getUint16(foDelay + 2, true), instance: verInst >> 4, version: verInst & 0xf,
++            isContainer: false, start: foDelay + 8, len,
++          });
++        }
++      }
++      // BLIP을 BSE 안에 바로 담은 파일
++      if (!blip && bse.len >= 36 + cbName + 8) {
++        for (const inner of records(ddv, bse.start + 36 + cbName, bse.start + bse.len)) {
++          blip = decodeBlip(doc, ddv, inner);
++          if (blip) break;
++        }
++      }
++    }
++    out.push(blip);
++  }
++  return out.length ? out : null;
++}
++
+ /** ClientAnchor：4 个 int16，顺序为 top,left,bottom(右),right —— 与 POI 的读法一致 */
+ export function readAnchor(dv: DataView, rec: Rec): { x: number; y: number; w: number; h: number } | null {
+   if (rec.len < 8) return null;
+diff -ruN a/packages/core/src/ppt/legacy.ts b/packages/core/src/ppt/legacy.ts
+--- a/packages/core/src/ppt/legacy.ts
++++ b/packages/core/src/ppt/legacy.ts
+@@ -0,0 +1,188 @@
++import type { Paragraph, Presentation, ShapeElement, Slide, TextBody, TextRun } from '../types';
++
++/**
++ * [doc-viewer] PowerPoint 95·4.0처럼 97 이전 형식에서 글자만 뽑아 슬라이드로 보여 준다.
++ *
++ * 두 형식 모두 공개 명세가 없어 도형·서식은 읽지 않는다. 목적은 '열 수 없음' 대신 내용을 읽을 수 있게 하는 것이다.
++ * - PowerPoint 95: 레코드 구조가 97과 비슷하지만 머리가 16바이트다. 슬라이드(0x03EE)마다 글 상자의
++ *   위치(0x0BC1)와 글자(0x0FE0 바로 아래 0x07EE)를 읽어 원래 자리에 놓는다.
++ * - PowerPoint 4.0(PP40 스트림): 구조를 모른다. 글자 레코드가 u32 길이 + ANSI 글자로 들어 있어
++ *   그 꼴만 골라 내고, 레코드 사이가 크게 벌어지는 곳을 슬라이드 경계로 본다.
++ */
++
++const MASTER_TO_PX = 96 / 576;
++
++interface Rec95 {
++  type: number;
++  container: boolean;
++  start: number;
++  len: number;
++}
++
++/** PowerPoint 95 레코드: type(u16) · 예약(u16) · 종류(u32, 0xFFFF면 컨테이너) · 길이(u32) · 예약(u32) */
++function* records95(dv: DataView, start: number, end: number): Generator<Rec95> {
++  let off = start;
++  while (off + 16 <= end) {
++    const len = dv.getUint32(off + 8, true);
++    if (off + 16 + len > end) return;
++    yield { type: dv.getUint16(off, true), container: dv.getUint32(off + 4, true) === 0xffff, start: off + 16, len };
++    off += 16 + len;
++  }
++}
++
++/** 'PowerPoint Document' 스트림이 PowerPoint 95 형식인지(루트 0x0003 컨테이너 안에 Document 0x03E8) */
++export function isPpt95(doc: Uint8Array): boolean {
++  if (doc.length < 32) return false;
++  const dv = new DataView(doc.buffer, doc.byteOffset, doc.byteLength);
++  return dv.getUint16(0, true) === 0x0003 && dv.getUint32(4, true) === 0xffff
++    && dv.getUint32(8, true) + 16 <= doc.length && dv.getUint16(16, true) === 0x03e8;
++}
++
++/** 바이트 → 글자(ANSI). 문단 구분 \r, 줄 바꿈 \v만 남기고 나머지 제어 문자는 버린다 */
++function ansiText(bytes: Uint8Array): string {
++  let s = '';
++  for (const b of bytes) {
++    if (b === 13 || b === 11 || b === 9 || b >= 32) s += String.fromCharCode(b);
++  }
++  return s;
++}
++
++const run = (text: string, size: number, bold: boolean): TextRun => ({
++  text, b: bold, i: false, u: false, strike: false, size, color: 'rgb(0,0,0)', fonts: [],
++});
++
++/** 글자 → 글 상자. 크기를 알 수 없어 넘치면 렌더러가 줄이게(autoFitCompute) 한다 */
++function textBody(text: string, size: number, bold: boolean, anchor: TextBody['anchor']): TextBody {
++  const paragraphs: Paragraph[] = text.split(/[\r\v]/).map((line) => ({
++    align: 'left', lvl: 0, marL: 0, indent: 0, bullet: null, lineHeight: null, spaceBefore: 0, spaceAfter: size * 0.25,
++    runs: [run(line, size, bold)],
++  }));
++  return { anchor, insets: [4.8, 9.6, 4.8, 9.6], wrap: true, fontScale: 1, autoFitCompute: true, paragraphs };
++}
++
++const box = (x: number, y: number, w: number, h: number, text: TextBody): ShapeElement => ({
++  kind: 'shape', x, y, w, h, rot: 0, flipH: false, flipV: false, path: null, fill: null, stroke: null, text,
++});
++
++/** PowerPoint 95 → 글자만 담은 슬라이드. 읽을 슬라이드가 없으면 null */
++export function parsePpt95(doc: Uint8Array): Presentation | null {
++  const dv = new DataView(doc.buffer, doc.byteOffset, doc.byteLength);
++  const root = records95(dv, 0, doc.length).next().value;
++  if (!root) return null;
++  const docRec = [...records95(dv, root.start, root.start + root.len)].find((r) => r.type === 0x03e8 && r.container);
++  if (!docRec) return null;
++
++  let wm = 5760;
++  let hm = 4320;
++  const slideRecs: Rec95[] = [];
++  for (const r of records95(dv, docRec.start, docRec.start + docRec.len)) {
++    if (r.type === 0x03e9 && r.len >= 8) {
++      wm = dv.getInt32(r.start, true) || wm;
++      hm = dv.getInt32(r.start + 4, true) || hm;
++    } else if (r.type === 0x07d0 && r.container) {
++      // 슬라이드 목록. 마스터(0x03F8)가 든 목록은 마스터·제목 마스터 목록이라 건너뛴다
++      const kids = [...records95(dv, r.start, r.start + r.len)];
++      if (kids.some((k) => k.type === 0x03f8)) continue;
++      slideRecs.push(...kids.filter((k) => k.type === 0x03ee && k.container));
++    }
++  }
++
++  const width = wm * MASTER_TO_PX;
++  const height = hm * MASTER_TO_PX;
++  const slides: Slide[] = [];
++  for (const s of slideRecs) {
++    // 글 상자: 0x0BC2 컨테이너 안의 위치(0x0BC1: 가운데가 원점인 left·top·right·bottom)와 글자
++    const shapes: { x: number; y: number; w: number; h: number; text: string }[] = [];
++    const walk = (start: number, end: number, depth: number, inText: boolean): void => {
++      for (const r of records95(dv, start, end)) {
++        if (r.type === 0x0bc2 && r.container) {
++          let bounds: number[] | null = null;
++          const texts: string[] = [];
++          const collect = (cs: number, ce: number, d: number): void => {
++            for (const c of records95(dv, cs, ce)) {
++              if (c.type === 0x0bc1 && !c.container && c.len >= 28 && !bounds) {
++                bounds = [12, 16, 20, 24].map((o) => dv.getInt32(c.start + o, true));
++              } else if (c.type === 0x0fe0 && c.container) {
++                for (const t of records95(dv, c.start, c.start + c.len)) {
++                  if (t.type === 0x07ee && !t.container && t.len > 0) texts.push(ansiText(doc.subarray(t.start, t.start + t.len)));
++                }
++              } else if (c.container && d < 8) collect(c.start, c.start + c.len, d + 1);
++            }
++          };
++          collect(r.start, r.start + r.len, 0);
++          const text = texts.join('\r').replace(/\0/g, '');
++          if (bounds && text.trim()) {
++            const [l, t, rr, b] = bounds as number[];
++            shapes.push({
++              x: (l + wm / 2) * MASTER_TO_PX, y: (t + hm / 2) * MASTER_TO_PX,
++              w: Math.max(1, rr - l) * MASTER_TO_PX, h: Math.max(1, b - t) * MASTER_TO_PX, text,
++            });
++          }
++        } else if (r.container && depth < 8 && !inText) {
++          // 메모(0x03F0)의 글은 슬라이드에 그리지 않는다
++          if (r.type !== 0x03f0) walk(r.start, r.start + r.len, depth + 1, inText);
++        }
++      }
++    };
++    walk(s.start, s.start + s.len, 0, false);
++    // 맨 위에 가까운 글 상자를 제목으로 크게 쓴다
++    const top = shapes.reduce<typeof shapes[number] | null>((a, b) => (!a || b.y < a.y ? b : a), null);
++    const elements = shapes.map((sh) => {
++      const title = sh === top && sh.y < height * 0.3;
++      return box(sh.x, sh.y, sh.w, sh.h, textBody(sh.text, title ? 48 : 32, false, title ? 'middle' : 'top'));
++    });
++    slides.push({ background: { type: 'solid', color: 'rgb(255,255,255)' }, elements });
++  }
++  if (!slides.some((s) => s.elements.length)) return null;
++  return { width, height, slides, source: 'ppt' };
++}
++
++/** PowerPoint 4.0(PP40 스트림) → 글자만 담은 슬라이드. 글자를 못 찾으면 null */
++export function parsePp40(stream: Uint8Array): Presentation | null {
++  const dv = new DataView(stream.buffer, stream.byteOffset, stream.byteLength);
++  const isText = (b: number): boolean => b === 13 || b === 11 || b === 9 || (b >= 32 && b !== 127);
++  const blocks: { start: number; end: number; text: string }[] = [];
++  let i = 0;
++  while (i + 4 < stream.length) {
++    const len = dv.getUint32(i, true);
++    // u32 길이 바로 뒤가 그 길이만큼 모두 글자이고 글자가 하나라도 있으면 글 레코드로 본다
++    if (len >= 2 && len <= 20000 && i + 4 + len <= stream.length) {
++      let ok = true;
++      let letters = 0;
++      for (let k = i + 4; k < i + 4 + len; k++) {
++        const b = stream[k];
++        if (!isText(b)) {
++          ok = false;
++          break;
++        }
++        if ((b >= 65 && b <= 90) || (b >= 97 && b <= 122)) letters++;
++      }
++      if (ok && letters >= Math.min(2, len)) {
++        blocks.push({ start: i, end: i + 4 + len, text: ansiText(stream.subarray(i + 4, i + 4 + len)) });
++        i += 4 + len;
++        continue;
++      }
++    }
++    i++;
++  }
++  if (!blocks.length) return null;
++
++  // 레코드 사이가 크게 벌어지는 곳을 슬라이드 경계로 본다(같은 슬라이드의 글 상자는 몇백 바이트 안에 몰려 있다)
++  const groups: string[][] = [];
++  let last = -Infinity;
++  for (const b of blocks) {
++    if (b.start - last > 600 || !groups.length) groups.push([]);
++    groups[groups.length - 1].push(b.text);
++    last = b.end;
++  }
++
++  const width = 960;
++  const height = 720;
++  const slides: Slide[] = groups.map((texts) => {
++    const [first, ...rest] = texts;
++    const elements: ShapeElement[] = [box(48, 32, width - 96, 120, textBody(first, 40, true, 'middle'))];
++    if (rest.length) elements.push(box(48, 168, width - 96, height - 200, textBody(rest.join('\r'), 28, false, 'top')));
++    return { background: { type: 'solid', color: 'rgb(255,255,255)' }, elements };
++  });
++  return { width, height, slides, source: 'ppt' };
++}
 diff -ruN a/packages/core/src/ppt/parser.ts b/packages/core/src/ppt/parser.ts
 --- a/packages/core/src/ppt/parser.ts
 +++ b/packages/core/src/ppt/parser.ts
-@@ -9,9 +9,9 @@
+@@ -9,11 +9,12 @@
  import { getPptDecryptor } from '../crypto/hook';
  import { isPptEncrypted } from '../crypto/ppt';
  import {
 -  ESCHER, EscherProps, MSO_SHAPE, P, Scheme, SP_FLAG, escherColor, extractBlips,
-+  ESCHER, EscherProps, MSO_SHAPE, P, Scheme, SP_FLAG, arrayElementSize, escherColor, extractBlips,
++  ESCHER, EscherProps, MSO_SHAPE, P, Scheme, SP_FLAG, arrayElementSize, blipsFromStore, escherColor, extractBlips,
    isTableGroup, MSO_PICTURE_FRAME, parseOpt, readAnchor, readChildAnchor, readSp, readSpgr,
 -  shapeFill, shapeShadow, shapeStroke, tableRowHeights,
 +  inheritProps, shapeFill, shapeShadow, shapeStroke, tableRowHeights,
  } from './escher';
  import { ansi, findAll, findRec, Rec, records, RT, utf16 } from './records';
++import { isPpt95, parsePp40, parsePpt95 } from './legacy';
  import { parseAnimations, parseSlideShowInfo } from './timing';
-@@ -43,6 +43,19 @@
+ 
+ /**
+@@ -43,6 +44,19 @@
    indentLevel?: number;
    leftMargin?: number;
    indent?: number;
@@ -329,7 +769,7 @@ diff -ruN a/packages/core/src/ppt/parser.ts b/packages/core/src/ppt/parser.ts
  }
  
  /** 超链接覆盖的字符区间（左闭右开） */
-@@ -115,10 +128,21 @@
+@@ -115,10 +129,21 @@
      }
      if (off + size > end) return -1;
      const v = size === 2 ? dv.getUint16(off, true) : dv.getUint32(off, true);
@@ -354,7 +794,7 @@ diff -ruN a/packages/core/src/ppt/parser.ts b/packages/core/src/ppt/parser.ts
      else if (flag === 0x00000800) props.align = v;
      off += size;
    }
-@@ -205,6 +229,9 @@
+@@ -205,6 +230,9 @@
  /** [MS-PPT] TextTypeEnum */
  const TX = { TITLE: 0, BODY: 1, NOTES: 2, OTHER: 4, CENTER_BODY: 5, CENTER_TITLE: 6 } as const;
  
@@ -364,7 +804,7 @@ diff -ruN a/packages/core/src/ppt/parser.ts b/packages/core/src/ppt/parser.ts
  /** OEPlaceholderAtom.placeholderId → TextTypeEnum */
  const PH_TEXT_TYPE: Record<number, number> = {
    1: TX.TITLE, 2: TX.BODY, 3: TX.CENTER_TITLE, 4: TX.CENTER_BODY,
-@@ -255,8 +282,9 @@
+@@ -255,8 +283,9 @@
    claimAutoNums: (paraCount: number) => (AutoNum | null)[] | undefined;
  }
  
@@ -376,7 +816,7 @@ diff -ruN a/packages/core/src/ppt/parser.ts b/packages/core/src/ppt/parser.ts
    if (!raw.trim()) return null;
  
    // 按段落属性覆盖长度切分文本，再在段内按字符属性切分 run
-@@ -298,7 +326,9 @@
+@@ -298,7 +327,9 @@
      const paraStart = charPos;
      charPos += pEntry.chars;
      // 段落自带的终止符会切出一条多余的空行，丢掉它（但仍要算进字符属性的游标）
@@ -387,7 +827,7 @@ diff -ruN a/packages/core/src/ppt/parser.ts b/packages/core/src/ppt/parser.ts
      const dropped = parts.length > 1 && parts[parts.length - 1] === '';
      const lines = dropped ? parts.slice(0, -1) : parts;
      const pp = pEntry.props;
-@@ -334,27 +364,59 @@
+@@ -334,27 +365,59 @@
        }
        lineStart += line.length + 1;
  
@@ -455,7 +895,7 @@ diff -ruN a/packages/core/src/ppt/parser.ts b/packages/core/src/ppt/parser.ts
  }
  
  /** 形状自带属性 → 母版按级默认值 → 内建兜底 */
-@@ -372,13 +434,25 @@
+@@ -372,13 +435,25 @@
      u: own.underline ?? dft.underline ?? false,
      strike: false,
      size: (own.size ?? dft.size ?? 18) * (96 / 72),
@@ -482,7 +922,7 @@ diff -ruN a/packages/core/src/ppt/parser.ts b/packages/core/src/ppt/parser.ts
   * Wingdings / Symbol 的符号字体码位（0xF000 私用区）→ 通用 Unicode。
   * 直接原样输出会渲染成豆腐块，必须映射成常见符号。
   */
-@@ -387,10 +461,28 @@
+@@ -387,10 +462,28 @@
    0xa7: '▪', 0xa8: '◻', 0xb7: '•', 0xd8: '➢', 0xfc: '✓', 0xfe: '☑',
  };
  
@@ -512,7 +952,7 @@ diff -ruN a/packages/core/src/ppt/parser.ts b/packages/core/src/ppt/parser.ts
    const mapped = SYMBOL_BULLET[low];
    if (mapped && (code >= 0xf000 || code > 0x7f)) return mapped;
    if (code >= 0xf000) return '•';
-@@ -398,6 +490,34 @@
+@@ -398,6 +491,34 @@
    return ch;
  }
  
@@ -547,14 +987,15 @@ diff -ruN a/packages/core/src/ppt/parser.ts b/packages/core/src/ppt/parser.ts
  // ---------------- 幻灯片解析 ----------------
  
  /** 组内坐标 → 绝对坐标的映射基准 */
-@@ -408,6 +528,14 @@
+@@ -408,6 +529,15 @@
    sy: number;
  }
  
 +/** [doc-viewer] 텍스트 필드에 들어갈 값(이 슬라이드 기준) */
 +interface SlideFields {
 +  slideNumber: string;
-+  date: string;
++  /** 날짜 필드: 형식 번호(DateTimeMCAtom.index)가 있으면 그 형식, 없으면 머리글·바닥글 설정을 따른다 */
++  date: (format?: number) => string;
 +  header: string;
 +  footer: string;
 +}
@@ -562,7 +1003,7 @@ diff -ruN a/packages/core/src/ppt/parser.ts b/packages/core/src/ppt/parser.ts
  interface Ctx {
    dv: DataView;
    scheme: Scheme;
-@@ -415,6 +543,10 @@
+@@ -415,6 +545,10 @@
    blobs: (string | null)[];
    /** SlideListWithText 中按 lTxid 索引的文本 */
    listText: StyledText[];
@@ -573,7 +1014,7 @@ diff -ruN a/packages/core/src/ppt/parser.ts b/packages/core/src/ppt/parser.ts
    scale: number;
    /** 母版逐级文本样式（TextTypeEnum → 各级），以及全局环境兜底 */
    styles: MasterStyles;
-@@ -426,6 +558,8 @@
+@@ -426,6 +560,8 @@
    slideCount: number;
    /** 解析母版图形时为 true：跳过占位符形状，只保留装饰图形 */
    masterPass: boolean;
@@ -582,7 +1023,7 @@ diff -ruN a/packages/core/src/ppt/parser.ts b/packages/core/src/ppt/parser.ts
    levelCache: Map<string, LevelStyle>;
    /** ___PPT9 里的逐段自动编号，与游标一起按文本对象顺序认领 */
    autoNums: (AutoNum | null)[];
-@@ -454,15 +588,19 @@
+@@ -454,15 +590,19 @@
    const key = `${textType}:${lvl}`;
    const hit = ctx.levelCache.get(key);
    if (hit) return hit;
@@ -609,7 +1050,7 @@ diff -ruN a/packages/core/src/ppt/parser.ts b/packages/core/src/ppt/parser.ts
    ];
    const merged: LevelStyle = {
      para: Object.assign({}, ...chain.map((s) => s?.para ?? {})) as ParaProps,
-@@ -482,13 +620,32 @@
+@@ -482,13 +622,32 @@
  }
  
  function textFromClientTextbox(ctx: Ctx, rec: Rec): StyledText | null {
@@ -638,17 +1079,19 @@ diff -ruN a/packages/core/src/ppt/parser.ts b/packages/core/src/ppt/parser.ts
    const links: LinkRange[] = [];
    let pendingLink: string | undefined;
 -  for (const r of records(dv, rec.start, rec.start + rec.len)) {
-+  const fields: { pos: number; kind: keyof SlideFields }[] = [];
++  const fields: { pos: number; kind: keyof SlideFields; format?: number }[] = [];
 +  for (const r of recs) {
      if (r.type === RT.TextCharsAtom) text = utf16(dv, r.start, r.len);
      else if (r.type === RT.TextBytesAtom) text = ansi(dv, r.start, r.len);
      else if (r.type === RT.StyleTextPropAtom) styleRec = r;
-@@ -500,11 +657,46 @@
+@@ -500,11 +659,51 @@
        const end = dv.getUint32(r.start + 4, true);
        if (pendingLink && end > begin) links.push({ begin, end, link: pendingLink });
        pendingLink = undefined;
 +    } else if (MC_FIELD[r.type] && r.len >= 4) {
-+      fields.push({ pos: dv.getInt32(r.start, true), kind: MC_FIELD[r.type] });
++      // DateTimeMCAtom은 위치 뒤에 날짜 형식 번호(1바이트)가 있다
++      const format = r.type === RT.DateTimeMCAtom && r.len >= 5 ? dv.getUint8(r.start + 4) : undefined;
++      fields.push({ pos: dv.getInt32(r.start, true), kind: MC_FIELD[r.type], format });
      }
    }
    if (text === null) return null;
@@ -657,7 +1100,10 @@ diff -ruN a/packages/core/src/ppt/parser.ts b/packages/core/src/ppt/parser.ts
 +  const out: StyledText = { text, paraProps: styles.para, charProps: styles.char, textType, links: links.length ? links : undefined };
 +  // 뒤쪽 필드부터 바꿔야 앞쪽 위치가 밀리지 않는다
 +  if (ctx.fields) {
-+    for (const f of fields.sort((a, b) => b.pos - a.pos)) spliceField(out, f.pos, ctx.fields[f.kind]);
++    for (const f of fields.sort((a, b) => b.pos - a.pos)) {
++      const value = f.kind === 'date' ? ctx.fields.date(f.format) : ctx.fields[f.kind];
++      spliceField(out, f.pos, value);
++    }
 +  }
 +  return out;
 +}
@@ -691,7 +1137,7 @@ diff -ruN a/packages/core/src/ppt/parser.ts b/packages/core/src/ppt/parser.ts
  }
  
  /** ClientData / ClientTextbox 里的 OEPlaceholderAtom.placeholderId */
-@@ -661,8 +853,15 @@
+@@ -661,8 +860,15 @@
    const shapeType = spRec.instance;
    const optRec = findRec(dv, rec.start, rec.start + rec.len, ESCHER.Opt);
    const props: EscherProps = optRec ? parseOpt(dv, optRec) : { simple: new Map(), complex: new Map() };
@@ -709,7 +1155,7 @@ diff -ruN a/packages/core/src/ppt/parser.ts b/packages/core/src/ppt/parser.ts
    if (!box || box.w <= 0 || box.h <= 0) return null;
  
    const base = elementBase(box, sp, props, ctx.scheme);
-@@ -700,13 +899,26 @@
+@@ -700,13 +906,26 @@
    // 文本
    const tbRec = findRec(dv, rec.start, rec.start + rec.len, ESCHER.ClientTextbox);
    let styled = tbRec ? textFromClientTextbox(ctx, tbRec) : null;
@@ -737,7 +1183,7 @@ diff -ruN a/packages/core/src/ppt/parser.ts b/packages/core/src/ppt/parser.ts
  
    if (!text && (!fill || fill.type === 'none') && !stroke) return null;
  
-@@ -755,23 +967,24 @@
+@@ -755,23 +974,24 @@
    const { dv } = ctx;
    const v = props.complex.get(P.pVertices);
    const s = props.complex.get(P.pSegmentInfo);
@@ -770,7 +1216,7 @@ diff -ruN a/packages/core/src/ppt/parser.ts b/packages/core/src/ppt/parser.ts
    );
    if (!pts.length) return null;
  
-@@ -785,22 +998,68 @@
+@@ -785,22 +1005,68 @@
  
    if (!s) return `M ${pts.map(px).join(' L ')} Z`;
  
@@ -849,7 +1295,7 @@ diff -ruN a/packages/core/src/ppt/parser.ts b/packages/core/src/ppt/parser.ts
    return out.length ? out.join(' ') : `M ${pts.map(px).join(' L ')} Z`;
  }
  
-@@ -1078,25 +1337,78 @@
+@@ -1078,25 +1344,88 @@
    const map = new Map<number, number>();
    for (const r of records(dv, 0, docLen)) {
      if (r.type !== RT.PersistDirectoryAtom) continue;
@@ -897,6 +1343,16 @@ diff -ruN a/packages/core/src/ppt/parser.ts b/packages/core/src/ppt/parser.ts
 +  return { type: dv.getUint16(off + 2, true), instance: verInst >> 4, version, isContainer: version === 0xf, start: off + 8, len };
 +}
 +
++/** [doc-viewer] 컨테이너 안을 레코드 종류 경로대로 내려가 찾는다(예: Document → PPDrawingGroup → DggContainer → BStore) */
++function findDeepIn(dv: DataView, rec: Rec, path: number[]): Rec | null {
++  let cur: Rec | null = rec;
++  for (const type of path) {
++    if (!cur) return null;
++    cur = findRec(dv, cur.start, cur.start + cur.len, type);
++  }
++  return cur;
++}
++
 +interface EditChain {
 +  offsets: Map<number, number>;
 +  /** 가장 최근 UserEditAtom.docPersistIdRef: 현재 Document 컨테이너의 persist id */
@@ -939,7 +1395,7 @@ diff -ruN a/packages/core/src/ppt/parser.ts b/packages/core/src/ppt/parser.ts
  }
  
  /**
-@@ -1107,18 +1419,27 @@
+@@ -1107,18 +1436,27 @@
    dv: DataView,
    docRec: Rec,
    instance: number,
@@ -974,7 +1430,7 @@ diff -ruN a/packages/core/src/ppt/parser.ts b/packages/core/src/ppt/parser.ts
      }
    }
    return out;
-@@ -1131,6 +1452,102 @@
+@@ -1131,6 +1469,117 @@
    styles: MasterStyles;
    background: Fill | null;
    elements: SlideElement[];
@@ -1062,22 +1518,37 @@ diff -ruN a/packages/core/src/ppt/parser.ts b/packages/core/src/ppt/parser.ts
 +  return hf;
 +}
 +
-+/** [doc-viewer] 오늘 날짜를 DateTimeFormat 번호에 가깝게 쓴다. 형식 표는 로캘마다 달라 대표 형식만 맞춘다 */
++/**
++ * [doc-viewer] 오늘 날짜·시각을 [MS-PPT] DateTimeFormat 번호(0~12)에 맞는 꼴로 쓴다.
++ * 실제 글자 모양은 기기 로캘을 따른다(PowerPoint도 시스템 로캘로 그린다).
++ */
++const DATE_FORMATS: Intl.DateTimeFormatOptions[] = [
++  { year: 'numeric', month: 'numeric', day: 'numeric' },
++  { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' },
++  { day: 'numeric', month: 'long', year: 'numeric' },
++  { month: 'long', day: 'numeric', year: 'numeric' },
++  { day: 'numeric', month: 'short', year: '2-digit' },
++  { month: 'long', year: '2-digit' },
++  { month: 'short', year: '2-digit' },
++  { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' },
++  { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' },
++  { hour: '2-digit', minute: '2-digit', hour12: false },
++  { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false },
++  { hour: 'numeric', minute: '2-digit', hour12: true },
++  { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true },
++];
++
 +function formatToday(formatId: number): string {
 +  const now = new Date();
 +  try {
-+    if (formatId === 1) return now.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-+    if (formatId === 2 || formatId === 3) return now.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
-+    if (formatId >= 9) return now.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-+    if (formatId === 7 || formatId === 8) return now.toLocaleString();
-+    return now.toLocaleDateString();
++    return now.toLocaleString(undefined, DATE_FORMATS[formatId] ?? DATE_FORMATS[0]);
 +  } catch {
 +    return now.toISOString().slice(0, 10);
 +  }
  }
  
  /** 幻灯片 / 母版容器里的 ColorSchemeAtom → 8 色配色方案 */
-@@ -1177,25 +1594,47 @@
+@@ -1177,25 +1626,47 @@
    return out;
  }
  
@@ -1131,9 +1602,59 @@ diff -ruN a/packages/core/src/ppt/parser.ts b/packages/core/src/ppt/parser.ts
  }
  
  // ---------------- 演讲者备注 ----------------
-@@ -1275,22 +1714,46 @@
-   });
+@@ -1238,13 +1709,29 @@
+     throw new Error('该文件是加密的 OOXML 容器，请用 parse(input, { password })');
+   }
  
+-  let doc = cfb.stream('PowerPoint Document');
+-  if (!doc) throw new Error('无效的 .ppt：找不到 PowerPoint Document 流');
++  // [doc-viewer] PowerPoint 95/97 이중 저장 파일은 97 형식 스트림을 PP97_DUALSTORAGE 저장소 안에 따로 둔다
++  const dual = cfb.hasStorage('PP97_DUALSTORAGE');
++  const stream = (name: string): Uint8Array | null => (dual ? cfb.streamIn('PP97_DUALSTORAGE', name) : null) ?? cfb.stream(name);
++
++  let doc = stream('PowerPoint Document');
++  if (!doc) {
++    // [doc-viewer] PowerPoint 4.0은 PP40 스트림 하나뿐이다. 글자만이라도 보여 준다
++    const pp40 = cfb.stream('PP40');
++    const legacy = pp40 ? parsePp40(pp40) : null;
++    if (legacy) return legacy;
++    throw new Error('无效的 .ppt：找不到 PowerPoint Document 流');
++  }
++  // [doc-viewer] PowerPoint 95 형식은 레코드 머리가 달라 97 파서로 읽을 수 없다. 글자만이라도 보여 준다
++  if (isPpt95(doc)) {
++    const legacy = parsePpt95(doc);
++    if (legacy) return legacy;
++    throw new Error('PowerPoint 95 格式的 .ppt：无法读取幻灯片');
++  }
+ 
+   // 老式 .ppt 的 RC4 CryptoAPI 加密。判据在 Current User 流的 headerToken 上，
+   // 不看这一处就只会得到「.ppt 中未找到幻灯片」——实测 POI 语料里 5 个加密文件
+   // 全都被这样误诊过。
+-  const currentUser = cfb.stream('Current User');
++  const currentUser = stream('Current User');
+   if (isPptEncrypted(currentUser) && currentUser) {
+     const decrypt = getPptDecryptor();
+     if (!decrypt) throw new Error('该 .ppt 已加密，但未注入解密器（setPptDecryptor）');
+@@ -1258,39 +1745,47 @@
+   let width = 720 * (96 / 72);
+   let height = 540 * (96 / 72);
+ 
+-  // 图片
+-  const pictures = cfb.stream('Pictures');
+-  const blips = pictures ? extractBlips(pictures) : [];
+-  const blobs = blips.map((b) => {
+-    try {
+-      // 图元文件浏览器无法直接解码，转成 SVG data URI。
+-      // PICT 是 Mac 版存的，同样要走解码器——直接丢给 <img> 只会是裂图
+-      if (b.mime === 'image/emf' || b.mime === 'image/wmf' || b.mime === 'image/pict') {
+-        return metafileDataUrl(b.data);
+-      }
+-      return URL.createObjectURL(new Blob([b.data.slice().buffer], { type: b.mime }));
+-    } catch {
+-      return null;
+-    }
+-  });
+-
    // 顶层记录索引：持久化目录里的偏移是记录头的位置
 -  const byOffset = new Map<number, Rec>();
    const topLevel: Rec[] = [];
@@ -1184,9 +1705,30 @@ diff -ruN a/packages/core/src/ppt/parser.ts b/packages/core/src/ppt/parser.ts
        } else if (r.type === RT.FontEntityAtom) {
          const name = utf16(dv, r.start, Math.min(r.len, 64)).replace(/\0.*$/, '');
          // recInstance 即字体索引；异常时退回追加顺序
-@@ -1304,34 +1767,44 @@
+@@ -1303,35 +1798,65 @@
+   };
    if (docRec) scan(docRec.start, docRec.start + docRec.len, 0);
  
++  // 图片
++  // [doc-viewer] pib는 BStore의 BSE 순번이라 BSE가 가리키는 위치에서 읽는다(빈 BSE가 있으면 순서가 어긋난다).
++  // BStore를 못 찾을 때만 원래처럼 Pictures 스트림 순서를 쓴다
++  const pictures = stream('Pictures');
++  const dgg = docRec ? findDeepIn(dv, docRec, [RT.PPDrawingGroup, ESCHER.DggContainer, ESCHER.Bstore]) : null;
++  const blips = (dgg ? blipsFromStore(doc, dgg, pictures) : null) ?? (pictures ? extractBlips(pictures) : []);
++  const blobs = blips.map((b) => {
++    if (!b) return null;
++    try {
++      // 图元文件浏览器无法直接解码，转成 SVG data URI。
++      // PICT 是 Mac 版存的，同样要走解码器——直接丢给 <img> 只会是裂图
++      if (b.mime === 'image/emf' || b.mime === 'image/wmf' || b.mime === 'image/pict') {
++        return metafileDataUrl(b.data);
++      }
++      return URL.createObjectURL(new Blob([b.data.slice().buffer], { type: b.mime }));
++    } catch {
++      return null;
++    }
++  });
++
    const shared: Shared = { fonts, blobs, scale: MASTER_TO_PX, envStyles };
 -  const offsets = persistOffsets(dv, doc.length);
  
@@ -1241,7 +1783,7 @@ diff -ruN a/packages/core/src/ppt/parser.ts b/packages/core/src/ppt/parser.ts
    const notesBySlideId = new Map<number, Rec>();
    for (const rec of byType(RT.Notes)) {
      const atom = findRec(dv, rec.start, rec.start + rec.len, RT.NotesAtom);
-@@ -1339,6 +1812,9 @@
+@@ -1339,6 +1864,9 @@
    }
  
    const hyperlinks = docRec ? collectHyperlinks(dv, docRec) : new Map<number, string>();
@@ -1251,7 +1793,7 @@ diff -ruN a/packages/core/src/ppt/parser.ts b/packages/core/src/ppt/parser.ts
  
    const count = slideEntries.length;
    let slides: Slide[] = slideEntries.map((entry, i) => {
-@@ -1347,33 +1823,66 @@
+@@ -1347,33 +1875,74 @@
      const notesIdRef = atom && atom.len >= 24 ? dv.getUint32(atom.start + 16, true) : 0;
      // [MS-PPT] SlideFlags：bit0 = 跟随母版图形，bit2 = 跟随母版背景
      const flags = atom && atom.len >= 24 ? dv.getUint16(atom.start + 20, true) : 0x7;
@@ -1286,8 +1828,9 @@ diff -ruN a/packages/core/src/ppt/parser.ts b/packages/core/src/ppt/parser.ts
      if (textOnly.length) slides = textOnly;
    }
  
-+  // [doc-viewer] 문서 구조는 멀쩡한데 슬라이드가 하나도 없는 빈 프레젠테이션은 오류 대신 빈 슬라이드 한 장으로 연다
-+  if (!slides.length && docRec) {
++  // [doc-viewer] 문서 구조는 멀쩡한데 슬라이드가 하나도 없는 빈 프레젠테이션은 오류 대신 빈 슬라이드 한 장으로 연다.
++  // Document 안 레코드가 끝까지 온전할 때만 그렇게 한다(중간이 깨진 파일을 빈 화면으로 보여 주지 않도록)
++  if (!slides.length && docRec && wellFormed(dv, docRec)) {
 +    const master = masterFor(0)(null);
 +    slides = [{ background: master?.background ?? { type: 'solid', color: 'rgb(255,255,255)' }, elements: [...(master?.elements ?? [])] }];
 +  }
@@ -1296,6 +1839,13 @@ diff -ruN a/packages/core/src/ppt/parser.ts b/packages/core/src/ppt/parser.ts
    return { width, height, slides, source: 'ppt' };
  }
  
++/** [doc-viewer] 컨테이너의 자식 레코드가 길이대로 빈틈없이 끝까지 이어지는지 */
++function wellFormed(dv: DataView, rec: Rec): boolean {
++  let end = rec.start;
++  for (const r of records(dv, rec.start, rec.start + rec.len)) end = r.start + r.len;
++  return end === rec.start + rec.len;
++}
++
 +/** [doc-viewer] SlideListWithText(메모)에 있는 메모 본문 */
 +function outlineNotes(dv: DataView, groups: Rec[][]): string {
 +  const lines: string[] = [];
@@ -1322,7 +1872,7 @@ diff -ruN a/packages/core/src/ppt/parser.ts b/packages/core/src/ppt/parser.ts
    const listRec = (function find(start: number, end: number, depth: number): Rec | null {
      for (const r of records(dv, start, end)) {
        if (r.type === RT.SlideListWithText && r.instance === 0) return r;
-@@ -1383,7 +1892,7 @@
+@@ -1383,7 +1952,7 @@
        }
      }
      return null;
@@ -1331,7 +1881,7 @@ diff -ruN a/packages/core/src/ppt/parser.ts b/packages/core/src/ppt/parser.ts
    if (!listRec) return [];
  
    const out: { titles: string[]; bodies: string[] }[] = [];
-@@ -1440,18 +1949,29 @@
+@@ -1440,18 +2009,29 @@
  
  /** 一页所继承的母版信息与关联内容 */
  interface SlideEnv {
@@ -1363,7 +1913,7 @@ diff -ruN a/packages/core/src/ppt/parser.ts b/packages/core/src/ppt/parser.ts
  
    // 幻灯片内的文本列表（占位符文本按 TextHeaderAtom 顺序）
    const listText: StyledText[] = [];
-@@ -1483,23 +2003,46 @@
+@@ -1483,23 +2063,47 @@
      if (resolved) links.set(id, resolved);
    }
  
@@ -1371,7 +1921,8 @@ diff -ruN a/packages/core/src/ppt/parser.ts b/packages/core/src/ppt/parser.ts
 +  const hf = env.hf;
 +  const fields: SlideFields = {
 +    slideNumber: String(env.slideNumber),
-+    date: hf && hf.flags & HF_FLAG.USER_DATE ? hf.userDate : formatToday(hf?.formatId ?? 0),
++    date: (format) => format !== undefined ? formatToday(format)
++      : hf && hf.flags & HF_FLAG.USER_DATE ? hf.userDate : formatToday(hf?.formatId ?? 0),
 +    header: hf?.header ?? '',
 +    footer: hf?.footer ?? '',
 +  };

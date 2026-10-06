@@ -12,6 +12,8 @@ export class Cfb {
   private fat: number[] = [];
   private miniFat: number[] = [];
   private dir: { name: string; type: number; start: number; size: number }[] = [];
+  /** [doc-viewer] 디렉터리 항목을 id 그대로(빈 항목 포함) 담는다. 저장소(storage) 안 스트림을 찾을 때 쓴다 */
+  private entries: ({ name: string; type: number; start: number; size: number; left: number; right: number; child: number } | null)[] = [];
   private miniStream: Uint8Array = new Uint8Array(0);
 
   constructor(bytes: Uint8Array) {
@@ -80,14 +82,24 @@ export class Cfb {
     const dv = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
     for (let off = 0; off + 128 <= raw.length; off += 128) {
       const nameLen = dv.getUint16(off + 64, true);
-      if (nameLen === 0 || nameLen > 64) continue;
+      if (nameLen === 0 || nameLen > 64) {
+        this.entries.push(null);
+        continue;
+      }
       let name = '';
       for (let i = 0; i < nameLen - 2; i += 2) name += String.fromCharCode(dv.getUint16(off + i, true));
-      this.dir.push({
+      const entry = {
         name,
         type: dv.getUint8(off + 66),
         start: dv.getUint32(off + 116, true),
         size: dv.getUint32(off + 120, true),
+      };
+      this.dir.push(entry);
+      this.entries.push({
+        ...entry,
+        left: dv.getInt32(off + 68, true),
+        right: dv.getInt32(off + 72, true),
+        child: dv.getInt32(off + 76, true),
       });
     }
   }
@@ -108,9 +120,40 @@ export class Cfb {
     return this.dir.filter((e) => e.type === 2).map((e) => e.name);
   }
 
+  /** [doc-viewer] 이름이 같은 저장소(storage)가 있는지 */
+  hasStorage(name: string): boolean {
+    return this.dir.some((e) => e.type === 1 && e.name.toLowerCase() === name.toLowerCase());
+  }
+
+  /**
+   * [doc-viewer] 저장소 안의 스트림. 형제 항목은 디렉터리의 왼쪽·오른쪽 링크로 이어진 트리라 그것을 따라간다.
+   * PowerPoint 95/97 이중 저장 파일은 루트에 95 형식, PP97_DUALSTORAGE 저장소 안에 97 형식 스트림을
+   * 같은 이름으로 둔다. 이름만으로 찾으면 95 형식 스트림을 잡아 슬라이드를 못 찾는다.
+   */
+  streamIn(storage: string, name: string): Uint8Array | null {
+    const parent = this.entries.find((e) => e?.type === 1 && e.name.toLowerCase() === storage.toLowerCase());
+    if (!parent) return null;
+    const seen = new Set<number>();
+    const stack = [parent.child];
+    while (stack.length) {
+      const id = stack.pop()!;
+      if (id < 0 || seen.has(id) || seen.size > 10000) continue;
+      seen.add(id);
+      const e = this.entries[id];
+      if (!e) continue;
+      if (e.type === 2 && e.name.toLowerCase() === name.toLowerCase()) return this.read(e);
+      stack.push(e.left, e.right);
+    }
+    return null;
+  }
+
   stream(name: string): Uint8Array | null {
     const entry = this.dir.find((e) => e.type === 2 && e.name.toLowerCase() === name.toLowerCase());
     if (!entry) return null;
+    return this.read(entry);
+  }
+
+  private read(entry: { start: number; size: number }): Uint8Array {
     if (entry.size >= this.miniCutoff) return this.readChain(entry.start, entry.size);
     const sects = this.chain(entry.start, this.miniFat);
     const out = new Uint8Array(sects.length * this.miniSectorSize);
