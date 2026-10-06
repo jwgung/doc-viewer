@@ -4,6 +4,11 @@
  * Released under Apache License 2.0  <https://github.com/VolodymyrBaydalka/docxjs/blob/master/LICENSE>
  * Copyright Volodymyr Baydalka
  */
+/*
+ * 변경 고지(Apache License 2.0 4(b)): 이 파일은 doc-viewer가 docx-preview 0.4.1의 ESM 빌드를 고친 것이다.
+ * 파일 끝의 "쪽 단위 지연 렌더링" 블록(openLazyAsync)과 export 줄만 더했고 원본 코드는 고치지 않았다.
+ * 원본 소스맵 참조 주석은 소스맵을 함께 두지 않아 지웠다.
+ */
 import JSZip from 'jszip';
 
 var RelationshipTypes;
@@ -4004,5 +4009,449 @@ async function renderAsync(data, bodyContainer, styleContainer, userOptions) {
     return doc;
 }
 
-export { defaultOptions, parseAsync, renderAsync, renderDocument };
-//# sourceMappingURL=docx-preview.mjs.map
+// =====================================================================================
+// doc-viewer 확장: 쪽 단위 지연 렌더링 (원본 docx-preview 0.4.1에는 없다)
+//
+// renderAsync는 문서 전체를 XML DOM으로 파싱하고 전부 HTML로 만든 뒤에야 끝난다. 표가 많은 큰 문서는
+// 이 두 단계만 수 초가 걸린다. 여기서는 word/document.xml을 문자열 수준에서 훑어 body의 최상위 자식
+// 경계만 먼저 알아내고(DOM을 만들지 않으므로 12MB도 수십 ms), 쪽(section.docx)은 요청이 있을 때
+// 그 쪽에 속한 조각만 파싱·렌더한다. 쪽 나누기 규칙은 원본의 splitBySection·groupByPageBreaks를 그대로 쓴다.
+//
+// 원본과 같은 결과를 내는 방법
+//   - 쪽을 가를 수 있는 문단(구역 속성·pageBreakBefore·쪽 나누기 run)은 글자 검색으로 걸러 낸 뒤 실제로
+//     파싱해서 원본 splitBySection에 넣는다. 나머지 문단·표는 "가를 수 없음"이 확실하므로 자리표시만 둔다.
+//   - 쪽을 그릴 때는 원본 renderSections와 같은 순서로 같은 메서드를 부른다.
+//   - 이 방식이 원본과 달라질 수 있는 문서(미주 참조, 주석 표시, 래퍼)는 쓰지 않는다(openLazyAsync가 null).
+// 원본 코드는 위쪽을 한 줄도 고치지 않았고, 아래는 모두 새로 더한 것이다.
+// =====================================================================================
+
+/** 지연 경로를 쓸 수 없거나 쓸 이유가 없는 문서. openLazyAsync가 null로 바꿔 돌려주고, 호출한 쪽이 renderAsync를 쓴다. */
+class LazyUnavailable extends Error {
+}
+/** 이보다 작은 본문(XML 글자 수)은 한 번에 파싱하는 편이 빠르고 단순하다. */
+const LAZY_MIN_BODY_LENGTH = 256 * 1024;
+/** 쪽을 가를 수 있는 문단에 반드시 들어 있는 글자들(속성 이름은 접두사와 무관하게 로컬 이름으로 찾는다). */
+const PAGE_BREAK_HINTS = ['sectPr', 'pageBreakBefore', '"page"', "'page'"];
+const PARAGRAPH_STYLE_REF = /pStyle\b[^>]*?\bval\s*=\s*(?:"([^"]*)"|'([^']*)')/;
+/** '<?', '<!'로 시작하는 선언·주석·CDATA의 끝(다음 위치). */
+function skipMarkup(text, lt) {
+    let end;
+    if (text.charCodeAt(lt + 1) === 63) {
+        end = text.indexOf('?>', lt + 2);
+        end = end < 0 ? -1 : end + 2;
+    }
+    else if (text.startsWith('<!--', lt)) {
+        end = text.indexOf('-->', lt + 4);
+        end = end < 0 ? -1 : end + 3;
+    }
+    else if (text.startsWith('<![CDATA[', lt)) {
+        end = text.indexOf(']]>', lt + 9);
+        end = end < 0 ? -1 : end + 3;
+    }
+    else {
+        end = text.indexOf('>', lt + 2);
+        end = end < 0 ? -1 : end + 1;
+    }
+    if (end < 0)
+        throw new LazyUnavailable('닫히지 않은 마크업');
+    return end;
+}
+/** 태그 이름의 끝(공백·'/'·'>' 앞) 위치. */
+function tagNameEnd(text, from) {
+    let i = from;
+    for (;; i++) {
+        const c = text.charCodeAt(i);
+        if (c <= 32 || c === 47 || c === 62 || c !== c)
+            return i;
+    }
+}
+function localNameOf(qname) {
+    return qname.slice(qname.lastIndexOf(':') + 1);
+}
+/** from(태그 안)부터 이어지는 첫 '>' 중 속성 값(따옴표) 밖에 있는 것의 위치. 못 찾으면 -1. 한두 번 부르는 곳에서만 쓴다. */
+function findTagEnd(text, from) {
+    let quote = 0;
+    for (let i = from; i < text.length; i++) {
+        const c = text.charCodeAt(i);
+        if (quote !== 0) {
+            if (c === quote)
+                quote = 0;
+        }
+        else if (c === 34 || c === 39)
+            quote = c;
+        else if (c === 62)
+            return i;
+    }
+    return -1;
+}
+/**
+ * text[from]에서 시작하는 컨테이너의 직계 자식 경계를 훑는다(from은 컨테이너 시작 태그 바로 뒤).
+ * 컨테이너를 닫는 태그에서 멈추거나, stopAt이 주어지면 그 이름의 자식 시작 태그 앞에서 멈춘다.
+ * 속성 값 안의 '>'와 주석·CDATA 안의 '<'를 건너뛴다. 자식 태그 이름은 검사하지 않으므로 형식이 틀린 문서는
+ * 이 단계에서 걸리지 않을 수 있고, 그때는 그 조각을 파싱할 때 오류가 난다.
+ */
+function scanChildren(text, from, stopAt = null) {
+    const children = [];
+    let nextDq = -1; // 다음 " 위치 캐시(없으면 Infinity, -1은 아직 안 찾음)
+    let nextSq = -1;
+    let pos = from;
+    let depth = 0;
+    let start = 0;
+    let qname = '';
+    for (;;) {
+        const lt = text.indexOf('<', pos);
+        if (lt < 0)
+            throw new LazyUnavailable('컨테이너의 끝을 찾지 못했다');
+        const c = text.charCodeAt(lt + 1);
+        if (c === 47) { // </...>
+            const gt = text.indexOf('>', lt + 2);
+            if (gt < 0)
+                throw new LazyUnavailable('닫는 태그가 끝나지 않았다');
+            if (depth === 0)
+                return { children, closeStart: lt, closeEnd: gt + 1, stoppedAt: -1 };
+            if (--depth === 0)
+                children.push({ name: localNameOf(qname), qname, start, end: gt + 1, hint: false });
+            pos = gt + 1;
+            continue;
+        }
+        if (c === 63 || c === 33) { // <? <!
+            pos = skipMarkup(text, lt);
+            continue;
+        }
+        let gt = text.indexOf('>', lt + 1);
+        let valuesFrom = lt + 1;
+        for (;;) {
+            if (gt < 0)
+                throw new LazyUnavailable('태그가 끝나지 않았다');
+            if (nextDq < valuesFrom) {
+                nextDq = text.indexOf('"', valuesFrom);
+                if (nextDq < 0)
+                    nextDq = Infinity;
+            }
+            if (nextSq < valuesFrom) {
+                nextSq = text.indexOf("'", valuesFrom);
+                if (nextSq < 0)
+                    nextSq = Infinity;
+            }
+            const quote = nextDq < nextSq ? nextDq : nextSq;
+            if (quote > gt)
+                break;
+            const close = text.indexOf(quote === nextDq ? '"' : "'", quote + 1);
+            if (close < 0)
+                throw new LazyUnavailable('속성 값이 닫히지 않았다');
+            valuesFrom = close + 1;
+            if (gt < valuesFrom)
+                gt = text.indexOf('>', valuesFrom);
+        }
+        const empty = text.charCodeAt(gt - 1) === 47;
+        if (depth === 0) {
+            start = lt;
+            qname = text.slice(lt + 1, tagNameEnd(text, lt + 1));
+            if (stopAt !== null && !empty && localNameOf(qname) === stopAt)
+                return { children, closeStart: -1, closeEnd: -1, stoppedAt: lt, stoppedEnd: gt + 1, stoppedQName: qname };
+            if (empty)
+                children.push({ name: localNameOf(qname), qname, start, end: gt + 1, hint: false });
+        }
+        if (!empty)
+            depth++;
+        pos = gt + 1;
+    }
+}
+/**
+ * 쪽을 가를 수 있는 글자가 들어 있는 문단에 hint를 표시한다. 표는 원본 splitBySection이 보지 않으므로 건너뛴다
+ * (표가 많은 문서에서 본문 대부분이 표다).
+ */
+function markPageBreakHints(text, children, hints) {
+    for (const child of children) {
+        if (child.name !== 'p')
+            continue;
+        const paragraph = text.slice(child.start, child.end);
+        child.hint = hints.some(hint => paragraph.includes(hint));
+    }
+}
+/**
+ * word/document.xml의 구조를 DOM 없이 읽어 둔 것: 루트·body 시작 태그(머리), body의 최상위 자식 경계.
+ * head + 자식 글자들 + tail을 이으면 그 자식들만 가진 온전한 문서가 되어 DOMParser로 따로 파싱할 수 있다.
+ */
+function scanDocument(text) {
+    let pos = 0;
+    let rootStart;
+    for (;;) {
+        const lt = text.indexOf('<', pos);
+        if (lt < 0)
+            throw new LazyUnavailable('루트 요소가 없다');
+        if (text.charCodeAt(lt + 1) === 63 || text.charCodeAt(lt + 1) === 33) {
+            // 조각마다 따로 파싱하므로 DTD(엔티티 선언)가 있는 문서는 원래 방식으로 연다.
+            if (text.startsWith('<!DOCTYPE', lt))
+                throw new LazyUnavailable('DTD가 있다');
+            pos = skipMarkup(text, lt);
+            continue;
+        }
+        rootStart = lt;
+        break;
+    }
+    const rootQName = text.slice(rootStart + 1, tagNameEnd(text, rootStart + 1));
+    const rootEnd = findTagEnd(text, rootStart + 1);
+    if (rootEnd < 0 || text.charCodeAt(rootEnd - 1) === 47)
+        throw new LazyUnavailable('루트 요소가 비어 있거나 닫히지 않았다');
+    // 루트 시작 태그부터 body 시작 태그까지(사이의 w:background 포함)를 머리로 보관한다.
+    const beforeBody = scanChildren(text, rootEnd + 1, 'body');
+    if (beforeBody.stoppedAt < 0)
+        throw new LazyUnavailable('body가 없다');
+    const body = scanChildren(text, beforeBody.stoppedEnd);
+    return {
+        text,
+        head: text.slice(rootStart, beforeBody.stoppedEnd),
+        tail: `</${beforeBody.stoppedQName}></${rootQName}>`,
+        children: body.children,
+    };
+}
+/** 글자 파트를 JSZip의 JS UTF-8 디코더 대신 TextDecoder로 읽는다(12MB 본문에서 훨씬 빠르고, 결과는 평평한 문자열이다). */
+class LazyOpenXmlPackage extends OpenXmlPackage {
+    load(path, type = "string") {
+        if (type !== "string")
+            return super.load(path, type);
+        const file = this.get(path);
+        return file ? file.async("uint8array").then(bytes => new TextDecoder().decode(bytes)) : Promise.resolve(null);
+    }
+}
+/** 본문(document.xml)을 통째로 파싱하지 않고 구조만 읽어 두는 문서 파트. */
+class LazyDocumentPart extends DocumentPart {
+    async load() {
+        this.rels = await this._package.loadRelationships(this.path);
+        const lazy = this._package.options.lazy ?? {};
+        const text = await this._package.load(this.path);
+        if (text == null || text.length < (lazy.minBodyLength ?? LAZY_MIN_BODY_LENGTH))
+            throw new LazyUnavailable('작은 본문');
+        // 미주는 문서 전체에서 번호가 이어지고 마지막 쪽에 모이므로 쪽 단위로 그릴 수 없다.
+        if (text.includes('endnoteReference'))
+            throw new LazyUnavailable('미주 참조');
+        this.source = scanDocument(text);
+        const hints = this._package.options.ignoreLastRenderedPageBreak ? PAGE_BREAK_HINTS : [...PAGE_BREAK_HINTS, 'lastRenderedPageBreak'];
+        markPageBreakHints(text, this.source.children, hints);
+        // 쪽을 가를 수 있는 곳이 하나도 없고 스타일에도 pageBreakBefore가 없으면 한 쪽짜리라 지연할 이득이 없다.
+        if ((lazy.minPages ?? 2) > 1 && !this.source.children.some(c => c.hint || c.name === 'sdt')) {
+            const stylesRel = this.rels?.find(r => r.type === RelationshipTypes.Styles);
+            const styles = stylesRel && await this._package.load(resolvePath(stylesRel.target, splitPath(this.path)[0]));
+            if (!styles || !styles.includes('pageBreakBefore'))
+                throw new LazyUnavailable('한 쪽짜리');
+        }
+    }
+}
+class LazyWordDocument extends WordDocument {
+    /** WordDocument.load와 같되 본문 파트만 LazyDocumentPart로 바꾼다. */
+    static async loadLazy(blob, parser, options) {
+        const d = new LazyWordDocument();
+        d._options = options;
+        d._parser = parser;
+        const zip = await JSZip.loadAsync(blob);
+        // 본문의 UTF-8 바이트 수가 기준보다 작으면 글자 수도 작으므로, 다른 파트를 읽기 전에 물러난다(작은 문서의 헛수고를 줄인다).
+        // _data는 JSZip 내부 필드라 없으면 이 검사만 건너뛰고 아래 LazyDocumentPart.load가 글자 수로 다시 거른다.
+        if (zip.files['word/document.xml']?._data?.uncompressedSize < (options.lazy?.minBodyLength ?? LAZY_MIN_BODY_LENGTH))
+            throw new LazyUnavailable('작은 본문');
+        d._package = new LazyOpenXmlPackage(zip, options);
+        d.rels = await d._package.loadRelationships();
+        d.contentTypes = await d._package.loadContentTypes();
+        await Promise.all(topLevelRels.map(rel => {
+            const r = d.rels.find(x => x.type === rel.type) ?? rel;
+            return d.loadRelationshipPart(r.target, r.type);
+        }));
+        return d;
+    }
+    async loadRelationshipPart(path, type) {
+        if (type !== RelationshipTypes.OfficeDocument)
+            return super.loadRelationshipPart(path, type);
+        if (this.partsMap[path])
+            return this.partsMap[path];
+        if (!this._package.get(path))
+            return null;
+        const part = new LazyDocumentPart(this._package, path, this._parser);
+        this.documentPart = this.partsMap[path] = part;
+        this.parts.push(part);
+        await part.load();
+        if (part.rels?.length > 0) {
+            const [folder] = splitPath(part.path);
+            await Promise.all(part.rels.map(rel => this.loadRelationshipPart(resolvePath(rel.target, folder), rel.type)));
+        }
+        return part;
+    }
+}
+class LazyHtmlRenderer extends HtmlRenderer {
+    // 쪽은 renderPage가 따로 만든다(render는 스타일·번호·글꼴만 준비한다).
+    renderSections() {
+        return [];
+    }
+    // 탭 간격은 쪽을 문서에 붙인 뒤 쪽마다 맞춘다(renderPage의 refreshTabs).
+    refreshTabStops() {
+    }
+    /** 문서의 스타일·번호·글꼴을 준비하고 쪽 구조(어느 최상위 자식이 몇 쪽에 가는지)를 계산한다. 돌려주는 노드는 문서에 한 번 넣을 <style>들이다. */
+    async open(document, options) {
+        const styleNodes = await super.render(document, options);
+        const source = this.source = document.documentPart.source;
+        const parser = this.parser = document._parser;
+        // 본문의 머리: 배경색과 문서 마지막 구역 속성(원본 parseDocumentFile이 body에서 읽는 것)
+        const sectPr = source.children.find(c => c.name === 'sectPr');
+        this.body = parser.parseDocumentFile(this.parseRoot(sectPr ? [sectPr] : []));
+        // 쪽을 가를 수 있는 스타일(원본이 splitBySection에서 findStyle로 보는 것과 같은 표)
+        const styleIds = new Set();
+        for (const [id, style] of Object.entries(this.styleMap ?? {})) {
+            if (style.paragraphProps?.pageBreakBefore)
+                styleIds.add(id);
+        }
+        // 가를 수 있는 문단·sdt는 실제로 파싱하고(연달아 있으면 한 번에), 나머지는 자리표시만 둔다.
+        const children = [];
+        let candidates = [];
+        const flush = () => {
+            if (candidates.length > 0)
+                children.push(...this.parseFragment(candidates));
+            candidates = [];
+        };
+        for (const c of source.children) {
+            switch (c.name) {
+                case 'p':
+                    if (c.hint || (styleIds.size > 0 && this.mayUsePageBreakStyle(c, styleIds))) {
+                        candidates.push(c);
+                        break;
+                    }
+                    flush();
+                    children.push({ type: DomType.Paragraph, children: [], lazy: c });
+                    break;
+                case 'tbl':
+                    flush();
+                    children.push({ type: DomType.Table, children: [], lazy: c });
+                    break;
+                case 'altChunk':
+                    flush();
+                    children.push({ type: DomType.AltChunk, children: [], lazy: c });
+                    break;
+                case 'sdt':
+                    flush();
+                    children.push(...this.parseFragment([c]));
+                    break;
+            }
+        }
+        flush();
+        this.body.children = children;
+        this.processElement(this.body);
+        this.pages = this.groupByPageBreaks(this.splitBySection(this.body.children, this.body.props));
+        if (this.pages.length < (options.lazy?.minPages ?? 2))
+            throw new LazyUnavailable('한 쪽짜리');
+        // 너비를 정하지 않은 쪽은 원본에서 화면 밖 상자 안의 다른 모든 쪽 가운데 가장 넓은 내용에 맞춰진다.
+        // 쪽을 따로 그리면 그 값을 알 수 없으므로 원래 방식을 쓴다.
+        if (options.ignoreWidth || this.pages.some(page => !page[0].sectProps?.pageSize?.width))
+            throw new LazyUnavailable('용지 너비가 없는 쪽');
+        return styleNodes;
+    }
+    mayUsePageBreakStyle(child, styleIds) {
+        const text = this.source.text.slice(child.start, child.end);
+        if (!text.includes('pStyle'))
+            return false;
+        const match = PARAGRAPH_STYLE_REF.exec(text);
+        const id = match?.[1] ?? match?.[2];
+        // 찾지 못했거나 엔티티가 섞여 있으면(스타일 id가 그대로 비교되지 않으니) 안전하게 파싱 대상으로 본다.
+        return id === undefined || id.includes('&') || styleIds.has(id);
+    }
+    /** 머리(루트·body 시작 태그) + 주어진 최상위 자식들 + 꼬리를 DOMParser로 파싱해 루트 요소를 돌려준다. */
+    parseRoot(list) {
+        const { text, head, tail } = this.source;
+        return parseXmlString(head + list.map(c => text.slice(c.start, c.end)).join('') + tail).firstElementChild;
+    }
+    /** 최상위 자식들을 원본 parseBodyElements로 파싱한다(문단·표·altChunk는 자식마다 요소 하나). */
+    parseFragment(list) {
+        return this.parser.parseBodyElements(globalXmlParser.element(this.parseRoot(list), 'body'));
+    }
+    /** i번째 쪽의 section.docx를 만든다. 본문은 원본 renderSections와 같은 순서·같은 메서드로 그린다. */
+    renderPage(index) {
+        const page = this.pages[index];
+        const prevProps = index > 0 ? this.pages[index - 1][this.pages[index - 1].length - 1].sectProps : null;
+        // 이 쪽에서 아직 읽지 않은 본문 조각을 한 번에 파싱해 자리표시와 바꾼다.
+        const pending = page.flatMap(sect => sect.elements.filter(e => e.lazy));
+        const parsed = pending.length ? this.parseFragment(pending.map(e => e.lazy)) : [];
+        if (parsed.length !== pending.length)
+            throw new Error('본문 조각의 요소 수가 맞지 않는다');
+        const parsedOf = new Map();
+        pending.forEach((e, i) => {
+            const elem = parsed[i];
+            elem.parent = this.body;
+            if (elem.type == DomType.Table)
+                this.processTable(elem);
+            else
+                this.processElement(elem);
+            parsedOf.set(e, elem);
+        });
+        this.tasks = [];
+        this.currentTabs = [];
+        this.currentFootnoteIds = [];
+        let props = page[0].sectProps;
+        const pageElement = this.createPageElement(this.className, props, this.body.cssStyle);
+        this.options.renderHeaders && this.renderHeaderFooter(props.headerRefs, props, index, prevProps != props, pageElement);
+        for (const sect of page) {
+            const contentElement = this.createSectionContent(sect.sectProps);
+            this.renderElements(sect.elements.map(e => parsedOf.get(e) ?? e), contentElement);
+            pageElement.appendChild(contentElement);
+            props = sect.sectProps;
+        }
+        if (this.options.renderFootnotes) {
+            const notes = this.renderNotes(this.currentFootnoteIds, this.footnoteMap);
+            notes && pageElement.appendChild(notes);
+        }
+        this.options.renderFooters && this.renderHeaderFooter(props.footerRefs, props, index, prevProps != props, pageElement);
+        const tabs = this.currentTabs;
+        return {
+            element: pageElement,
+            // 이미지 등 비동기로 채워지는 것이 모두 끝나면 resolve한다.
+            settled: Promise.allSettled(this.tasks).then(() => undefined),
+            // 탭 간격을 맞춘다(원본 refreshTabStops와 같은 계산). 문서에 붙어 있어야 잴 수 있고, 쪽 전체를 확대(zoom)하기
+            // 전에 불러야 원래 크기로 정확히 잰다.
+            refreshTabs: () => {
+                if (!this.options.experimental || tabs.length == 0)
+                    return;
+                const pixelToPoint = computePixelToPoint();
+                for (const tab of tabs)
+                    updateTabStop(tab.span, tab.stops, this.defaultTabSize, pixelToPoint);
+            },
+        };
+    }
+}
+/**
+ * 쪽 단위 지연 렌더링을 위한 문서 열기.
+ * 지연할 이득이 없거나(작은 문서·한 쪽짜리) 원본과 달라질 수 있는 문서면 null을 돌려준다. 그때는 renderAsync를 쓴다.
+ * lazyOptions.minBodyLength: 이보다 작은 본문은 null(기본 256K 글자). 0이면 크기와 상관없이 지연한다(시험용).
+ * lazyOptions.minPages: 이보다 쪽이 적은 문서는 null(기본 2). 1이면 한 쪽짜리도 지연 경로로 연다(시험용).
+ * lazyOptions.onSkip(이유): null을 돌려주는 이유를 알려 준다(진단용).
+ */
+async function openLazyAsync(data, userOptions, lazyOptions = {}) {
+    const ops = { ...defaultOptions, ...userOptions, lazy: lazyOptions };
+    if (ops.inWrapper || ops.renderComments)
+        return null;
+    const renderer = new LazyHtmlRenderer();
+    let styleNodes;
+    try {
+        const doc = await LazyWordDocument.loadLazy(data, new DocumentParser(ops), ops);
+        styleNodes = await renderer.open(doc, ops);
+    }
+    catch (e) {
+        if (!(e instanceof LazyUnavailable))
+            throw e;
+        lazyOptions.onSkip?.(e.message);
+        return null;
+    }
+    return {
+        /** 구역·쪽 나누기 기준 쪽 수. renderAsync가 만드는 section.docx 수와 같다. */
+        pageCount: renderer.pages.length,
+        /** 모든 쪽이 함께 쓰는 <style> 노드들. 문서에 한 번 넣는다. */
+        styleNodes,
+        /** 용지 크기(px). 내용이 용지보다 길면 실제 쪽은 더 길다(docx-preview는 내용 길이로 쪽을 나누지 않는다). */
+        estimatedSize(index) {
+            const size = renderer.pages[index][0].sectProps?.pageSize;
+            const px = (length, fallback) => Number.isFinite(parseFloat(length)) ? Math.round(parseFloat(length) * 96 / 72) : fallback;
+            return { width: px(size?.width, 794), height: px(size?.height, 1123) };
+        },
+        renderPage: (index) => renderer.renderPage(index),
+        dispose() {
+            renderer.pages = renderer.source = renderer.body = null;
+        },
+    };
+}
+
+export { defaultOptions, openLazyAsync, parseAsync, renderAsync, renderDocument };
