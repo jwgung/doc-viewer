@@ -3,6 +3,8 @@
 //   없으므로, 결과로 옮겨 갈 때 그 쪽을 그린 뒤 그려진 글자에서 다시 찾아 표시한다.
 // - 쪽이 없는 문서(doc·마크다운·최후 대안 등)는 그려진 글자 전체에서 찾는다.
 // 표시는 CSS Custom Highlight API(::highlight)로 해서 문서 DOM을 바꾸지 않는다.
+// 공백은 무시하고 찾는다: HWP는 글자마다 따로 그려 띄어쓰기가 글자로 남지 않고, 한국어는 띄어쓰기가
+// 사람마다 달라 '산불 조심'으로 '산불조심'을 찾을 수 있어야 한다. 대소문자도 가리지 않는다.
 import { t } from './strings.js';
 
 const ICONS = {
@@ -67,7 +69,7 @@ export function createSearch({ container, viewer, textOf, provider }) {
   async function run() {
     const token = ++generation;
     scanning = false;
-    query = input.value.trim().toLowerCase();
+    query = normalize(input.value);
     hits = [];
     current = -1;
     clearHighlights();
@@ -188,7 +190,7 @@ export function createSearch({ container, viewer, textOf, provider }) {
     event.preventDefault();
     clearTimeout(timer);
     // 같은 검색어면 다음 결과로, 바뀌었으면 새로 찾는다.
-    if (input.value.trim().toLowerCase() === query && hits.length) step(event.shiftKey ? -1 : 1);
+    if (normalize(input.value) === query && hits.length) step(event.shiftKey ? -1 : 1);
     else run();
   });
   bar.querySelector('.search-prev').addEventListener('click', () => step(-1));
@@ -198,43 +200,59 @@ export function createSearch({ container, viewer, textOf, provider }) {
   return { open, close, isOpen: () => bar.isConnected && !bar.hidden };
 }
 
-/** 대소문자를 가리지 않는다. 대소문자 변환으로 길이가 바뀌는 드문 글자는 그대로 둔다(위치가 어긋나지 않게). */
+/** 찾을 글과 찾는 대상을 같은 모양으로: 공백을 빼고 소문자로(쪽별 글자도 이 모양으로 센다). */
 function normalize(text) {
-  const lower = text.toLowerCase();
-  return lower.length === text.length ? lower : text;
+  return lowerSameLength(text.replace(/\s+/g, ''));
 }
 
-/** 요소 안의 글자 노드를 이어 붙인 글과, 각 노드가 시작하는 위치 */
+/** 소문자로. 길이가 바뀌는 드문 글자(İ 등)는 그 글자만 그대로 둬 위치가 어긋나지 않게 한다. */
+function lowerSameLength(text) {
+  const lower = text.toLowerCase();
+  if (lower.length === text.length) return lower;
+  let out = '';
+  for (const ch of text) {
+    const l = ch.toLowerCase();
+    out += l.length === ch.length ? l : ch;
+  }
+  return out;
+}
+
+/**
+ * 요소 안의 글자를 공백을 빼고 이어 붙인 글과, 그 글의 글자마다 원래 노드·위치(공백을 빼면 노드 안 위치가
+ * 달라지므로 글자 단위로 기억한다).
+ */
 function textIndex(root) {
   const nodes = [];
   let text = '';
+  let at = new Uint32Array(1024); // 글자 i → (노드 번호, 노드 안 위치)를 번갈아
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode: (node) => (node.parentElement?.closest('style, script, .search-bar') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
   });
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-    nodes.push({ node, start: text.length });
-    text += normalize(node.data);
+    const data = node.data;
+    const lower = lowerSameLength(data);
+    for (let i = 0; i < data.length; i++) {
+      const code = data.charCodeAt(i);
+      if (code <= 32 || code === 0xa0 || code === 0x3000 || (code >= 0x2000 && code <= 0x200b)) continue;
+      if (text.length * 2 + 2 > at.length) {
+        const grown = new Uint32Array(at.length * 2);
+        grown.set(at);
+        at = grown;
+      }
+      at[text.length * 2] = nodes.length;
+      at[text.length * 2 + 1] = i;
+      text += lower[i];
+    }
+    nodes.push(node);
   }
-  return { text, nodes };
+  return { text, nodes, at };
 }
 
 /** 이어 붙인 글의 [start, end) 위치를 실제 노드 범위로 바꾼다(여러 노드에 걸칠 수 있다). */
-function rangeAt({ nodes }, start, end) {
-  const find = (position) => {
-    let low = 0;
-    let high = nodes.length - 1;
-    while (low < high) {
-      const mid = (low + high + 1) >> 1;
-      if (nodes[mid].start <= position) low = mid;
-      else high = mid - 1;
-    }
-    return nodes[low];
-  };
-  const from = find(start);
-  const to = find(end - 1);
+function rangeAt({ nodes, at }, start, end) {
   const range = new Range();
-  range.setStart(from.node, start - from.start);
-  range.setEnd(to.node, end - to.start);
+  range.setStart(nodes[at[start * 2]], at[start * 2 + 1]);
+  range.setEnd(nodes[at[(end - 1) * 2]], at[(end - 1) * 2 + 1] + 1);
   return range;
 }
 

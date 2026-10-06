@@ -1,5 +1,10 @@
 // HWP 조판은 큰 문서에서 수십 초가 걸릴 수 있어 워커에서 돌린다. 화면 스레드는 스피너와 스크롤을 계속 처리한다.
-// 메시지: open(bytes) → opened{pages, sizes}, page(index) → page{index, svg}
+// 메시지
+//   open(bytes)          → opened{pages, sizes} 또는 opened{needsPassword}(암호 문서: 바이트를 들고 기다린다)
+//   unlock(password)     → opened{pages, sizes} 또는 opened{wrongPassword}
+//   page(index)          → page{index, svg}
+//   text(index)          → text{index, text}  쪽 SVG의 글자(검색용, 화면에 그린 글자와 같게)
+//   outline()            → outline{items}     개요 번호가 붙은 문단(목차용)
 import init, { HwpDocument } from '@rhwp/core';
 import wasmUrl from '@rhwp/core/rhwp_bg.wasm?url';
 
@@ -17,6 +22,7 @@ globalThis.measureTextWidth = (font, text) => {
 const A4 = { width: 794, height: 1123 };
 const ready = init({ module_or_path: wasmUrl });
 let doc = null;
+let locked = null; // 암호를 기다리는 문서 바이트
 
 function pageSize(index) {
   try {
@@ -28,16 +34,62 @@ function pageSize(index) {
   return A4;
 }
 
+function opened(wasm) {
+  const pages = doc.pageCount();
+  const sizes = Array.from({ length: pages }, (_, i) => pageSize(i));
+  self.postMessage({ type: 'opened', pages, sizes, wasmMemoryBytes: wasm.memory.buffer.byteLength });
+}
+
+// rhwp 오류 문구로 암호 문서·틀린 암호를 가린다(전용 오류 형식이 없다).
+const needsPassword = (error) => String(error?.message ?? error).includes('비밀번호가 필요한');
+const wrongPassword = (error) => String(error?.message ?? error).includes('비밀번호가 일치하지 않');
+
+/** SVG 문자열에서 글자만: 태그를 걷고 엔티티를 푼다(DOM에 그렸을 때의 textContent와 같다). */
+function svgText(svg) {
+  return svg
+    .replace(/<[^>]*>/g, '')
+    .replace(/&(lt|gt|amp|quot|apos|#\d+|#x[0-9a-f]+);/gi, (match, name) => {
+      if (name[0] === '#') return String.fromCodePoint(name[1] === 'x' || name[1] === 'X' ? parseInt(name.slice(2), 16) : Number(name.slice(1)));
+      return { lt: '<', gt: '>', amp: '&', quot: '"', apos: "'" }[name.toLowerCase()] ?? match;
+    });
+}
+
 self.onmessage = async ({ data }) => {
   try {
     const wasm = await ready;
     if (data.type === 'open') {
-      doc = new HwpDocument(new Uint8Array(data.bytes));
-      const pages = doc.pageCount();
-      const sizes = Array.from({ length: pages }, (_, i) => pageSize(i));
-      self.postMessage({ type: 'opened', pages, sizes, wasmMemoryBytes: wasm.memory.buffer.byteLength });
+      const bytes = new Uint8Array(data.bytes);
+      try {
+        doc = new HwpDocument(bytes);
+      } catch (error) {
+        if (!needsPassword(error)) throw error;
+        locked = bytes;
+        self.postMessage({ type: 'opened', needsPassword: true });
+        return;
+      }
+      opened(wasm);
+    } else if (data.type === 'unlock') {
+      try {
+        doc = HwpDocument.openWithPassword(locked, data.password);
+      } catch (error) {
+        if (!wrongPassword(error)) throw error;
+        self.postMessage({ type: 'opened', wrongPassword: true });
+        return;
+      }
+      locked = null;
+      opened(wasm);
     } else if (data.type === 'page') {
       self.postMessage({ type: 'page', index: data.index, svg: doc.renderPageSvg(data.index) });
+    } else if (data.type === 'text') {
+      self.postMessage({ type: 'text', index: data.index, text: svgText(doc.renderPageSvg(data.index)) });
+    } else if (data.type === 'outline') {
+      let items = [];
+      try {
+        items = JSON.parse(doc.getOutlineNavigation()).outline ?? [];
+      } catch {
+        // 개요 정보가 없거나 읽지 못하면 빈 목차
+      }
+      self.postMessage({ type: 'outline', items });
     }
   } catch (error) {
     self.postMessage({ type: 'error', message: String(error?.message ?? error) });

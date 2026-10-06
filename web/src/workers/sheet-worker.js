@@ -50,7 +50,8 @@ async function search(current, query) {
       for (let r = 0; r < block.count; r++) {
         for (let i = block.offsets[r]; i < block.offsets[r + 1]; i++) {
           const text = block.texts[i];
-          if (!text || !text.toLowerCase().includes(query)) continue;
+          // 화면 검색과 같이 공백을 빼고 대소문자를 가리지 않는다(query는 이미 그 모양이다).
+          if (!text || !text.replace(/\s+/g, '').toLowerCase().includes(query)) continue;
           hits.push(sheet, block.start + r, block.cols[i]);
           if (hits.length >= MAX_HITS * 3) return Int32Array.from(hits);
         }
