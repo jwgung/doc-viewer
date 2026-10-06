@@ -8,7 +8,7 @@
     "build": "vite build"
   },
   "dependencies": {
-    "@file-viewer/doc": "3.1.2",
+    "@file-viewer/doc": "file:vendor/file-viewer-doc",
     "@rhwp/core": "0.8.7",
     "@web-ppt/core": "0.4.5",
     "docx-preview": "0.4.1",

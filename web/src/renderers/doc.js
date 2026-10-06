@@ -1,4 +1,4 @@
-import { parseMsDoc, renderMsDoc } from '@file-viewer/doc';
+import { parseMsDoc, renderMsDoc } from '@file-viewer/doc/core';
 
 export async function render(bytes, container, ctx) {
   const parsed = parseMsDoc(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
