@@ -609,3 +609,68 @@ body.searching #doc {
   tab-size: 4;
 }
 
+/* 인쇄·PDF로 저장 */
+@media screen {
+  .print-root {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 794px;
+    visibility: hidden;
+    pointer-events: none;
+    transform: translateX(-300vw);
+  }
+}
+
+@media print {
+  @page {
+    margin: 0;
+  }
+
+  html,
+  body {
+    background: #fff !important;
+  }
+
+  /* 쪽 있는 문서: 인쇄용 층만 */
+  body.printing:has(.print-root) > :not(.print-root) {
+    display: none !important;
+  }
+
+  /* 쪽 하나가 용지 한 장에 꼭 들어가게 너비·높이 중 작은 쪽에 맞춘다(넘치면 빈 장이 생긴다). */
+  .print-page {
+    width: min(100vw, calc(100vh * var(--ratio) * 0.995)) !important;
+    margin: 0 auto !important;
+    overflow: hidden;
+    box-shadow: none !important;
+    break-inside: avoid;
+  }
+
+  .print-page:not(:last-child) {
+    break-after: page;
+  }
+
+  /* 쪽 없는 문서: 화면의 문서를 그대로, 덧씌운 부품은 빼고 */
+  .search-bar,
+  .page-indicator,
+  .scrubber,
+  #status,
+  .sheet-backdrop,
+  .fallback-note {
+    display: none !important;
+  }
+
+  body.searching #doc {
+    padding-top: 0;
+  }
+
+  .flow {
+    margin: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .flow.doc-page {
+    break-after: page;
+  }
+}
+

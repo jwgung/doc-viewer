@@ -51,6 +51,17 @@ window.viewer = {
     }
     search.open();
   },
+  /** 인쇄 준비: 모든 쪽을 인쇄용 층에 그린 뒤 'printReady'(첫 쪽 크기)를 알린다. */
+  preparePrint: async () => {
+    const { preparePrint } = await import('./print.js');
+    try {
+      const size = await preparePrint(viewer);
+      report('printReady', size ?? {});
+    } catch (error) {
+      report('printFailed', { message: String(error?.message ?? error) });
+    }
+  },
+  finishPrint: async () => (await import('./print.js')).finishPrint(viewer),
   /** 목차 시트를 연다(앱의 '더 보기' → 목차). */
   openOutline: async () => {
     const { openOutline } = await import('./outline.js');
