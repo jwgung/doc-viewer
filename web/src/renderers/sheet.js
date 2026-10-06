@@ -1,3 +1,4 @@
+import { t } from '../strings.js';
 import { connect } from '../worker-client.js';
 
 export async function render(bytes, container, ctx) {
@@ -20,7 +21,7 @@ export async function render(bytes, container, ctx) {
     body.innerHTML = view.html;
     note.textContent =
       view.totalRows > view.shownRows
-        ? `처음 ${view.shownRows.toLocaleString()}행만 표시합니다 (전체 ${view.totalRows.toLocaleString()}행).`
+        ? t.rowsLimited(view.shownRows.toLocaleString(), view.totalRows.toLocaleString())
         : '';
   };
   opened.names.forEach((name, index) => {

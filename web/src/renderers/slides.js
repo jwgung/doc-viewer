@@ -1,14 +1,15 @@
 import { parse, renderSlideToSvg } from '@web-ppt/core';
-import { mountLazyPages } from '../lazy-pages.js';
+import { PagedViewer } from '../paged-viewer.js';
 
 export async function render(bytes, container, ctx) {
   const pres = await parse(bytes);
   const size = { width: pres.width, height: pres.height };
-  await mountLazyPages(
-    container,
-    pres.slides.map(() => size),
-    (i) => renderSlideToSvg(pres, pres.slides[i], { textMode: 'html' }),
-  );
+  const renderInto = async (index, el) => {
+    el.innerHTML = renderSlideToSvg(pres, pres.slides[index], { textMode: 'html' });
+  };
+  const viewer = new PagedViewer(container, { count: pres.slides.length, sizes: pres.slides.map(() => size), renderInto }, { mode: ctx.mode });
+  ctx.setViewer(viewer);
+  await viewer.render();
   ctx.markFirstPage();
   addEventListener('pagehide', () => pres.dispose?.(), { once: true });
   return { pages: pres.slides.length, extra: { source: pres.source } };
