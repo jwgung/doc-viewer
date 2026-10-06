@@ -9,7 +9,7 @@
   },
   "dependencies": {
     "@file-viewer/doc": "3.1.2",
-    "@rhwp/core": "0.8.7",
+    "@rhwp/core": "file:vendor/rhwp-core",
     "@web-ppt/core": "0.4.5",
     "docx-preview": "0.4.1",
     "dompurify": "3.4.16",
