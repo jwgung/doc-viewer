@@ -1,4 +1,5 @@
 import { openLazyAsync, renderAsync } from 'docx-preview';
+import { readZip } from '../containers.js';
 import { PagedViewer } from '../paged-viewer.js';
 import { t } from '../strings.js';
 
@@ -33,7 +34,13 @@ export async function render(bytes, container, ctx) {
   viewer = new PagedViewer(container, doc, { mode: ctx.mode, fit: ctx.fit });
   ctx.setViewer(viewer);
   // 검색: 쪽마다 그려진 글자(쪽 단위 방식은 그 쪽을 화면 밖에서 그려 읽는다).
-  ctx.setTextSource(async (index) => source.textOf(index));
+  ctx.setTextSource(async (index) => source.pageElement(index).textContent);
+  // 목차: 문서에 쓰인 제목 스타일의 문단. 목차를 열 때 쪽마다 찾는다.
+  headingClasses(bytes)
+    .then((classes) => {
+      if (classes.size) ctx.setOutline(() => headingOutline(source, classes, viewer));
+    })
+    .catch(() => {});
   await viewer.render();
   ctx.markFirstPage();
   addEventListener('pagehide', () => source.dispose?.(), { once: true });
@@ -111,7 +118,7 @@ async function openByPage(bytes, holder) {
         return sizes[index];
       }
     },
-    textOf: (index) => build(index).page.element.textContent,
+    pageElement: (index) => build(index).page.element,
     renderInto: async (index, el, viewer) => {
       let entry;
       try {
@@ -147,10 +154,61 @@ async function openWhole(bytes, holder) {
     byPage: false,
     count: sections.length,
     sizes,
-    textOf: (index) => sections[index].textContent,
+    pageElement: (index) => sections[index],
     renderInto: async (index, el) => {
       sections[index].style.zoom = String(el.clientWidth / sizes[index].width);
       el.replaceChildren(sections[index]);
     },
   };
 }
+
+/**
+ * 문서에 실제로 쓰인 제목 문단 스타일 → { docx-preview가 붙이는 클래스 이름: 단계(0부터) }.
+ * 이름이 'heading N'·'title'이거나 개요 수준(outlineLvl)이 있는 문단 스타일을 제목으로 본다
+ * (한국어 Word는 스타일 id가 '1'처럼 지역화돼 있어 이름으로 찾는다).
+ */
+async function headingClasses(bytes) {
+  const zip = readZip(bytes);
+  const [styles, body] = await Promise.all([zip.text('word/styles.xml'), zip.text('word/document.xml')]);
+  const used = new Set([...(body ?? '').matchAll(/<w:pStyle w:val="([^"]+)"/g)].map((m) => m[1]));
+  const classes = new Map();
+  for (const [, attrs, inner] of (styles ?? '').matchAll(/<w:style\b([^>]*)>([\s\S]*?)<\/w:style>/g)) {
+    if (!/w:type="paragraph"/.test(attrs)) continue;
+    const id = /w:styleId="([^"]+)"/.exec(attrs)?.[1];
+    if (!id || !used.has(id)) continue;
+    const name = (/<w:name w:val="([^"]+)"/.exec(inner)?.[1] ?? '').toLowerCase();
+    const outline = /<w:outlineLvl w:val="(\d)"/.exec(inner)?.[1];
+    const level = name === 'title' ? 0 : /^heading (\d)$/.test(name) ? Number(name.slice(8)) - 1 : outline !== undefined ? Number(outline) : null;
+    // docx-preview의 클래스 이름 규칙(escapeClassName)과 같게 만든다.
+    if (level !== null && level < 9) classes.set(`docx_${id.replace(/[ .]+/g, '-').replace(/[&]+/g, 'and').toLowerCase()}`, level);
+  }
+  return classes;
+}
+
+async function headingOutline(source, classes, viewer) {
+  const selector = [...classes.keys()].map((name) => `p.${CSS.escape(name)}`).join(',');
+  const items = [];
+  for (let index = 0; index < source.count; index++) {
+    let page;
+    try {
+      page = source.pageElement(index);
+    } catch {
+      continue;
+    }
+    // 쪽 안에서 몇 번째 제목인지 기억해 두었다가, 그 쪽을 그린 뒤 같은 순서의 제목으로 스크롤한다
+    // (docx는 구역 하나가 긴 한 쪽인 경우가 많아 쪽 이동만으로는 부족하다).
+    [...page.querySelectorAll(selector)].forEach((p, nth) => {
+      const title = p.textContent.trim().replace(/\s+/g, ' ');
+      if (!title) return;
+      const level = classes.get([...p.classList].find((name) => classes.has(name)));
+      const go = async () => {
+        viewer.goTo(index);
+        await viewer.whenRendered(index);
+        viewer.pageElement(index)?.querySelectorAll(selector)[nth]?.scrollIntoView({ block: 'start' });
+      };
+      items.push({ title: title.slice(0, 120), level, page: index + 1, go });
+    });
+  }
+  return items;
+}
+
