@@ -4,6 +4,26 @@ import { PagedViewer } from '../paged-viewer.js';
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
+/** 책갈피 나무를 목차 항목 목록으로 편다. 대상이 이름이면 실제 위치로 바꾸고, 쪽 번호를 찾는다. */
+async function outlineItems(pdf, outline, viewer) {
+  const items = [];
+  const walk = async (nodes, level) => {
+    for (const node of nodes) {
+      let index = null;
+      try {
+        const dest = typeof node.dest === 'string' ? await pdf.getDestination(node.dest) : node.dest;
+        if (Array.isArray(dest) && dest[0] != null) index = typeof dest[0] === 'number' ? dest[0] : await pdf.getPageIndex(dest[0]);
+      } catch {
+        // 대상이 깨진 책갈피는 이동 없이 제목만 보인다.
+      }
+      items.push({ title: node.title, level, page: index === null ? undefined : index + 1, go: () => index !== null && viewer.goTo(index) });
+      if (node.items?.length) await walk(node.items, level + 1);
+    }
+  };
+  await walk(outline, 0);
+  return items;
+}
+
 export async function render(bytes, container, ctx) {
   const task = pdfjs.getDocument({
     data: bytes,
@@ -57,6 +77,13 @@ export async function render(bytes, container, ctx) {
   });
   await viewer.render();
   ctx.markFirstPage();
+  // 목차: PDF 책갈피. 대상 쪽은 목차를 열 때 찾는다.
+  pdf
+    .getOutline()
+    .then((outline) => {
+      if (outline?.length) ctx.setOutline(() => outlineItems(pdf, outline, viewer));
+    })
+    .catch(() => {});
   addEventListener('pagehide', () => pdf.destroy(), { once: true });
   return { pages: pdf.numPages };
 }

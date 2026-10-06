@@ -549,3 +549,63 @@ body.searching #doc {
   background-color: rgb(255 140 0 / 75%);
 }
 
+/* 목차 시트 */
+.outline-sheet {
+  max-height: 70vh;
+  padding-bottom: 8px;
+  overflow-y: auto;
+}
+
+.outline-list {
+  margin: 12px -20px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.outline-list button {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  width: 100%;
+  padding: 11px 20px 11px 12px;
+  font-size: 15px;
+  text-align: left;
+  color: var(--text);
+  background: none;
+  border: 0;
+}
+
+.outline-list button:active {
+  background: var(--bg);
+}
+
+.outline-list button span:first-child {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+
+.outline-page {
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.outline-empty {
+  padding: 12px 20px;
+  color: var(--text-2);
+}
+
+/* 텍스트 파일 */
+.flow.plaintext {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 20px 18px 32px;
+}
+
+.plaintext pre {
+  margin: 0;
+  font: 15px/1.6 system-ui, sans-serif;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  tab-size: 4;
+}
+

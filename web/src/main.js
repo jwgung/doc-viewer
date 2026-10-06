@@ -19,6 +19,7 @@ const RENDERERS = {
   xlsx: () => import('./renderers/sheet.js'),
   csv: () => import('./renderers/sheet.js'),
   md: () => import('./renderers/md.js'),
+  txt: () => import('./renderers/txt.js'),
 };
 
 const PASSWORD_CANCELLED = 'password cancelled';
@@ -33,6 +34,8 @@ let textSource = null;
 /** 렌더러가 직접 찾고 보여 주는 검색(가상 스크롤 표). ctx.setSearchProvider로 준다. */
 let searchProvider = null;
 let search = null;
+/** 목차 항목을 돌려주는 함수. 렌더러가 ctx.setOutline으로 주거나, 쪽 없는 문서는 그려진 제목으로 만든다. */
+let outlineLoader = null;
 
 window.viewer = {
   open: (options) => open(options),
@@ -48,11 +51,18 @@ window.viewer = {
     }
     search.open();
   },
-  /** 앱의 뒤로 가기: 열린 검색 막대·입력 시트가 있으면 그것만 닫고 true를 돌려준다. */
+  /** 목차 시트를 연다(앱의 '더 보기' → 목차). */
+  openOutline: async () => {
+    const { openOutline } = await import('./outline.js');
+    openOutline((await outlineLoader?.().catch(() => [])) ?? []);
+  },
+  /** 앱의 뒤로 가기: 열린 시트(입력·목차)나 검색 막대가 있으면 그것만 닫고 true를 돌려준다. */
   closeOverlay: () => {
-    const cancel = document.querySelector('.sheet-backdrop .sheet-cancel');
-    if (cancel) {
-      cancel.click();
+    const backdrop = document.querySelector('.sheet-backdrop');
+    if (backdrop) {
+      const cancel = backdrop.querySelector('.sheet-cancel');
+      if (cancel) cancel.click();
+      else backdrop.remove();
       return true;
     }
     if (search?.isOpen()) {
@@ -116,6 +126,11 @@ async function open({ fmt: format, src, mode = 'scroll', fit, page = 0, scroll =
     setSearchProvider(provider) {
       searchProvider = provider;
     },
+    /** 목차가 있는 렌더러가 항목을 돌려주는 함수를 준다. 앱은 이 알림을 받으면 '목차' 메뉴를 보인다. */
+    setOutline(loader) {
+      outlineLoader = loader;
+      report('outline');
+    },
   };
   try {
     const load = RENDERERS[fmt];
@@ -135,6 +150,10 @@ async function open({ fmt: format, src, mode = 'scroll', fit, page = 0, scroll =
     const result = (await renderer.render(bytes, container, ctx)) ?? {};
     ctx.markFirstPage();
     if (!viewer) restoreScroll(scroll);
+    // 쪽 없는 문서는 그려진 제목으로 목차를 만든다(제목이 있을 때만).
+    if (!outlineLoader && container.querySelector('h1, h2, h3, h4')) {
+      ctx.setOutline(async () => (await import('./outline.js')).headingOutline(container));
+    }
     report('done', {
       loadMs,
       firstPageMs,
