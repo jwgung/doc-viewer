@@ -369,7 +369,8 @@ function buildTextBody(styled: StyledText, env: TextEnv, props?: TextBoxProps): 
       const soft = li > 0 && seps[li - 1] === '\v';
       const hardEnd = li === lines.length - 1 || seps[li] !== '\v';
       const bulletNum = li === 0 ? numText : null;
-      const hasBullet = !soft && (bulletNum !== null || (pp.hasBullet ?? dft.para.hasBullet ?? false));
+      // [doc-viewer] 빈 문단에는 글머리표를 그리지 않는다(PowerPoint·LibreOffice와 같다)
+      const hasBullet = !soft && line.length > 0 && (bulletNum !== null || (pp.hasBullet ?? dft.para.hasBullet ?? false));
       const leftMargin = pp.leftMargin ?? dft.para.leftMargin;
       const marL = leftMargin !== undefined ? leftMargin * MASTER_TO_PX : hasBullet ? 24 : 0;
       // [doc-viewer] indent는 첫 줄(글머리표)이 시작하는 절대 위치다. 있으면 그대로 따르고, 없으면 원래처럼 내어쓰기
@@ -1608,7 +1609,13 @@ function drawingBackground(dv: DataView, drawing: Rec, scheme: Scheme, blipUrl: 
     if (!optRec) continue;
     const props = parseOpt(dv, optRec);
     // 只有真的写了填充属性才算数：转换器常留一个「已填充但没给颜色」的空壳
-    if (!props.simple.has(P.fillColor) && !props.simple.has(P.fillType) && !props.simple.has(P.fillBlip)) continue;
+    if (!props.simple.has(P.fillColor) && !props.simple.has(P.fillType) && !props.simple.has(P.fillBlip)) {
+      // [doc-viewer] 다만 '채움'을 명시했는데 색만 없으면 [MS-ODRAW] 기본 채우기색(흰색)이다(LibreOffice와 같다).
+      // 이것을 건너뛰면 구성표 0번 색으로 칠해져, 흰 배경 슬라이드가 파란 배경으로 나왔다
+      const v = props.simple.get(P.fillStyleBooleans) ?? 0;
+      if ((v & 0x100000) !== 0 && (v & 0x10) !== 0) return { type: 'solid', color: 'rgb(255,255,255)' };
+      continue;
+    }
     const fill = shapeFill(props, scheme, blipUrl);
     if (fill && fill.type !== 'none') return fill;
   }
@@ -1629,8 +1636,11 @@ function drawingElements(ctx: Ctx, drawing: Rec): SlideElement[] {
 function parseMaster(
   dv: DataView, rec: Rec, shared: Shared, slideScheme: Scheme | null = null, parent: MasterInfo | null = null,
 ): MasterInfo {
-  // [doc-viewer] 슬라이드가 자기 색 구성표를 가지면 마스터 도형·배경도 그 구성표로 칠한다
-  const scheme = slideScheme ?? readScheme(dv, rec, 1) ?? readScheme(dv, rec, 6) ?? DEFAULT_SCHEME;
+  // [doc-viewer] 슬라이드가 자기 색 구성표를 가지면 마스터 도형·배경도 그 구성표로 칠한다.
+  // 제목 마스터(parent가 있음)는 SlideFlags를 본다: bit 1 = 기본 마스터 구성표 따름, bit 2 = 기본 마스터 배경 따름
+  const titleAtom = parent ? findRec(dv, rec.start, rec.start + rec.len, RT.SlideAtom) : null;
+  const titleFlags = titleAtom && titleAtom.len >= 24 ? dv.getUint16(titleAtom.start + 20, true) : 0;
+  const scheme = slideScheme ?? (titleFlags & 0x2 ? parent?.scheme : null) ?? readScheme(dv, rec, 1) ?? readScheme(dv, rec, 6) ?? DEFAULT_SCHEME;
   // [doc-viewer] 제목 마스터(Slide 컨테이너)는 글자 스타일을 따로 두지 않고 기본 마스터의 것을 쓴다.
   // 원본은 빈 스타일로 풀어 제목 슬라이드의 제목·부제목이 왼쪽 정렬·기본 글꼴로 나왔다
   const styles: MasterStyles = new Map(parent?.styles ?? []);
@@ -1640,11 +1650,9 @@ function parseMaster(
 
   const drawing = findRec(dv, rec.start, rec.start + rec.len, RT.PPDrawing);
   const blipUrl = (idx: number): string | null => shared.blobs[idx - 1] ?? null;
-  // 제목 마스터가 '마스터 배경 따름'(SlideAtom.slideFlags bit 2)이고 자기 배경 도형이 없으면 기본 마스터 배경
-  const atom = parent ? findRec(dv, rec.start, rec.start + rec.len, RT.SlideAtom) : null;
-  const followBackground = !!atom && atom.len >= 24 && (dv.getUint16(atom.start + 20, true) & 0x4) !== 0;
+  // 제목 마스터가 '마스터 배경 따름'이고 자기 배경 도형이 없으면 기본 마스터 배경
   const background = (drawing ? drawingBackground(dv, drawing, scheme, blipUrl) : null)
-    ?? (followBackground ? parent?.background ?? null : null);
+    ?? (titleFlags & 0x4 ? parent?.background ?? null : null);
 
   const ctx: Ctx = {
     dv, scheme, fonts: shared.fonts, blobs: shared.blobs, listText: [], outlineText: [], scale: shared.scale,
@@ -1886,6 +1894,7 @@ export function parsePpt(bytes: Uint8Array, password?: string): Presentation {
       master: masterFor(masterIdRef),
       followMasterObjects: (flags & 0x1) !== 0,
       followMasterBackground: (flags & 0x4) !== 0,
+      followMasterScheme: (flags & 0x2) !== 0,
       notes,
       hyperlinks,
       index: i + 1,
@@ -2013,6 +2022,8 @@ interface SlideEnv {
   master: ((scheme: Scheme | null) => MasterInfo | null) | null;
   followMasterObjects: boolean;
   followMasterBackground: boolean;
+  /** [doc-viewer] SlideFlags bit 1: 마스터 색 구성표를 따름. 이때 슬라이드의 ColorSchemeAtom은 쓰지 않는다 */
+  followMasterScheme: boolean;
   notes: string;
   hyperlinks: Map<number, string>;
   index: number;
@@ -2029,7 +2040,9 @@ interface SlideEnv {
 
 function parseSlide(dv: DataView, slideRec: Rec, shared: Shared, env: SlideEnv): Slide {
   const end = slideRec.start + slideRec.len;
-  const ownScheme = readScheme(dv, slideRec, 1);
+  // [doc-viewer] '마스터 구성표 따름'이면 슬라이드에 남은 ColorSchemeAtom(대개 기본 흰 구성표)을 무시한다.
+  // 원본은 이 플래그를 보지 않아 파란 배경·흰 글자 디자인이 흰 배경·검은 글자로 나왔다
+  const ownScheme = env.followMasterScheme ? null : readScheme(dv, slideRec, 1);
   const master = env.master ? env.master(ownScheme) : null;
   const scheme = ownScheme ?? master?.scheme ?? DEFAULT_SCHEME;
 

@@ -58,6 +58,9 @@ Android의 `buildWebViewer` 작업은 `web/vendor/`도 입력으로 보므로 �
 | `fSysIndex` 색(채우기색을 어둡게·밝게 등)을 RGB로 읽어 그라데이션 끝색이 자주색으로 나왔다. LibreOffice `MSO_CLR_ToColor`와 같은 규칙으로 푼다. | `escher.ts` `colorRgb`, `propColorRef` |
 | 그라데이션 각도·초점을 무시하고 늘 위→아래로 그렸다. LibreOffice `ImportGradientColor`와 같은 방향·색 순서(축 대칭·사각형형 포함)로 그린다. | `escher.ts` `gradientFill` |
 | 슬라이드 색 구성표가 마스터와 다를 때도 마스터 도형·배경을 마스터 구성표로 칠했다. 구성표마다 마스터를 따로 해석한다. | `parser.ts` `masterFor` |
+| '마스터 구성표 따름'(SlideFlags bit 1) 플래그를 보지 않고 슬라이드에 남은 ColorSchemeAtom(대개 기본 흰 구성표)을 써서 파란 배경·흰 글자 디자인이 흰 배경·검은 글자로 나왔다. 플래그가 켜져 있으면 마스터(제목 마스터는 다시 그 마스터) 구성표를 쓴다(LibreOffice `GetColorFromPalette`와 같다). | `parser.ts` `parseSlide`, `parseMaster` |
+| 배경 도형이 '채움'을 명시했는데 색이 없으면 건너뛰어 구성표 0번 색으로 칠했다. [MS-ODRAW] 기본 채우기색인 흰색으로 칠한다. | `parser.ts` `drawingBackground` |
+| 빈 문단에도 글머리표를 그렸다. | `parser.ts` `buildTextBody` |
 
 ### 그림
 
@@ -74,3 +77,15 @@ Android의 `buildWebViewer` 작업은 `web/vendor/`도 입력으로 보므로 �
 | 중간 레코드 길이가 깨져 순차 탐색이 멈춘 파일은 슬라이드를 찾지 못했다. 지속성 디렉터리 오프셋에서 바로 읽는다. | `parser.ts` `recAt`, `parsePpt` |
 | PowerPoint 95/97 이중 저장 파일은 루트에 95 형식, `PP97_DUALSTORAGE` 저장소 안에 97 형식 스트림을 같은 이름으로 둔다. 이름만으로 찾아 95 형식을 잡았다. 저장소 안 스트림을 먼저 쓴다. | `cfb.ts` `hasStorage`, `streamIn` |
 | PowerPoint 95(레코드 머리 16바이트)와 4.0(`PP40` 스트림)은 읽지 못했다. 글자만이라도 보여 준다. 95는 슬라이드별 글 상자 위치와 글자를, 4.0은 길이가 붙은 글자 레코드를 골라 레코드 사이 간격으로 슬라이드를 나눈다(공개 명세가 없어 도형·서식은 읽지 않는다). | 새 파일 `legacy.ts`, `parser.ts` `parsePpt` |
+
+## 검증 방법
+
+- 업스트림 자체 테스트: 포크(`/home/capalace/Git/web-ppt-fork`)의 `packages/core/src`를 이 사본으로 맞춘 뒤 `node tooling/test-core.mjs`(1873항목). ppt 표본 3개의 렌더링 스냅숏은 글 상자 여백 변경으로 다시 만들었고, 전후 화면을 비교해 의도한 차이임을 확인했다.
+- 실제 문서: `spike/renderer-eval`에서 `node scripts/run-eval.mjs --only ppt,pptx --renderer web-ppt` 후 `python3 -I scripts/report.py`.
+
+## 아직 못 한 것
+
+- 개요(SlideListWithText) 글의 자동 번호(`OutlineTextProps9`)는 읽지 않는다. 번호 목록이 글머리표로 나온다.
+- 채우기·선을 아예 정하지 않은 도형에 [MS-ODRAW] 기본값(흰 채움·검은 선)을 쓰지 않는다(원본 동작 유지). 기본값에 기대는 글상자 테두리가 빠진다(govdocs1-019 등).
+- 호(msosptArc)의 조절값, 세로 글, 그림 안 글자(OLE 미리보기 메타파일 속 글자)는 손대지 않았다.
+- PowerPoint 95·4.0은 글자만 보여 준다.
