@@ -73,18 +73,12 @@ body {
   bottom: 12px;
   left: 50%;
   transform: translateX(-50%);
-  padding: 4px 10px;
-  font-size: 13px;
+  padding: 6px 14px;
+  font-size: 14px;
   color: #fff;
-  background: rgb(0 0 0 / 60%);
-  border-radius: 12px;
-  opacity: 0;
-  transition: opacity 0.2s;
-  pointer-events: none;
-}
-
-.page-indicator.visible {
-  opacity: 1;
+  background: rgb(0 0 0 / 55%);
+  border: none;
+  border-radius: 16px;
 }
 
 /* docx는 화면 밖에서 전체를 그린 뒤 쪽을 옮겨 단다. */
@@ -135,8 +129,8 @@ body {
   background: rgb(47 111 222 / 30%);
 }
 
-/* 암호 입력 */
-.password-dialog {
+/* 암호 입력·쪽 이동 창 */
+.dialog {
   position: fixed;
   inset: 30% 24px auto;
   padding: 16px;
@@ -145,19 +139,19 @@ body {
   box-shadow: 0 4px 24px rgb(0 0 0 / 25%);
 }
 
-.password-dialog p {
+.dialog p {
   margin: 0 0 12px;
   font-size: 15px;
 }
 
-.password-dialog input {
+.dialog input {
   box-sizing: border-box;
   width: 100%;
   padding: 8px;
   font-size: 16px;
 }
 
-.password-dialog div {
+.dialog div {
   display: flex;
   gap: 8px;
   justify-content: flex-end;

@@ -6,6 +6,8 @@ const STRINGS = {
     rowsLimited: (shown, total) => `처음 ${shown}행만 표시합니다 (전체 ${total}행).`,
     passwordPrompt: '암호가 걸린 문서입니다. 암호를 입력하세요.',
     passwordWrong: '암호가 맞지 않습니다. 다시 입력하세요.',
+    goToPage: (count) => `이동할 쪽 번호 (1-${count})`,
+    go: '이동',
     ok: '확인',
     cancel: '취소',
   },

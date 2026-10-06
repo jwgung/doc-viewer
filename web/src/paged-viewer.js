@@ -7,6 +7,8 @@
 //   page:  쪽 전체가 한 화면에 들어오게 줄인다(용지 맞춤).
 // doc은 { count, sizes: [{width, height}], renderInto(index, element) } 형태다.
 // renderInto는 element 크기에 맞춰 그 쪽을 그리고, 끝나면 resolve한다.
+import { t } from './strings.js';
+
 const KEEP_RENDERED = 8;
 const SWIPE_MIN_PX = 50;
 const EDGE_TAP_RATIO = 0.3;
@@ -19,8 +21,11 @@ export class PagedViewer {
     this.fit = fit ?? (mode === 'scroll' ? 'width' : 'page');
     this.onPageChange = onPageChange;
     this.current = 0;
-    this.indicator = document.createElement('div');
+    // 쪽 번호는 늘 보여주고, 누르면 쪽 번호를 입력해 바로 이동한다.
+    this.indicator = document.createElement('button');
+    this.indicator.type = 'button';
     this.indicator.className = 'page-indicator';
+    this.indicator.addEventListener('click', () => this.askPage());
     document.body.appendChild(this.indicator);
     // 화면 크기가 바뀌면(회전 등) 쪽 크기를 다시 맞춘다. 연속 스크롤·화면 가득은 CSS 비율로 따라간다.
     addEventListener('resize', debounce(() => (this.mode !== 'scroll' || this.fit === 'page') && this.render(), 200));
@@ -42,10 +47,34 @@ export class PagedViewer {
     return this.render();
   }
 
-  setFit(fit) {
-    if (fit === this.fit) return;
+  /** 맞춤을 적용한다. 같은 맞춤이어도 다시 배치해, 앱이 확대 비율을 되돌린 뒤 원래 모양으로 돌아오게 한다. */
+  applyFit(fit) {
     this.fit = fit;
     return this.render();
+  }
+
+  /** 쪽 번호를 입력받아 그 쪽으로 이동한다. */
+  askPage() {
+    if (document.querySelector('.dialog')) return;
+    const form = document.createElement('form');
+    form.className = 'dialog';
+    form.innerHTML = '<p></p><input type="number" inputmode="numeric" min="1"><div><button type="button"></button><button type="submit"></button></div>';
+    form.querySelector('p').textContent = t.goToPage(this.doc.count);
+    const input = form.querySelector('input');
+    input.max = String(this.doc.count);
+    input.value = String(this.current + 1);
+    const [cancel, go] = form.querySelectorAll('button');
+    cancel.textContent = t.cancel;
+    go.textContent = t.go;
+    cancel.addEventListener('click', () => form.remove());
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const page = Number.parseInt(input.value, 10);
+      form.remove();
+      if (Number.isFinite(page)) this.goTo(page - 1);
+    });
+    document.body.appendChild(form);
+    input.select();
   }
 
   goTo(index) {
@@ -183,9 +212,6 @@ export class PagedViewer {
     this.current = index;
     const last = this.mode === 'spread' ? Math.min(index + 2, this.doc.count) : index + 1;
     this.indicator.textContent = last > index + 1 ? `${index + 1}-${last} / ${this.doc.count}` : `${index + 1} / ${this.doc.count}`;
-    this.indicator.classList.add('visible');
-    clearTimeout(this.indicatorTimer);
-    this.indicatorTimer = setTimeout(() => this.indicator.classList.remove('visible'), 1500);
     this.onPageChange?.(index);
   }
 }

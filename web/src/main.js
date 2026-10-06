@@ -25,7 +25,7 @@ const fit = params.get('fit') ?? undefined;
 let viewer = null;
 window.viewer = {
   setMode: (next) => viewer?.setMode(next),
-  setFit: (next) => viewer?.setFit(next),
+  applyFit: (next) => viewer?.applyFit(next),
 };
 const container = document.getElementById('doc');
 const status = document.getElementById('status');
@@ -92,7 +92,7 @@ async function main() {
 function promptPassword(incorrect) {
   return new Promise((resolve, reject) => {
     const form = document.createElement('form');
-    form.className = 'password-dialog';
+    form.className = 'dialog';
     form.innerHTML = '<p></p><input type="password" autocomplete="off"><div><button type="button"></button><button type="submit"></button></div>';
     form.querySelector('p').textContent = incorrect ? t.passwordWrong : t.passwordPrompt;
     const [cancel, ok] = form.querySelectorAll('button');
