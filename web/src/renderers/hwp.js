@@ -50,6 +50,19 @@ function copyParagraphs(event) {
   event.preventDefault();
 }
 
+/**
+ * 쪽 SVG의 id를 쪽마다 다르게 바꾼다. rhwp는 쪽마다 id를 새로 매겨(cell-clip-6 등) 여러 쪽을 한 문서에 넣으면
+ * 같은 id가 되풀이되고, url(#id)는 문서에서 먼저 나온 요소를 가리켜 2쪽 상자가 1쪽의 자르기 영역으로 잘렸다.
+ */
+let svgSerial = 0;
+function uniqueIds(svg) {
+  const prefix = `s${++svgSerial}-`;
+  return svg
+    .replace(/\bid="([^"]+)"/g, (_, id) => `id="${prefix}${id}"`)
+    .replace(/url\(#([^)]+)\)/g, (_, id) => `url(#${prefix}${id})`)
+    .replace(/\bhref="#([^"]+)"/g, (_, id) => `href="#${prefix}${id}"`);
+}
+
 export async function render(bytes, container, ctx) {
   const worker = new Worker(new URL('../workers/hwp-worker.js', import.meta.url), { type: 'module' });
   const request = connect(worker);
@@ -59,9 +72,13 @@ export async function render(bytes, container, ctx) {
     const password = await ctx.askPassword(incorrect);
     opened = await request({ type: 'unlock', password }, 'opened');
   }
+  const firstSvg = {};
   const renderInto = async (index, el) => {
     el.classList.add('hwp-page');
-    el.innerHTML = (await request({ type: 'page', index }, 'page')).svg;
+    const page = await request({ type: 'page', index }, 'page');
+    const t0 = performance.now();
+    el.innerHTML = uniqueIds(page.svg);
+    if (firstSvg.renderMs === undefined) Object.assign(firstSvg, { renderMs: page.renderMs, insertMs: Math.round(performance.now() - t0), svgKb: Math.round(page.svg.length / 1024) });
     // 글자 층은 그림을 보인 뒤에 붙인다(첫 쪽을 늦추지 않게).
     request({ type: 'layout', index }, 'layout')
       .then(({ runs }) => {
@@ -93,5 +110,5 @@ export async function render(bytes, container, ctx) {
     })
     .catch(() => {});
   addEventListener('pagehide', () => worker.terminate(), { once: true });
-  return { pages: opened.pages, extra: { wasmMemoryBytes: opened.wasmMemoryBytes } };
+  return { pages: opened.pages, extra: { wasmMemoryBytes: opened.wasmMemoryBytes, ...opened.timing, firstSvg } };
 }
