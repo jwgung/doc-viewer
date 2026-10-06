@@ -7,6 +7,8 @@
 //   page:  쪽 전체가 한 화면에 들어오게 줄인다(용지 맞춤).
 // doc은 { count, sizes: [{width, height}], renderInto(index, element) } 형태다.
 // renderInto는 element 크기에 맞춰 그 쪽을 그리고, 끝나면 resolve한다.
+// 쪽 크기를 그려 봐야 아는 렌더러(docx)는 sizes에 추정값을 주고, 한 쪽씩·두 쪽씩 보기가 크기를 읽기 전에
+// doc.measure(index)(선택)로 정확한 크기를 돌려주며, 연속 스크롤에서는 그린 뒤 resizePage로 자리를 바로잡는다.
 import { openSheet } from './sheet.js';
 import { t } from './strings.js';
 
@@ -128,6 +130,19 @@ export class PagedViewer {
     this.placeThumb(this.current);
   }
 
+  /** 연속 스크롤의 쪽 자리 크기. 용지 맞춤이면 쪽 하나가 화면 높이 안에 들어오게 너비를 줄인다. */
+  sizeScrollPage(el, { width, height }, fitWidth = this.container.clientWidth - 16, fitHeight = innerHeight - 16) {
+    el.style.aspectRatio = `${width} / ${height}`;
+    if (this.fit === 'page') el.style.width = `${Math.floor(Math.min(fitWidth, (fitHeight * width) / height))}px`;
+  }
+
+  /** 렌더러가 그려 보고서야 쪽 크기를 알았을 때, 연속 스크롤 자리를 실제 크기로 바로잡는다. */
+  resizePage(index, size) {
+    this.doc.sizes[index] = size;
+    const el = this.mode === 'scroll' ? this.container.children[index] : null;
+    if (el) this.sizeScrollPage(el, size);
+  }
+
   goTo(index) {
     const step = this.mode === 'spread' ? 2 : 1;
     const target = Math.max(0, Math.min(this.doc.count - 1, index));
@@ -145,12 +160,10 @@ export class PagedViewer {
   renderScroll() {
     const fitWidth = this.container.clientWidth - 16;
     const fitHeight = innerHeight - 16;
-    const pages = this.doc.sizes.map(({ width, height }, index) => {
+    const pages = this.doc.sizes.map((size, index) => {
       const el = document.createElement('div');
       el.className = 'page';
-      el.style.aspectRatio = `${width} / ${height}`;
-      // 용지 맞춤이면 쪽 하나가 화면 높이 안에 들어오게 너비를 줄인다.
-      if (this.fit === 'page') el.style.width = `${Math.floor(Math.min(fitWidth, (fitHeight * width) / height))}px`;
+      this.sizeScrollPage(el, size, fitWidth, fitHeight);
       el.dataset.index = String(index);
       this.container.appendChild(el);
       return el;
@@ -192,7 +205,7 @@ export class PagedViewer {
     const availWidth = (this.container.clientWidth - 16 - gap * (step - 1)) / step;
     const availHeight = innerHeight - 16;
     const slots = indexes.map((index) => {
-      const { width, height } = this.doc.sizes[index];
+      const { width, height } = this.doc.measure?.(index) ?? this.doc.sizes[index];
       const scale = this.fit === 'width' ? availWidth / width : Math.min(availWidth / width, availHeight / height);
       const el = document.createElement('div');
       el.className = 'page';
