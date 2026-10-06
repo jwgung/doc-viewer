@@ -1,0 +1,27 @@
+{
+  "name": "docx-preview",
+  "version": "0.4.1",
+  "description": "docx-preview 0.4.1을 그대로 옮겨 온 사본. 원본: https://github.com/VolodymyrBaydalka/docxjs",
+  "license": "Apache-2.0",
+  "author": {
+    "name": "Volodymyr Baydalka"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/VolodymyrBaydalka/docxjs.git"
+  },
+  "dependencies": {
+    "jszip": ">=3.0.0"
+  },
+  "files": [
+    "docx-preview.mjs",
+    "docx-preview.d.ts"
+  ],
+  "exports": {
+    ".": {
+      "import": "./docx-preview.mjs",
+      "types": "./docx-preview.d.ts"
+    }
+  },
+  "types": "docx-preview.d.ts"
+}
