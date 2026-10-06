@@ -51,6 +51,7 @@ async function main() {
     if (!load) throw new Error(`지원하지 않는 형식입니다: ${fmt}`);
     const [renderer, bytes] = await Promise.all([load(), fetchDocument(src)]);
     const loadMs = Math.round(performance.now() - t0);
+    const size = bytes.length; // 워커로 넘기면 bytes가 비워지므로 미리 잰다.
     const result = (await renderer.render(bytes, container, ctx)) ?? {};
     ctx.markFirstPage();
     report('done', {
@@ -58,7 +59,7 @@ async function main() {
       firstPageMs,
       totalMs: Math.round(performance.now() - t0),
       pages: result.pages ?? null,
-      bytes: bytes.length,
+      bytes: size,
       ...heap(),
       ...(result.extra ?? {}),
     });

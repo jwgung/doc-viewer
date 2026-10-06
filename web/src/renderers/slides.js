@@ -4,7 +4,7 @@ import { mountLazyPages } from '../lazy-pages.js';
 export async function render(bytes, container, ctx) {
   const pres = await parse(bytes);
   const size = { width: pres.width, height: pres.height };
-  mountLazyPages(
+  await mountLazyPages(
     container,
     pres.slides.map(() => size),
     (i) => renderSlideToSvg(pres, pres.slides[i], { textMode: 'html' }),
