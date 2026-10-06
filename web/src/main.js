@@ -20,6 +20,7 @@ const RENDERERS = {
   md: () => import('./renderers/md.js'),
 };
 
+const PASSWORD_CANCELLED = 'password cancelled';
 const container = document.getElementById('doc');
 const status = document.getElementById('status');
 let fmt = null;
@@ -100,10 +101,28 @@ async function open({ fmt: format, src, mode = 'scroll', fit, page = 0, scroll =
       ...(result.extra ?? {}),
     });
   } catch (error) {
-    report('error', { message: String(error?.message ?? error), stack: String(error?.stack ?? '').slice(0, 1000) });
+    // 암호 입력을 취소했으면 대안 없이 안내만 한다. 그 밖의 실패는 본문 글자라도 보여 준다(최후 대안).
+    const cancelled = error?.message === PASSWORD_CANCELLED;
+    const fallback = cancelled ? 'cancelled' : await showFallback(src).catch(() => 'failed');
+    report('error', { message: String(error?.message ?? error), stack: String(error?.stack ?? '').slice(0, 1000), fallback });
+    if (fallback === 'text') return;
     status.dataset.kind = 'error';
-    status.textContent = t.renderFailed;
+    status.textContent = { cancelled: t.passwordRequired, encrypted: t.encryptedUnsupported }[fallback] ?? t.renderFailed;
   }
+}
+
+/**
+ * 렌더러가 실패한 문서의 본문 글자를 뽑아 보여 준다. 렌더러가 워커로 넘긴 바이트는 비어 있으므로 다시 받는다.
+ * @returns {'text' | 'encrypted' | 'empty'}
+ */
+async function showFallback(src) {
+  // 실패한 렌더러가 남긴 쪽 뷰어 부품(쪽 번호·빠른 이동 손잡이·임시 그리기 영역)을 걷어 낸다.
+  viewer = null;
+  document.querySelectorAll('.page-indicator, .scrubber, .offscreen').forEach((el) => el.remove());
+  const [{ extractFallback, renderFallback }, bytes] = await Promise.all([import('./fallback.js'), fetchDocument(src)]);
+  const extracted = await extractFallback(bytes);
+  if (extracted?.encrypted) return 'encrypted';
+  return extracted && renderFallback(extracted, container) ? 'text' : 'empty';
 }
 
 /** 쪽 구분이 없는 문서(doc·마크다운·엑셀)는 스크롤 비율로 이어본다. */
@@ -156,7 +175,7 @@ async function promptPassword(incorrect) {
     confirmLabel: t.ok,
     cancelLabel: t.cancel,
   });
-  if (value === null) throw new Error('password cancelled');
+  if (value === null) throw new Error(PASSWORD_CANCELLED);
   return value;
 }
 

@@ -487,3 +487,51 @@ body.reading .scrubber {
 .markdown img {
   max-width: 100%;
 }
+
+/* 최후 대안: 원래 모양 없이 본문 글자만 */
+.flow.fallback {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 20px 22px 32px;
+  font-size: 16px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.fallback-note {
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  font-size: 14px;
+  color: #59636e;
+  background: #f6f8fa;
+  border-radius: 6px;
+}
+
+.fallback p {
+  margin: 0 0 0.6em;
+  white-space: pre-wrap;
+}
+
+.fallback h2 {
+  margin: 1.2em 0 0.5em;
+  font-size: 18px;
+}
+
+.fallback table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.fallback td,
+.fallback th {
+  padding: 2px 8px;
+  white-space: pre-wrap;
+  border: 1px solid #d1d9e0;
+}
+
+.fallback img {
+  max-width: 100%;
+}
