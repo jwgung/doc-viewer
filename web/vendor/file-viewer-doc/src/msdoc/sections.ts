@@ -56,7 +56,8 @@ export function parseSections(
   const fc = fib.fibRgFcLcb.fcPlcfSed as number | undefined;
   const lcb = fib.fibRgFcLcb.lcbPlcfSed as number | undefined;
   const sections: SectionInfo[] = [];
-  const sedSize = 12;
+  // SED는 Word 6 이상 12바이트, Word 2는 6바이트(fn 2 + fcSepx 4)다(LibreOffice WW8PLCFx_SEPX).
+  const sedSize = version === 2 ? 6 : 12;
   if (fc != null && lcb != null && lcb >= 4 + sedSize && fc + lcb <= tableBytes.length) {
     const reader = new BinaryReader(tableBytes.subarray(fc, fc + lcb));
     const count = Math.floor((lcb - 4) / (4 + sedSize));
