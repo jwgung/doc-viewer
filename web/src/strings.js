@@ -33,6 +33,7 @@ STRINGS.en = {
   encryptedUnsupported: "This document is password-protected. Password-protected files of this type can't be opened yet.",
   passwordRequired: 'A password is required to view this document.',
   rowsLimited: (shown, total) => `Showing the first ${shown} rows (of ${total}).`,
+  chartSheet: "Chart sheets can't be displayed yet.",
   passwordTitle: 'Password',
   passwordPrompt: 'This document is password-protected.',
   passwordWrong: 'Wrong password. Try again.',
