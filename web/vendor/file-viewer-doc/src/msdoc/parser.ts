@@ -1063,15 +1063,13 @@ function decodeLegacyPieceTexts(
   const docEncoding = fib.chse === 256 ? 'macintosh' : lidToEncoding(fib.base.lid) || 'windows-1252';
   const japaneseDoc = (fib.base.lid & 0x3ff) === 0x11;
   // 글꼴 표에 2바이트 문자 집합 글꼴이 있으면, 언어가 영어로 저장된 한글 문서도 알아볼 수 있게 후보로 둔다.
+  // 한글 글꼴(HANGEUL 129)이 있으면 한글을 먼저 고른다(앱의 주 사용자가 한국어 문서를 연다).
   let dbcsHint: string | null = isDoubleByteEncoding(docEncoding) ? docEncoding : null;
   if (!dbcsHint) {
-    for (const font of fonts.fonts) {
-      const enc = charsetToEncoding(font.charset);
-      if (isDoubleByteEncoding(enc) && (enc !== 'shift_jis' || japaneseDoc)) {
-        dbcsHint = enc;
-        break;
-      }
-    }
+    const candidates = fonts.fonts
+      .map((font) => charsetToEncoding(font.charset))
+      .filter((enc): enc is string => isDoubleByteEncoding(enc) && (enc !== 'shift_jis' || japaneseDoc));
+    dbcsHint = candidates.includes('euc-kr') ? 'euc-kr' : candidates[0] ?? null;
   }
   const encodingFor = (props: DecodedProperty[]): string => {
     let chse: { diff?: boolean; charset?: number } | undefined;
@@ -1128,8 +1126,8 @@ function decodeLegacyPieceTexts(
   const encodings = new Set<string>();
   // 동아시아판 Word 95(fExtChar): CP마다 16비트 값이다. 0x3000 이상이면 (앞 바이트 << 8 | 뒤 바이트)로 저장한
   // 2바이트 문자 코드이고, 그보다 작으면 아래 바이트가 한 바이트 문자다(LibreOffice ReadPlainChars와 같은 처리).
-  const cjkEncoding = dbcsHint || 'euc-kr';
-  const decodeExtChars = (bytes: Uint8Array, singleByteEncoding: string): string => {
+  const cjkDefault = dbcsHint || 'euc-kr';
+  const decodeExtChars = (bytes: Uint8Array, singleByteEncoding: string, cjkEncoding: string): string => {
     const out: string[] = [];
     let pending: number[] = [];
     const flush = () => {
@@ -1172,7 +1170,9 @@ function decodeLegacyPieceTexts(
           const start = piece.actualByteStart + (cp - piece.cpStart) * 2;
           const sbcs = isDoubleByteEncoding(encoding) ? (lidToEncoding(fib.base.lid) || 'windows-1252') : encoding;
           encodings.add(sbcs);
-          let text = decodeExtChars(wordBytes.subarray(start, piece.actualByteStart + (end - piece.cpStart) * 2), isDoubleByteEncoding(sbcs) ? 'windows-1252' : sbcs);
+          // 2바이트 문자는 그 글자 런의 글꼴이 2바이트 문자 집합이면 그것으로, 아니면 문서 기본(한글 우선)으로 푼다.
+          const cjk = isDoubleByteEncoding(encoding) ? encoding : cjkDefault;
+          let text = decodeExtChars(wordBytes.subarray(start, piece.actualByteStart + (end - piece.cpStart) * 2), isDoubleByteEncoding(sbcs) ? 'windows-1252' : sbcs, cjk);
           if (text.length < end - cp) text = text.padEnd(end - cp, FILLER_CHAR);
           parts.push(text);
           cp = end;
