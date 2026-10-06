@@ -26,18 +26,34 @@ function readSectorAbsolute(bytes: Uint8Array, sectorSize: number, sid: number):
   return sector;
 }
 
-function collectChain(startSid: number, nextSectorFn: (sid: number) => number, limit = MAX_CHAIN_SECTORS): number[] {
+// doc-viewer: 손상된 체인(순환·범위 밖 섹터)을 만나면 예외 대신 거기까지 읽은 내용을 돌려준다.
+// 문서 전체를 포기하는 것보다 일부라도 보여주는 편이 '무조건 열림'에 맞다. 경고는 warnings로 남긴다.
+function collectChain(
+  startSid: number,
+  nextSectorFn: (sid: number) => number,
+  isValid: (sid: number) => boolean,
+  warnings: MsDocWarning[] | null,
+  limit = MAX_CHAIN_SECTORS,
+): number[] {
   const chain: number[] = [];
   const seen = new Set<number>();
   let sid = startSid;
-  let guard = 0;
   while (sid !== ENDOFCHAIN && sid !== FREESECT && sid >= 0) {
-    if (seen.has(sid)) throw new Error(`Detected sector loop at ${sid}`);
+    if (seen.has(sid)) {
+      if (warnings) pushWarning(warnings, `Detected sector loop at ${sid}; truncating the stream`);
+      break;
+    }
+    if (!isValid(sid)) {
+      if (warnings) pushWarning(warnings, `Sector ${sid} is out of bounds; truncating the stream`);
+      break;
+    }
     seen.add(sid);
     chain.push(sid);
     sid = nextSectorFn(sid);
-    guard += 1;
-    if (guard > limit) throw new Error('Sector chain exceeds safe limit');
+    if (chain.length > limit) {
+      if (warnings) pushWarning(warnings, 'Sector chain exceeds safe limit; truncating the stream');
+      break;
+    }
   }
   return chain;
 }
@@ -48,11 +64,13 @@ function readChainBytes(
   startSid: number,
   fat: number[],
   expectedSize: number | null = null,
+  warnings: MsDocWarning[] | null = null,
 ): Uint8Array {
   if (startSid === ENDOFCHAIN || startSid === FREESECT || startSid < 0) {
     return new Uint8Array(0);
   }
-  const chain = collectChain(startSid, (sid) => fat[sid] ?? ENDOFCHAIN);
+  const isValid = (sid: number) => 512 + sid * sectorSize < bytes.length;
+  const chain = collectChain(startSid, (sid) => fat[sid] ?? ENDOFCHAIN, isValid, warnings);
   const out = new Uint8Array(chain.length * sectorSize);
   let offset = 0;
   for (const sid of chain) {
@@ -63,18 +81,21 @@ function readChainBytes(
 }
 
 function parseDirectoryTree(entries: CFBEntry[]): CFBEntry {
-  function walkSiblings(entryId: number, out: number[]): void {
-    if (entryId < 0 || entryId >= entries.length) return;
+  // doc-viewer: 손상된 디렉터리 트리의 순환 참조로 무한 재귀에 빠지지 않게 한 번 본 항목은 다시 걷지 않는다.
+  const visited = new Set<number>();
+  function walkSiblings(entryId: number, out: number[], depth = 0): void {
+    if (entryId < 0 || entryId >= entries.length || visited.has(entryId) || depth > 512) return;
     const entry = entries[entryId];
     if (!entry) return;
-    walkSiblings(entry.leftSiblingId, out);
+    visited.add(entryId);
+    walkSiblings(entry.leftSiblingId, out, depth + 1);
     out.push(entryId);
-    walkSiblings(entry.rightSiblingId, out);
+    walkSiblings(entry.rightSiblingId, out, depth + 1);
   }
 
-  function attachChildren(storageId: number): void {
+  function attachChildren(storageId: number, depth = 0): void {
     const storage = entries[storageId];
-    if (!storage || storage.childId < 0) return;
+    if (!storage || storage.childId < 0 || depth > 64) return;
     const childIds: number[] = [];
     walkSiblings(storage.childId, childIds);
     storage.children = childIds;
@@ -82,12 +103,13 @@ function parseDirectoryTree(entries: CFBEntry[]): CFBEntry {
       const child = entries[childId];
       if (!child) continue;
       child.parentId = storageId;
-      attachChildren(childId);
+      attachChildren(childId, depth + 1);
     }
   }
 
-  const root = entries.find((entry) => entry.objectType === 5);
+  const root = entries.find((entry) => entry?.objectType === 5);
   if (!root) throw new Error('CFB root storage not found');
+  visited.add(root.id);
   attachChildren(root.id);
   return root;
 }
@@ -148,6 +170,10 @@ export function parseCFB(input: BinaryInput, _options: Record<string, unknown> =
     pushWarning(warnings, `Unexpected mini stream cutoff size ${miniStreamCutoffSize}`);
   }
 
+  // doc-viewer: 헤더 DIFAT는 앞의 numFatSectors개만 유효하다. 손상된 파일은 그 뒤에 쓰레기 값을 담기도 해서
+  // 그대로 읽으면 범위를 벗어난 섹터를 FAT로 읽다가 문서 전체를 못 연다(LibreOffice·olefile도 개수만큼만 읽는다).
+  const sectorCount = Math.max(0, Math.floor((bytes.length - 512 + sectorSize - 1) / sectorSize));
+  const isValidSector = (sid: number) => sid >= 0 && sid < sectorCount;
   const headerDifat: number[] = [];
   for (let i = 0; i < 109; i += 1) {
     const sid = reader.i32(76 + i * 4);
@@ -158,6 +184,10 @@ export function parseCFB(input: BinaryInput, _options: Record<string, unknown> =
   let difatSid = firstDifatSector;
   let difatCount = 0;
   while (difatSid !== ENDOFCHAIN && difatSid !== FREESECT && difatSid >= 0) {
+    if (!isValidSector(difatSid)) {
+      pushWarning(warnings, `DIFAT sector ${difatSid} is out of bounds; stopping early`);
+      break;
+    }
     const sector = readSectorAbsolute(bytes, sectorSize, difatSid);
     const sectorReader = new BinaryReader(sector);
     const entriesPerDifatSector = sectorSize / 4 - 1;
@@ -176,9 +206,15 @@ export function parseCFB(input: BinaryInput, _options: Record<string, unknown> =
   if (numFatSectors && difat.length < numFatSectors) {
     pushWarning(warnings, `FAT sector count mismatch: header says ${numFatSectors}, found ${difat.length}`);
   }
+  if (numFatSectors && difat.length > numFatSectors) difat.length = numFatSectors;
 
   const fat: number[] = [];
   for (const fatSid of difat) {
+    if (!isValidSector(fatSid)) {
+      pushWarning(warnings, `FAT sector ${fatSid} is out of bounds; treating it as free`);
+      for (let i = 0; i < sectorSize / 4; i += 1) fat.push(-1);
+      continue;
+    }
     const fatSector = readSectorAbsolute(bytes, sectorSize, fatSid);
     const fatReader = new BinaryReader(fatSector);
     for (let i = 0; i < sectorSize / 4; i += 1) {
@@ -186,13 +222,13 @@ export function parseCFB(input: BinaryInput, _options: Record<string, unknown> =
     }
   }
 
-  const directoryBytes = readChainBytes(bytes, sectorSize, firstDirSector, fat);
+  const directoryBytes = readChainBytes(bytes, sectorSize, firstDirSector, fat, null, warnings);
   const directoryReader = new BinaryReader(directoryBytes);
   const entries: CFBEntry[] = [];
   for (let offset = 0, id = 0; offset + 128 <= directoryBytes.length; offset += 128, id += 1) {
     const nameLength = directoryReader.u16(offset + 64);
-    const name = normalizeName(directoryReader.utf16le(offset, Math.max(0, nameLength - 2)));
-    if (!name && directoryReader.u8(offset + 66) === 0) continue;
+    const name = normalizeName(directoryReader.utf16le(offset, Math.max(0, Math.min(64, nameLength) - 2)));
+    // doc-viewer: 빈 항목도 자리를 지켜야 entries[id]가 디렉터리 번호와 맞는다(형제·자식 번호로 찾는다).
     entries.push({
       id,
       name,
@@ -217,43 +253,54 @@ export function parseCFB(input: BinaryInput, _options: Record<string, unknown> =
 
   const miniFat: number[] = [];
   if (numMiniFatSectors && firstMiniFatSector >= 0) {
-    const miniFatBytes = readChainBytes(bytes, sectorSize, firstMiniFatSector, fat);
+    const miniFatBytes = readChainBytes(bytes, sectorSize, firstMiniFatSector, fat, null, warnings);
     const miniFatReader = new BinaryReader(miniFatBytes);
     for (let i = 0; i + 4 <= miniFatBytes.length; i += 4) {
       miniFat.push(miniFatReader.i32(i));
     }
   }
 
-  const rootStreamBytes = readChainBytes(bytes, sectorSize, root.startSector, fat, root.streamSize);
+  const rootStreamBytes = readChainBytes(bytes, sectorSize, root.startSector, fat, root.streamSize, warnings);
 
   function readMiniStream(entry: CFBEntry): Uint8Array {
     if (entry.startSector < 0) return new Uint8Array(0);
-    const chain = collectChain(entry.startSector, (sid) => miniFat[sid] ?? ENDOFCHAIN);
+    const isValid = (sid: number) => (sid + 1) * miniSectorSize <= rootStreamBytes.length;
+    const chain = collectChain(entry.startSector, (sid) => miniFat[sid] ?? ENDOFCHAIN, isValid, warnings);
     const out = new Uint8Array(chain.length * miniSectorSize);
     let offset = 0;
     for (const miniSid of chain) {
       const start = miniSid * miniSectorSize;
       const end = start + miniSectorSize;
-      if (end > rootStreamBytes.length) throw new Error(`Mini sector ${miniSid} is out of bounds`);
       out.set(rootStreamBytes.subarray(start, end), offset);
       offset += miniSectorSize;
     }
     return out.subarray(0, Math.min(entry.streamSize, out.length));
   }
 
+  // doc-viewer: 복합 문서의 이름은 대소문자를 가리지 않는다([MS-CFB] 2.6.4). 'worddocument'·'1TABLE'처럼
+  // 대소문자가 다른 이름으로 저장된 파일도 열리게 정확히 일치하는 이름이 없으면 대소문자 무시로 다시 찾는다.
+  const lowerPathMap = new Map<string, CFBEntry>();
+  for (const [path, entry] of pathMap) {
+    const key = path.toLowerCase();
+    if (!lowerPathMap.has(key)) lowerPathMap.set(key, entry);
+  }
+  function lookup(path: string): CFBEntry | null {
+    return pathMap.get(path) ?? lowerPathMap.get(path.toLowerCase()) ?? null;
+  }
+
   function getStream(identifier: string | CFBEntry): Uint8Array | null {
-    const entry = typeof identifier === 'string' ? pathMap.get(identifier) ?? null : identifier;
+    const entry = typeof identifier === 'string' ? lookup(identifier) : identifier;
     if (!entry) return null;
     if (entry.objectType !== 2 && entry.objectType !== 5) return null;
     if (entry.objectType === 5) return rootStreamBytes;
     if (entry.streamSize < miniStreamCutoffSize && entry.startSector >= 0 && miniFat.length) {
       return readMiniStream(entry);
     }
-    return readChainBytes(bytes, sectorSize, entry.startSector, fat, entry.streamSize);
+    return readChainBytes(bytes, sectorSize, entry.startSector, fat, entry.streamSize, warnings);
   }
 
   function listChildren(path: string | CFBEntry): CFBEntry[] {
-    const entry = typeof path === 'string' ? pathMap.get(path) ?? null : path;
+    const entry = typeof path === 'string' ? lookup(path) : path;
     if (!entry) return [];
     return (entry.children || []).map((id) => entries[id]).filter((child): child is CFBEntry => Boolean(child));
   }
@@ -273,12 +320,12 @@ export function parseCFB(input: BinaryInput, _options: Record<string, unknown> =
     root,
     pathMap,
     getEntry(path: string): CFBEntry | null {
-      return pathMap.get(path) ?? null;
+      return lookup(path);
     },
     getStream,
     listChildren,
     findByName(name: string, startPath = '/'): CFBEntry | null {
-      const start = startPath === '/' ? root : pathMap.get(startPath) ?? null;
+      const start = startPath === '/' ? root : lookup(startPath);
       if (!start) return null;
       const stack: CFBEntry[] = [start];
       while (stack.length) {
