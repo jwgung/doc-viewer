@@ -52,10 +52,67 @@ function parseFfn(recordBytes: Uint8Array, index: number): FontInfo | null {
   };
 }
 
-export function parseFonts(tableBytes: Uint8Array, fibRgFcLcb: FibRgFcLcb): FontsCollection {
+/**
+ * doc-viewer: Word 6/95 글꼴 표. 앞 2바이트는 표 전체 크기이고, FFN은 6바이트 머리 + 8비트 이름(0 종료)이다.
+ * 이름은 그 글꼴의 문자 집합으로 저장된다(LibreOffice WW8Fonts와 같은 처리).
+ */
+function parseLegacyFonts(bytes: Uint8Array, decodeName: (raw: Uint8Array, charset: number) => string): FontInfo[] {
+  const fonts: FontInfo[] = [];
+  let offset = 2;
+  while (offset < bytes.length && fonts.length < 4096) {
+    const cbFfnM1 = bytes[offset] ?? 0;
+    const record = bytes.subarray(offset, Math.min(bytes.length, offset + cbFfnM1 + 1));
+    if (record.length < 6) break;
+    const ffid = record[1] ?? 0;
+    const weight = (record[2] ?? 0) | ((record[3] ?? 0) << 8);
+    const charset = record[4] ?? 0;
+    const ixchSzAlt = record[5] ?? 0;
+    const nameBytes = record.subarray(6);
+    const end = nameBytes.indexOf(0);
+    const name = decodeName(nameBytes.subarray(0, end < 0 ? nameBytes.length : end), charset);
+    let altName = '';
+    if (ixchSzAlt && ixchSzAlt < nameBytes.length) {
+      const alt = nameBytes.subarray(ixchSzAlt);
+      const altEnd = alt.indexOf(0);
+      altName = decodeName(alt.subarray(0, altEnd < 0 ? alt.length : altEnd), charset);
+    }
+    fonts.push({
+      index: fonts.length,
+      cbFfnM1,
+      ffid,
+      weight,
+      charset,
+      ixchSzAlt,
+      panose: new Uint8Array(0),
+      fontSignature: new Uint8Array(0),
+      name,
+      altName,
+    });
+    offset += cbFfnM1 + 1;
+  }
+  return fonts;
+}
+
+export function parseFonts(
+  tableBytes: Uint8Array,
+  fibRgFcLcb: FibRgFcLcb,
+  version = 8,
+  decodeName: (raw: Uint8Array, charset: number) => string = (raw) => new TextDecoder('windows-1252').decode(raw),
+): FontsCollection {
   const fcSttbfFfn = fibRgFcLcb.fcSttbfFfn as number | undefined;
   const lcbSttbfFfn = fibRgFcLcb.lcbSttbfFfn as number | undefined;
-  if (fcSttbfFfn == null || lcbSttbfFfn == null || lcbSttbfFfn <= 0) {
+  if (version === 6 && fcSttbfFfn != null && lcbSttbfFfn != null && lcbSttbfFfn > 2) {
+    const fonts = parseLegacyFonts(tableBytes.subarray(fcSttbfFfn, fcSttbfFfn + lcbSttbfFfn), decodeName);
+    return {
+      header: { cData: fonts.length, cbExtra: 0 },
+      fonts,
+      byIndex(index: number | null | undefined): FontInfo | null {
+        if (index == null || index < 0) return null;
+        return fonts[index] || null;
+      },
+    };
+  }
+  if (version !== 8 || fcSttbfFfn == null || lcbSttbfFfn == null || lcbSttbfFfn <= 0) {
     return {
       header: null,
       fonts: [],

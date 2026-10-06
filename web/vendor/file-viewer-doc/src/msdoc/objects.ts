@@ -500,11 +500,43 @@ function pickBestPictureCandidate(candidates: PictureCandidate[]): PictureCandid
   return best;
 }
 
+/**
+ * doc-viewer: 그림(비트맵)만 담은 WMF에서 가장 큰 DIB를 꺼내 BMP로 만든다.
+ * 벡터 변환기는 WMF의 비트맵 레코드(META_STRETCHDIB·META_DIBSTRETCHBLT·META_DIBBITBLT)를 그리지 않아서,
+ * Word 6/95 문서의 그림(대개 비트맵을 감싼 WMF)이 빈 그림이 되던 것을 막는다. [MS-WMF] 2.3.1
+ */
+function extractWmfBitmap(bytes: Uint8Array): Uint8Array | null {
+  const reader = new BinaryReader(bytes);
+  let offset = 0;
+  if (reader.u32(0) === 0x9ac6cdd7) offset = 22;
+  const headerWords = reader.u16(offset + 2);
+  let cursor = offset + headerWords * 2;
+  let best: Uint8Array | null = null;
+  while (cursor + 6 <= bytes.length) {
+    const sizeWords = reader.u32(cursor);
+    const size = sizeWords * 2;
+    if (size < 6 || cursor + size > bytes.length) break;
+    const fn = reader.u16(cursor + 4);
+    const dibOffset = fn === 0x0f43 ? 28 : fn === 0x0b41 ? 26 : fn === 0x0940 ? 22 : 0;
+    if (dibOffset && size > dibOffset + 40) {
+      const dib = bytes.subarray(cursor + dibOffset, cursor + size);
+      if (!best || dib.length > best.length) best = dib;
+    }
+    if (fn === 0) break;
+    cursor += size;
+  }
+  return best ? dibToBmp(best) : null;
+}
+
 function maybeConvertVectorCandidate(candidate: PictureCandidate): PictureCandidate {
   if (!/^(?:image\/emf|image\/wmf)$/i.test(candidate.mime)) return candidate;
   if (!candidate.bytes.length) return candidate;
   if (candidate.meta?.metafileCompressed) return candidate;
   const converted = convertMetafileToSvg(candidate.mime, candidate.bytes);
+  if (!converted && /wmf/i.test(candidate.mime)) {
+    const bitmap = extractWmfBitmap(candidate.bytes);
+    if (bitmap) return { ...candidate, mime: 'image/bmp', bytes: bitmap, displayable: true };
+  }
   if (!converted) return candidate;
   return {
     ...candidate,
@@ -613,6 +645,19 @@ export function extractPictureAsset(
   }
 
   const bodyStart = Math.min(picf.cbHeader || PICF_HEADER_SIZE, pictureChunk.length);
+  // doc-viewer: Word 6/95(와 그 형식을 이어 쓴 Word 97 그림)은 PIC 머리(58·68바이트) 바로 뒤에 배치 정보 없는
+  // WMF를 둔다(mm = 매핑 모드 1~8). 서명 검색으로는 찾지 못하므로 WMF 머리(종류 1·2, 머리 크기 9)를 직접 본다.
+  if (picf.mm >= 1 && picf.mm <= 8) {
+    const body = pictureChunk.subarray(bodyStart);
+    const type = (body[0] ?? 0) | ((body[1] ?? 0) << 8);
+    const headerWords = (body[2] ?? 0) | ((body[3] ?? 0) << 8);
+    if ((type === 1 || type === 2) && headerWords === 9) {
+      const converted = maybeConvertVectorCandidate({ mime: 'image/wmf', bytes: body, displayable: false, kind: 'fallback' });
+      if (converted.displayable) {
+        return createImageAsset(converted, pictureOffset, picf, linkedPath, inlineShape);
+      }
+    }
+  }
   const segment = detectImageSegment(pictureChunk.subarray(bodyStart));
   if (!segment) {
     return {
@@ -705,6 +750,29 @@ export function extractFbseImageAsset(
 ): ImageAsset | null {
   if (!header || header.recType !== OFFICEART_FBSE) return null;
   const candidate = extractEmbeddedBlipFromFbse(drawingBytes, offset, header);
+  if (!candidate) return null;
+  const normalized = maybeConvertVectorCandidate(candidate);
+  return createImageAsset(normalized, -1, {
+    lcb: normalized.bytes.length,
+    cbHeader: 0,
+    mm: MM_SHAPE,
+    xExt: 0,
+    yExt: 0,
+  });
+}
+
+/**
+ * doc-viewer: 따로 저장된 BLIP 레코드(FBSE.foDelay가 가리키는 WordDocument 스트림 위치)를 그림으로 꺼낸다.
+ * 떠 있는 그림 도형(FSPA)의 그림은 대개 이렇게 저장된다.
+ */
+export function extractBlipRecordAsset(
+  bytes: Uint8Array,
+  offset: number,
+  _options: MsDocParseOptions = {},
+): ImageAsset | null {
+  const header = parseOfficeArtRecordHeader(bytes, offset);
+  if (!header) return null;
+  const candidate = extractBlipPayload(bytes, offset, header);
   if (!candidate) return null;
   const normalized = maybeConvertVectorCandidate(candidate);
   return createImageAsset(normalized, -1, {

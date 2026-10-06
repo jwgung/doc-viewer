@@ -114,6 +114,18 @@ export interface ParsedFib {
   fibRgCswNewBytes: Uint8Array;
   fibRgLw: FibRgLw;
   fibRgFcLcb: FibRgFcLcb;
+  /** doc-viewer: 파일 형식 세대. 8 = Word 97 이상, 6 = Word 6.0/95, 2 = Word 2.0 */
+  version?: 2 | 6 | 8;
+  /** 본문 글자가 시작·끝나는 WordDocument 스트림 위치(Word 6 이하의 단순 저장 문서는 여기서 글자를 읽는다) */
+  fcMin?: number;
+  fcMac?: number;
+  /** 문서 문자 집합(0 = Windows ANSI, 256 = Macintosh) */
+  chse?: number;
+  /** Word 6 이하: FKP 페이지가 BTE 표보다 많을 때 이어지는 페이지를 찾는 기준 */
+  pnChpFirst?: number;
+  pnPapFirst?: number;
+  cpnBteChp?: number;
+  cpnBtePap?: number;
 }
 
 export interface PieceDescriptor {
@@ -148,7 +160,7 @@ export interface CpFileOffsetInfo {
   compressed: boolean;
 }
 
-export type PropertyKind = 'char' | 'para' | 'table' | 'unknown';
+export type PropertyKind = 'char' | 'para' | 'table' | 'section' | 'unknown';
 
 export interface DecodedProperty<TValue = unknown> {
   kind: PropertyKind;
@@ -302,6 +314,8 @@ export interface CharState {
   italicBi?: boolean;
   doubleStrike?: boolean;
   symbol?: SymbolInfo;
+  /** doc-viewer: 위첨자(1)·아래첨자(2) */
+  iss?: number;
   [key: string]: unknown;
 }
 
@@ -489,7 +503,12 @@ export interface FieldInstructionRaw {
   raw: string;
 }
 
-export type FieldInstruction = FieldInstructionHyperlink | FieldInstructionIncludePicture | FieldInstructionRaw;
+/** doc-viewer: 쪽 번호 필드 */
+export interface FieldInstructionPage {
+  type: 'page' | 'numpages';
+}
+
+export type FieldInstruction = FieldInstructionHyperlink | FieldInstructionIncludePicture | FieldInstructionRaw | FieldInstructionPage;
 
 export interface PicfSummary {
   pictureOffset: number;
@@ -617,7 +636,40 @@ export interface PageBreakInlineNode {
   style?: CharState;
 }
 
-export type InlineNode = TextInlineNode | ImageInlineNode | AttachmentInlineNode | LineBreakInlineNode | PageBreakInlineNode;
+/** doc-viewer: 각주·미주 참조 표시(본문의 위첨자 번호) */
+export interface NoteRefInlineNode {
+  type: 'noteRef';
+  kind: 'footnote' | 'endnote';
+  noteId: string;
+  label: string;
+  style: CharState;
+  href?: string;
+}
+
+/** doc-viewer: 쪽 번호 필드(PAGE·NUMPAGES). 렌더러가 쪽을 나눈 뒤 번호를 채운다. text는 문서에 저장된 결과다. */
+export interface FieldInlineNode {
+  type: 'field';
+  field: 'page' | 'numpages';
+  text: string;
+  style: CharState;
+  href?: string;
+}
+
+export type InlineNode =
+  | TextInlineNode
+  | ImageInlineNode
+  | AttachmentInlineNode
+  | LineBreakInlineNode
+  | PageBreakInlineNode
+  | NoteRefInlineNode
+  | FieldInlineNode;
+
+/** doc-viewer: 번호 매기기·글머리 기호. 렌더러가 문단 앞에 붙인다. */
+export interface ListLabel {
+  text: string;
+  style?: CharState;
+  follow: 'tab' | 'space' | 'none';
+}
 
 export interface ParagraphBlock {
   type: 'paragraph';
@@ -629,6 +681,33 @@ export interface ParagraphBlock {
   text: string;
   paragraphMark?: Pick<CharState, 'revisionDeleted' | 'revisionInserted'>;
   storyKind?: string;
+  /** doc-viewer: 본문 문단이 속한 구역 번호 */
+  sectionIndex?: number;
+  /** doc-viewer: 구역 나누기 문자(0x0C)로 끝나는 문단 */
+  endsSection?: boolean;
+  listLabel?: ListLabel;
+  /** doc-viewer: 이 문단에 고정된 글상자·그림(본문 흐름에서 문단 바로 앞에 그린다) */
+  anchors?: ShapeBlock[];
+}
+
+/** doc-viewer: 떠 있는 개체(글상자·그림). 위치 대신 고정 문단 자리에 블록으로 그린다. */
+export interface ShapeBlock {
+  type: 'shape';
+  id: string;
+  kind: 'textbox' | 'picture';
+  blocks: MsDocBlock[];
+  image?: ImageAsset;
+  widthTwips?: number;
+  heightTwips?: number;
+  /** 0 = 위아래 배치, 1·2 = 주변에 배치, 3 = 글자 뒤·앞(본문 흐름과 겹침) */
+  wrap?: number;
+  behindText?: boolean;
+  fillColor?: string;
+  lineColor?: string;
+  lineWidthPx?: number;
+  /** 가로·세로 위치 힌트(twip). 같은 문단에 고정된 도형을 읽는 순서로 늘어놓을 때 쓴다. */
+  leftTwips?: number;
+  topTwips?: number;
 }
 
 export interface TableCellBlock {
@@ -655,6 +734,8 @@ export interface TableBlock {
   rows: TableRowBlock[];
   state: TableState;
   gridWidthTwips: number;
+  /** doc-viewer: 본문 표가 속한 구역 번호 */
+  sectionIndex?: number;
 }
 
 export interface AttachmentsBlock {
@@ -663,7 +744,41 @@ export interface AttachmentsBlock {
   items: AttachmentAsset[];
 }
 
-export type MsDocBlock = ParagraphBlock | TableBlock | AttachmentsBlock;
+export type MsDocBlock = ParagraphBlock | TableBlock | AttachmentsBlock | ShapeBlock;
+
+/** doc-viewer: 구역. 머리말·꼬리말은 구역마다 기본·첫 쪽·짝수 쪽으로 나뉜다. */
+export interface SectionInfo {
+  index: number;
+  cpStart: number;
+  cpEnd: number;
+  /** bkc: 0 이어서, 1 새 단, 2 새 쪽, 3 짝수 쪽, 4 홀수 쪽 */
+  breakType: number;
+  titlePage: boolean;
+  pageWidthTwips?: number;
+  pageHeightTwips?: number;
+  marginLeftTwips?: number;
+  marginRightTwips?: number;
+  marginTopTwips?: number;
+  marginBottomTwips?: number;
+  columns?: number;
+  pageNumberStart?: number;
+  pageNumberRestart?: boolean;
+  pageNumberFormat?: number;
+  /** Word 6/95: 이 구역에 있는 머리말·꼬리말 종류(sprmSGprfIhdt) */
+  headerFlags?: number;
+  headers: Partial<Record<'default' | 'first' | 'even', MsDocBlock[]>>;
+  footers: Partial<Record<'default' | 'first' | 'even', MsDocBlock[]>>;
+}
+
+/** doc-viewer: 각주·미주 */
+export interface NoteInfo {
+  kind: 'footnote' | 'endnote';
+  index: number;
+  id: string;
+  label: string;
+  refCp: number;
+  blocks: MsDocBlock[];
+}
 
 export interface ParagraphModel {
   id: string;
@@ -682,6 +797,13 @@ export interface ParagraphModel {
   tableState: TableState;
   segments: CharSegment[];
   inlines: InlineNode[];
+  /** doc-viewer: 아래는 ParagraphBlock으로 그대로 옮긴다. */
+  sectionIndex?: number;
+  endsSection?: boolean;
+  listLabel?: ListLabel;
+  anchors?: ShapeBlock[];
+  /** 고정 문자만 있어 문단은 그리지 않고 고정된 도형만 남기는 문단 */
+  anchorOnly?: boolean;
 }
 
 export interface MsDocParseOptions {
@@ -707,6 +829,8 @@ export interface MsDocMeta {
     fComplex: boolean;
     fEncrypted: boolean;
     ccpText: number;
+    /** doc-viewer: 8 = Word 97 이상, 6 = Word 6.0/95, 2 = Word 2.0, 1 = 그 밖의 옛 형식(글자만 복구) */
+    version?: number;
   };
   counts: {
     paragraphs: number;
@@ -734,9 +858,21 @@ export interface MsDocParseResult {
   styles: MsDocStyleSummary[];
   blocks: MsDocBlock[];
   assets: MsDocAsset[];
+  /** doc-viewer: 구역(머리말·꼬리말 포함). 없으면 구역 하나로 본다. */
+  sections?: SectionInfo[];
+  /** doc-viewer: 각주·미주 */
+  notes?: { footnotes: NoteInfo[]; endnotes: NoteInfo[] };
+}
+
+/** doc-viewer: 쪽 나눔 결과의 한 쪽 */
+export interface MsDocRenderedPage {
+  html: string;
+  sectionIndex: number;
 }
 
 export interface MsDocRenderResult {
+  /** doc-viewer: 명시적 쪽 나누기·구역 나누기로 나눈 쪽. html은 이 쪽들을 이어 붙인 것이다. */
+  pages?: MsDocRenderedPage[];
   html: string;
   css: string;
   warnings: MsDocWarning[];

@@ -20,9 +20,98 @@ const FIB_FC_LCB_NAMES = [
   'PlcfAsumy', 'PlcfGram', 'SttbListNames', 'SttbfUssr',
 ] as const;
 
+// doc-viewer: Word 6.0/95(nFib 101~105)와 Word 2.0(wIdent 0xA5DB)의 FIB는 크기가 고정된 구조다.
+// 앞 38개 fc/lcb 쌍의 순서는 Word 97과 같고(0x58부터), 그 뒤는 버전마다 위치가 정해져 있다.
+// 위치는 LibreOffice의 WW8Fib(sw/source/filter/ww8/ww8scan.cxx)와 실제 파일로 확인했다.
+const LEGACY_PAIR_COUNT = 38;
+const WORD6_EXTRA_PAIRS: Array<[number, string]> = [
+  [0x192, 'PlcfdoaMom'], [0x19a, 'PlcfdoaHdr'], [0x1a2, 'PlcSpaMom'], [0x1aa, 'PlcSpaHdr'],
+  [0x1b2, 'PlcfAtnBkf'], [0x1ba, 'PlcfAtnBkl'], [0x1c2, 'Pms'], [0x1ca, 'FormFldSttbs'],
+  [0x1d2, 'PlcfendRef'], [0x1da, 'PlcfendTxt'], [0x1e2, 'PlcfFldEdn'], [0x1ea, 'PlcfpgdEdn'],
+  [0x1f2, 'DggInfo'], [0x1fa, 'SttbfRMark'], [0x202, 'SttbfCaption'], [0x20a, 'SttbfAutoCaption'],
+  [0x212, 'PlcfWkb'], [0x21a, 'PlcfSpl'], [0x222, 'PlcftxbxTxt'], [0x22a, 'PlcfFldTxbx'],
+  [0x232, 'PlcfHdrtxbxTxt'], [0x23a, 'PlcffldHdrTxbx'], [0x242, 'StwUser'], [0x24a, 'SttbTtmbd'],
+];
+
+/** wIdent·nFib로 파일 형식 세대를 고른다. 8 = Word 97 이상, 6 = Word 6.0/95, 2 = Word 2.0/1.x */
+export function detectWordVersion(wIdent: number, nFib: number): 2 | 6 | 8 {
+  if (wIdent === 0xa5db || wIdent === 0xa59b || wIdent === 0xa59c) return 2;
+  if (wIdent === 0xa5dc || (wIdent >= 0xa697 && wIdent <= 0xa699)) return nFib >= 106 && wIdent === 0xa5dc ? 8 : 6;
+  if (nFib >= 101 && nFib <= 105) return 6;
+  return 8;
+}
+
+/** Word 6.0/95·Word 2.0 FIB를 Word 97 FIB와 같은 이름의 필드로 읽는다. */
+export function parseLegacyFib(wordBytes: Uint8Array, version: 2 | 6): ParsedFib {
+  const reader = new BinaryReader(wordBytes);
+  const base = parseFibBase(reader);
+  const pairSize = version === 2 ? 6 : 8;
+  const fields: FibRgFcLcb = { _pairs: [] };
+  const pairs: FibFcLcbPair[] = [];
+  for (let i = 0; i < LEGACY_PAIR_COUNT; i += 1) {
+    const at = 0x58 + i * pairSize;
+    if (!reader.ensure(at, pairSize)) break;
+    const fc = reader.u32(at);
+    const lcb = version === 2 ? reader.u16(at + 4) : reader.u32(at + 4);
+    const name = FIB_FC_LCB_NAMES[i] || `Field${i}`;
+    fields[`fc${name}`] = fc;
+    fields[`lcb${name}`] = lcb;
+    pairs.push({ name, fc, lcb, index: i });
+  }
+  if (version === 6) {
+    for (const [at, name] of WORD6_EXTRA_PAIRS) {
+      if (!reader.ensure(at, 8)) break;
+      const fc = reader.u32(at);
+      const lcb = reader.u32(at + 4);
+      fields[`fc${name}`] = fc;
+      fields[`lcb${name}`] = lcb;
+      pairs.push({ name, fc, lcb, index: pairs.length });
+    }
+  }
+  fields._pairs = pairs;
+  const pnBase = version === 2 ? 0x58 + LEGACY_PAIR_COUNT * 6 + 2 : 0x18a;
+  const lw = (at: number) => reader.i32(at);
+  const fibRgLw: FibRgLw = {
+    raw: [],
+    cbMac: lw(0x20),
+    ccpText: lw(0x34),
+    ccpFtn: lw(0x38),
+    ccpHdd: lw(0x3c),
+    ccpMcr: lw(0x40),
+    ccpAtn: lw(0x44),
+    ccpEdn: lw(0x48),
+    ccpTxbx: lw(0x4c),
+    ccpHdrTxbx: lw(0x50),
+  };
+  return {
+    base,
+    csw: 0,
+    cslw: 0,
+    cbRgFcLcb: pairs.length,
+    cswNew: 0,
+    nFibNew: 0,
+    fibRgWBytes: new Uint8Array(0),
+    fibRgLwBytes: new Uint8Array(0),
+    fibRgFcLcbBytes: new Uint8Array(0),
+    fibRgCswNewBytes: new Uint8Array(0),
+    fibRgLw,
+    fibRgFcLcb: fields,
+    version,
+    fcMin: reader.i32(24),
+    fcMac: reader.i32(28),
+    chse: reader.u16(20),
+    pnChpFirst: reader.u16(pnBase),
+    pnPapFirst: reader.u16(pnBase + 2),
+    cpnBteChp: reader.u16(pnBase + 4),
+    cpnBtePap: reader.u16(pnBase + 6),
+  };
+}
+
 export function parseFib(wordBytes: Uint8Array): ParsedFib {
   const reader = new BinaryReader(wordBytes);
   const base = parseFibBase(reader);
+  const version = detectWordVersion(base.wIdent, base.nFib);
+  if (version !== 8) return parseLegacyFib(wordBytes, version);
   let offset = 32;
 
   const csw = reader.u16(offset); offset += 2;
@@ -52,6 +141,10 @@ export function parseFib(wordBytes: Uint8Array): ParsedFib {
     fibRgCswNewBytes,
     fibRgLw,
     fibRgFcLcb,
+    version: 8,
+    fcMin: reader.i32(24),
+    fcMac: reader.i32(28),
+    chse: reader.u16(20),
   };
 }
 

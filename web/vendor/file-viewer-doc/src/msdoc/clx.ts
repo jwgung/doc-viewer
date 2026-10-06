@@ -22,7 +22,7 @@ function decodeUnicode(bytes: Uint8Array): string {
   return new TextDecoder('utf-16le').decode(bytes);
 }
 
-export function parseClx(tableBytes: Uint8Array, fibRgFcLcb: FibRgFcLcb): ParsedClx {
+export function parseClx(tableBytes: Uint8Array, fibRgFcLcb: FibRgFcLcb, version = 8, extChar = false): ParsedClx {
   const fcClx = fibRgFcLcb.fcClx as number | undefined;
   const lcbClx = fibRgFcLcb.lcbClx as number | undefined;
   if (fcClx == null || lcbClx == null || lcbClx <= 0) {
@@ -42,11 +42,35 @@ export function parseClx(tableBytes: Uint8Array, fibRgFcLcb: FibRgFcLcb): Parsed
   }
   const lcb = reader.u32(offset + 1);
   const plcPcdBytes = reader.slice(offset + 5, lcb);
-  const pieceTable = parsePlcPcd(plcPcdBytes);
+  const pieceTable = parsePlcPcd(plcPcdBytes, version, extChar);
   return { prcs, pcdt: { lcb, pieceTable } };
 }
 
-export function parsePlcPcd(bytes: Uint8Array): PieceTable {
+/**
+ * doc-viewer: 조각 표가 없는 문서(Word 6/95의 단순 저장, 표 스트림이 없는 손상 파일)를 위해
+ * fcMin부터 이어지는 조각 하나로 된 조각 표를 만든다. unicode면 2바이트, 아니면 1바이트 글자다.
+ */
+export function makeSinglePieceClx(fcStart: number, cpCount: number, unicode: boolean): ParsedClx {
+  const byteLength = unicode ? cpCount * 2 : cpCount;
+  const piece: PieceDescriptor = {
+    index: 0,
+    descriptor: 0,
+    fNoParaLast: false,
+    fRaw: false,
+    prm: 0,
+    compressed: !unicode,
+    fcRaw: fcStart,
+    fc: fcStart,
+    cpStart: 0,
+    cpEnd: cpCount,
+    actualByteStart: fcStart,
+    byteLength,
+    actualByteEnd: fcStart + byteLength,
+  };
+  return { prcs: [], pcdt: { lcb: 0, pieceTable: { cps: [0, cpCount], pieces: [piece] } } };
+}
+
+export function parsePlcPcd(bytes: Uint8Array, version = 8, extChar = false): PieceTable {
   if (!bytes.length) throw new Error('Empty PlcPcd');
   const reader = new BinaryReader(bytes);
   const pcdCount = (bytes.length - 4) / 12;
@@ -61,11 +85,14 @@ export function parsePlcPcd(bytes: Uint8Array): PieceTable {
     const descriptor = reader.u16(offset);
     const fcRaw = reader.u32(offset + 2) >>> 0;
     const prm = reader.u16(offset + 6);
-    const compressed = Boolean(fcRaw & 0x40000000);
-    const fc = fcRaw & 0x3fffffff;
+    // doc-viewer: Word 6/95의 조각은 fc가 그대로 바이트 위치다(압축 표시 비트가 없다). 글자는 8비트이고,
+    // 동아시아판 Word 95(FIB fExtChar)만 CP 하나가 2바이트다.
+    const legacy = version !== 8;
+    const compressed = legacy ? !extChar : Boolean(fcRaw & 0x40000000);
+    const fc = legacy ? fcRaw : fcRaw & 0x3fffffff;
     const cpStart = cps[i] ?? 0;
     const cpEnd = cps[i + 1] ?? cpStart;
-    const actualByteStart = compressed ? Math.floor(fc / 2) : fc;
+    const actualByteStart = compressed && !legacy ? Math.floor(fc / 2) : fc;
     const byteLength = compressed ? (cpEnd - cpStart) : (cpEnd - cpStart) * 2;
     pieces.push({
       index: i,

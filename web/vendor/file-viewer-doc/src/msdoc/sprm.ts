@@ -58,6 +58,8 @@ export const SprmCodes = {
   sprmCFtcBi: 0x4a5e,
   sprmCIcoBi: 0x4a60,
   sprmCHpsBi: 0x4a61,
+  sprmCIss: 0x2a48,
+  sprmCRgLid0: 0x486d,
   sprmPIstd: 0x4600,
   sprmPIstdPermute: 0xc601,
   sprmPIncLvl: 0x2602,
@@ -498,6 +500,11 @@ function boolValue(bytes: Uint8Array): boolean {
   return Boolean(bytes[0] ?? 0);
 }
 
+// doc-viewer: 토글 sprm은 0/1 말고도 0x80(스타일 값)·0x81(스타일 값 반대)을 쓴다. 숫자로 남겨 병합 때 푼다.
+function toggleValue(bytes: Uint8Array): number {
+  return bytes[0] ?? 0;
+}
+
 function setMeta<TValue>(kind: PropertyKind, name: string, value: TValue, raw: number, bytes: Uint8Array): DecodedProperty<TValue> {
   return { kind, name, value, raw, operandBytes: bytes };
 }
@@ -514,14 +521,14 @@ export function decodeSprm(sprm: number, operandBytes: Uint8Array): DecodedPrope
     case SprmCodes.sprmCFOle2: return setMeta('char', 'ole2', boolValue(bytes), raw, bytes);
     case SprmCodes.sprmCIstd: return setMeta('char', 'charStyleId', u16(bytes, 0), raw, bytes);
     case SprmCodes.sprmCPlain: return setMeta('char', 'plain', boolValue(bytes), raw, bytes);
-    case SprmCodes.sprmCFBold: return setMeta('char', 'bold', boolValue(bytes), raw, bytes);
-    case SprmCodes.sprmCFItalic: return setMeta('char', 'italic', boolValue(bytes), raw, bytes);
-    case SprmCodes.sprmCFStrike: return setMeta('char', 'strike', boolValue(bytes), raw, bytes);
-    case SprmCodes.sprmCFOutline: return setMeta('char', 'outline', boolValue(bytes), raw, bytes);
-    case SprmCodes.sprmCFShadow: return setMeta('char', 'shadow', boolValue(bytes), raw, bytes);
-    case SprmCodes.sprmCFSmallCaps: return setMeta('char', 'smallCaps', boolValue(bytes), raw, bytes);
-    case SprmCodes.sprmCFCaps: return setMeta('char', 'caps', boolValue(bytes), raw, bytes);
-    case SprmCodes.sprmCFVanish: return setMeta('char', 'hidden', boolValue(bytes), raw, bytes);
+    case SprmCodes.sprmCFBold: return setMeta('char', 'bold', toggleValue(bytes), raw, bytes);
+    case SprmCodes.sprmCFItalic: return setMeta('char', 'italic', toggleValue(bytes), raw, bytes);
+    case SprmCodes.sprmCFStrike: return setMeta('char', 'strike', toggleValue(bytes), raw, bytes);
+    case SprmCodes.sprmCFOutline: return setMeta('char', 'outline', toggleValue(bytes), raw, bytes);
+    case SprmCodes.sprmCFShadow: return setMeta('char', 'shadow', toggleValue(bytes), raw, bytes);
+    case SprmCodes.sprmCFSmallCaps: return setMeta('char', 'smallCaps', toggleValue(bytes), raw, bytes);
+    case SprmCodes.sprmCFCaps: return setMeta('char', 'caps', toggleValue(bytes), raw, bytes);
+    case SprmCodes.sprmCFVanish: return setMeta('char', 'hidden', toggleValue(bytes), raw, bytes);
     case SprmCodes.sprmCKul: return setMeta('char', 'underline', bytes[0] ?? 0, raw, bytes);
     case SprmCodes.sprmCDxaSpace: return setMeta('char', 'spacing', i16(bytes, 0), raw, bytes);
     case SprmCodes.sprmCIco:
@@ -533,6 +540,8 @@ export function decodeSprm(sprm: number, operandBytes: Uint8Array): DecodedPrope
     }
     case SprmCodes.sprmCHps:
     case SprmCodes.sprmCHpsBi: return setMeta('char', 'fontSizeHalfPoints', u16(bytes, 0), raw, bytes);
+    case SprmCodes.sprmCIss: return setMeta('char', 'iss', bytes[0] ?? 0, raw, bytes);
+    case SprmCodes.sprmCRgLid0: return setMeta('char', 'lid', u16(bytes, 0), raw, bytes);
     case SprmCodes.sprmCHpsPos: return setMeta('char', 'positionHalfPoints', i16(bytes, 0), raw, bytes);
     case SprmCodes.sprmCSymbol: return setMeta('char', 'symbol', { font: u16(bytes, 0), charCode: u16(bytes, 2) }, raw, bytes);
     case SprmCodes.sprmCRgFtc0: return setMeta('char', 'fontFamilyId', u16(bytes, 0), raw, bytes);
@@ -540,14 +549,14 @@ export function decodeSprm(sprm: number, operandBytes: Uint8Array): DecodedPrope
     case SprmCodes.sprmCRgFtc2: return setMeta('char', 'fontFamilyOtherId', u16(bytes, 0), raw, bytes);
     case SprmCodes.sprmCFtcBi: return setMeta('char', 'fontFamilyBiId', u16(bytes, 0), raw, bytes);
     case SprmCodes.sprmCCharScale: return setMeta('char', 'scale', u16(bytes, 0), raw, bytes);
-    case SprmCodes.sprmCFDStrike: return setMeta('char', 'doubleStrike', boolValue(bytes), raw, bytes);
-    case SprmCodes.sprmCFImprint: return setMeta('char', 'imprint', boolValue(bytes), raw, bytes);
+    case SprmCodes.sprmCFDStrike: return setMeta('char', 'doubleStrike', toggleValue(bytes), raw, bytes);
+    case SprmCodes.sprmCFImprint: return setMeta('char', 'imprint', toggleValue(bytes), raw, bytes);
     case SprmCodes.sprmCFSpec: return setMeta('char', 'special', boolValue(bytes), raw, bytes);
     case SprmCodes.sprmCFObj: return setMeta('char', 'object', boolValue(bytes), raw, bytes);
-    case SprmCodes.sprmCFEmboss: return setMeta('char', 'emboss', boolValue(bytes), raw, bytes);
+    case SprmCodes.sprmCFEmboss: return setMeta('char', 'emboss', toggleValue(bytes), raw, bytes);
     case SprmCodes.sprmCFBiDi: return setMeta('char', 'rtl', boolValue(bytes), raw, bytes);
-    case SprmCodes.sprmCFBoldBi: return setMeta('char', 'boldBi', boolValue(bytes), raw, bytes);
-    case SprmCodes.sprmCFItalicBi: return setMeta('char', 'italicBi', boolValue(bytes), raw, bytes);
+    case SprmCodes.sprmCFBoldBi: return setMeta('char', 'boldBi', toggleValue(bytes), raw, bytes);
+    case SprmCodes.sprmCFItalicBi: return setMeta('char', 'italicBi', toggleValue(bytes), raw, bytes);
     case SprmCodes.sprmPIstd: return setMeta('para', 'styleId', u16(bytes, 0), raw, bytes);
     case SprmCodes.sprmPJc80:
     case SprmCodes.sprmPJc: return setMeta('para', 'alignment', bytes[0] ?? 0, raw, bytes);

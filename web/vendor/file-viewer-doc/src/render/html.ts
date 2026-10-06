@@ -1,7 +1,9 @@
 import { escapeHtml, slugify, twipsToPx } from '../core/utils.js';
 import { HIGHLIGHT_COLORS } from '../msdoc/constants.js';
+import { formatListNumber } from '../msdoc/lists.js';
 import { cssTextAlign, cssUnderline, cssVerticalAlign } from '../msdoc/properties.js';
 import { textFontRuns } from './fonts.js';
+import { isSymbolFont, mapSymbolText } from './symbols.js';
 import type {
   AttachmentAsset,
   AttachmentsBlock,
@@ -10,10 +12,15 @@ import type {
   CssStyleObject,
   ImageAsset,
   InlineNode,
+  MsDocBlock,
   MsDocParseResult,
   MsDocRenderOptions,
   MsDocRenderResult,
+  MsDocRenderedPage,
+  NoteInfo,
   ParagraphBlock,
+  SectionInfo,
+  ShapeBlock,
   TableBlock,
   TableCellBlock,
   ShadingSpec,
@@ -46,6 +53,12 @@ interface RenderContext {
   reviewMode: NonNullable<MsDocRenderOptions['reviewMode']>;
   externalLinkPolicy: ExternalLinkPolicy;
   externalResourcePolicy: ExternalResourcePolicy;
+  /** doc-viewer: 쪽 번호 필드에 채울 값과, 이 쪽에서 만난 각주 참조 */
+  pageLabel?: string;
+  pageCount?: number;
+  noteRefs?: string[];
+  /** 각주 본문 안의 번호는 본문 참조로 되돌아가는 링크로 그린다 */
+  inNote?: boolean;
 }
 
 function styleObjectToCss(style: CssStyleObject): string {
@@ -222,7 +235,8 @@ function inlineStyleToCss(styleState: CharState): CssStyleObject {
   if (styleState.strike || styleState.doubleStrike) style['text-decoration-line'] = `${style['text-decoration-line'] ? `${style['text-decoration-line']} ` : ''}line-through`;
   Object.assign(style, buildUnderlineStyle(styleState.underline));
   if (styleState.fontSizeHalfPoints) style['font-size'] = `${styleState.fontSizeHalfPoints / 2}pt`;
-  if (styleState.fontFamily) style['font-family'] = `${quoteCssString(styleState.fontFamily)},sans-serif`;
+  // doc-viewer: 기호 글꼴은 휴대폰에 없으므로 글꼴을 지정하지 않고 글자를 유니코드로 바꿔 그린다(renderTextNode).
+  if (styleState.fontFamily && !isSymbolFont(styleState.fontFamily)) style['font-family'] = `${quoteCssString(styleState.fontFamily)},sans-serif`;
   if (styleState.colorIndex && COLOR_INDEX_MAP[styleState.colorIndex]) style.color = COLOR_INDEX_MAP[styleState.colorIndex];
   const highlightIndex = typeof styleState.highlight === 'number' ? styleState.highlight : styleState.highlight?.index;
   if (highlightIndex && HIGHLIGHT_COLORS[highlightIndex as keyof typeof HIGHLIGHT_COLORS]) {
@@ -237,6 +251,12 @@ function inlineStyleToCss(styleState: CharState): CssStyleObject {
   }
   if (styleState.positionHalfPoints > 0) style['vertical-align'] = 'super';
   if (styleState.positionHalfPoints < 0) style['vertical-align'] = 'sub';
+  // doc-viewer: 위첨자·아래첨자(sprmCIss). Word처럼 글자를 줄여 그린다.
+  if (styleState.iss === 1 || styleState.iss === 2) {
+    style['vertical-align'] = styleState.iss === 1 ? 'super' : 'sub';
+    style['font-size'] = styleState.fontSizeHalfPoints ? `${(styleState.fontSizeHalfPoints / 2) * 0.66}pt` : '66%';
+    style['line-height'] = '0';
+  }
   if (styleState.outline) style['text-shadow'] = '0 0 0.02em currentColor';
   if (styleState.shadow || styleState.emboss || styleState.imprint) {
     style['text-shadow'] = style['text-shadow'] ? `${style['text-shadow']}, 0.06em 0.06em 0.08em rgba(0,0,0,.25)` : '0.06em 0.06em 0.08em rgba(0,0,0,.25)';
@@ -248,9 +268,9 @@ function inlineStyleToCss(styleState: CharState): CssStyleObject {
 function renderTextNode(node: TextInlineNode, context: RenderContext): string {
   if (context.reviewMode === 'final' && node.style.revisionDeleted) return '';
   if (context.reviewMode === 'original' && node.style.revisionInserted) return '';
-  const content = textFontRuns(node.text, node.style).map(run => {
+  const content = textFontRuns(mapSymbolText(node.text, node.style.fontFamily), node.style).map(run => {
     const text = escapeHtml(run.text);
-    if (!run.fontFamily || run.fontFamily === node.style.fontFamily) return text;
+    if (!run.fontFamily || run.fontFamily === node.style.fontFamily || isSymbolFont(run.fontFamily)) return text;
     const font = styleObjectToCss({ 'font-family': `${quoteCssString(run.fontFamily)},sans-serif` });
     return `<span style="${font}">${text}</span>`;
   }).join('');
@@ -382,7 +402,8 @@ function renderImageNode(node: Extract<InlineNode, { type: 'image' }>, context: 
 
   if (!src || node.asset.displayable === false) {
     const fallbackHref = sanitizeAssetHref(node.asset.dataUrl, context) || sanitizeAssetHref(node.asset.sourceUrl, context);
-    const label = escapeHtml(String(node.asset.meta?.linkedPath || node.asset.mime || 'image'));
+    // doc-viewer: 풀지 못한 그림은 MIME 이름(application/octet-stream 등) 대신 그림 표시만 남긴다.
+    const label = escapeHtml(String(node.asset.meta?.linkedPath || ''));
     const inner = fallbackHref
       ? `<a class="msdoc-attachment msdoc-image-fallback" href="${escapeHtml(fallbackHref)}" target="_blank" rel="noreferrer noopener">🖼 ${label}</a>`
       : `<span class="msdoc-image-fallback">🖼 ${label}</span>`;
@@ -410,7 +431,23 @@ function renderInlineNodes(nodes: InlineNode[], context: RenderContext): string 
     if (node.type === 'image') return renderImageNode(node, context);
     if (node.type === 'attachment') return renderAttachmentNode(node, context);
     if (node.type === 'lineBreak') return '<br>';
-    if (node.type === 'pageBreak') return '<span class="msdoc-page-break"></span>';
+    // doc-viewer: 쪽 나누기는 renderMsDoc이 쪽을 나눌 때 쓰고, 표·글상자 안에서는 그리지 않는다.
+    if (node.type === 'pageBreak') return '';
+    if (node.type === 'noteRef') {
+      const label = escapeHtml(node.label);
+      const style = styleObjectToCss({ ...inlineStyleToCss({ ...node.style, iss: 0, positionHalfPoints: 0 }), 'vertical-align': undefined });
+      if (context.inNote) {
+        return `<a class="msdoc-note-label" href="#${escapeHtml(node.noteId)}-ref"${style ? ` style="${style}"` : ''}>${label}</a>`;
+      }
+      context.noteRefs?.push(node.noteId);
+      return `<sup class="msdoc-note-ref" id="${escapeHtml(node.noteId)}-ref"><a href="#${escapeHtml(node.noteId)}">${label}</a></sup>`;
+    }
+    if (node.type === 'field') {
+      const value = node.field === 'page'
+        ? context.pageLabel ?? node.text
+        : context.pageCount != null ? String(context.pageCount) : node.text;
+      return renderTextNode({ type: 'text', text: value, style: node.style, href: node.href }, context);
+    }
     return '';
   }).join('');
 }
@@ -442,15 +479,155 @@ function reviewParagraphs(paragraphs: ParagraphBlock[], context: RenderContext):
   return result;
 }
 
-function renderParagraphBlock(block: ParagraphBlock, context: RenderContext, options: { inline?: boolean } = {}): string {
+// doc-viewer: 번호·글머리 기호. 내어쓰기(첫 줄 음수 들여쓰기) 폭만큼 자리를 잡아 Word처럼 본문과 줄을 맞춘다.
+function renderListLabel(block: ParagraphBlock): string {
+  const label = block.listLabel;
+  if (!label?.text) return '';
+  const labelStyle = label.style ? inlineStyleToCss(label.style) : {};
+  const text = mapSymbolText(label.text, label.style?.fontFamily, true);
+  const hanging = -(twipsToPx(block.paraState.firstLineIndent) || 0);
+  if (label.follow === 'tab' && hanging > 0) {
+    labelStyle.display = 'inline-block';
+    labelStyle['min-width'] = `${hanging}px`;
+    labelStyle['text-indent'] = '0';
+  }
+  const follow = label.follow === 'space' ? ' ' : label.follow === 'tab' && hanging <= 0 ? '\u2003' : '';
+  const css = styleObjectToCss(labelStyle);
+  return `<span class="msdoc-list-label"${css ? ` style="${css}"` : ''}>${escapeHtml(text + follow)}</span>`;
+}
+
+/**
+ * doc-viewer: 머리말·꼬리말의 '왼쪽\t가운데\t오른쪽' 줄. Word 기본 머리말 스타일은 가운데·오른쪽 탭이 있어
+ * 탭으로 세 칸을 나눈다. 탭 위치 대신 칸 수로 자리를 정한다(앞 칸이 비면 가운데·오른쪽으로 민다).
+ */
+function splitTabColumns(nodes: InlineNode[]): InlineNode[][] | null {
+  const columns: InlineNode[][] = [[]];
+  for (const node of nodes) {
+    if (node.type !== 'text' || !node.text.includes('\t')) {
+      columns[columns.length - 1]!.push(node);
+      continue;
+    }
+    const parts = node.text.split('\t');
+    parts.forEach((part, index) => {
+      if (index > 0) columns.push([]);
+      if (part) columns[columns.length - 1]!.push({ ...node, text: part });
+    });
+  }
+  return columns.length > 1 ? columns : null;
+}
+
+function renderTabColumns(block: ParagraphBlock, context: RenderContext, tag: string, style: string): string | null {
+  if (block.listLabel) return null;
+  const columns = splitTabColumns(block.inlines || []);
+  if (!columns || columns.length > 4) return null;
+  const isEmpty = (nodes: InlineNode[]) => nodes.every((node) => node.type === 'text' && !node.text.trim());
+  let left: InlineNode[] = [];
+  let center: InlineNode[] = [];
+  let right: InlineNode[] = [];
+  if (columns.length === 2) {
+    if (isEmpty(columns[0]!)) center = columns[1]!;
+    else [left, right] = [columns[0]!, columns[1]!];
+  } else {
+    left = columns[0]!;
+    center = columns.slice(1, -1).flat();
+    right = columns[columns.length - 1]!;
+  }
+  const cell = (nodes: InlineNode[], align: string) => `<span class="msdoc-tab-${align}">${renderInlineNodes(nodes, context)}</span>`;
+  return `<${tag} class="msdoc-paragraph msdoc-tab-columns"${style ? ` style="${style}"` : ''}>${cell(left, 'left')}${cell(center, 'center')}${cell(right, 'right')}</${tag}>`;
+}
+
+function renderParagraphBlock(block: ParagraphBlock, context: RenderContext, options: { inline?: boolean; tabColumns?: boolean } = {}): string {
   const tag = options.inline ? 'div' : 'p';
   const style = styleObjectToCss(paragraphStyleToCss(block.paraState));
-  const body = renderInlineNodes(block.inlines || [], context);
+  if (options.tabColumns) {
+    const columns = renderTabColumns(block, context, tag, style);
+    if (columns) return columns;
+  }
+  const anchors = block.anchors?.length ? renderShapeRun(block.anchors, context) : '';
+  const body = renderListLabel(block) + renderInlineNodes(block.inlines || [], context);
   const empty = body || '<br>';
   const classNames = ['msdoc-paragraph'];
   if (block.paraState.lineSpacingRule === 'atLeast') classNames.push('msdoc-line-at-least');
   if (block.styleName) classNames.push(`msdoc-style-${slugify(block.styleName)}`);
-  return `<${tag} class="${classNames.join(' ')}"${style ? ` style="${style}"` : ''}>${empty}</${tag}>`;
+  return `${anchors}<${tag} class="${classNames.join(' ')}"${style ? ` style="${style}"` : ''}>${empty}</${tag}>`;
+}
+
+/** doc-viewer: 떠 있는 글상자·그림. 원래 위치 대신 고정 문단 자리에 블록으로 그린다. */
+function renderShapeBlock(shape: ShapeBlock, context: RenderContext): string {
+  const style: CssStyleObject = {};
+  const widthPx = twipsToPx(shape.widthTwips);
+  if (shape.kind === 'picture' && shape.image) {
+    const allowVector = shape.image.meta?.vectorConverted === true;
+    const src = sanitizeImageSource(shape.image.sourceUrl, context.externalResourcePolicy, allowVector)
+      || sanitizeImageSource(shape.image.dataUrl, context.externalResourcePolicy, allowVector);
+    if (!src) return '';
+    const imageStyle = styleObjectToCss({ width: widthPx ? `${Math.round(widthPx)}px` : undefined, 'max-width': '100%', height: 'auto' });
+    return `<div class="msdoc-shape msdoc-shape-picture"><img class="msdoc-image" src="${escapeHtml(src)}" alt="" style="${imageStyle}"></div>`;
+  }
+  if (widthPx) style.width = `${Math.round(widthPx)}px`;
+  if (shape.fillColor) style['background-color'] = shape.fillColor;
+  if (shape.lineColor) style.border = `${shape.lineWidthPx || 1}px solid ${shape.lineColor}`;
+  const inner = renderBlockList(shape.blocks, context, { inline: true });
+  if (!inner) return '';
+  const css = styleObjectToCss(style);
+  return `<div class="msdoc-shape msdoc-shape-textbox"${css ? ` style="${css}"` : ''}>${inner}</div>`;
+}
+
+/**
+ * doc-viewer: 이어진 도형들. 세로 위치가 비슷한 것끼리 한 줄(flex, 줄바꿈 허용)에 놓아
+ * 넓은 화면에서는 원본처럼 나란히, 좁은 화면에서는 아래로 이어지게 한다.
+ */
+function renderShapeRun(shapes: ShapeBlock[], context: RenderContext): string {
+  const rows: ShapeBlock[][] = [];
+  let current: ShapeBlock[] = [];
+  let rowTop = 0;
+  for (const shape of shapes) {
+    const top = shape.topTwips ?? 0;
+    if (current.length && Math.abs(top - rowTop) > 360) {
+      rows.push(current);
+      current = [];
+    }
+    if (!current.length) rowTop = top;
+    current.push(shape);
+  }
+  if (current.length) rows.push(current);
+  return rows.map((row) => {
+    const html = row.map((shape) => renderShapeBlock(shape, context)).join('');
+    return row.length > 1 ? `<div class="msdoc-shape-row">${html}</div>` : html;
+  }).join('');
+}
+
+/** doc-viewer: 블록 목록(머리말·각주·글상자 안)을 그린다. 쪽 나누기는 무시한다. */
+function renderBlockList(blocks: MsDocBlock[], context: RenderContext, options: { inline?: boolean; tabColumns?: boolean } = {}): string {
+  const parts: string[] = [];
+  let paragraphs: ParagraphBlock[] = [];
+  let shapes: ShapeBlock[] = [];
+  const flush = () => {
+    parts.push(...reviewParagraphs(paragraphs, context).map((block) => renderParagraphBlock(block, context, options)));
+    paragraphs = [];
+  };
+  const flushShapes = () => {
+    if (shapes.length) parts.push(renderShapeRun(shapes, context));
+    shapes = [];
+  };
+  for (const block of blocks) {
+    if (block.type === 'shape') {
+      flush();
+      shapes.push(block);
+      continue;
+    }
+    flushShapes();
+    if (block.type === 'paragraph') {
+      paragraphs.push(block);
+      continue;
+    }
+    flush();
+    if (block.type === 'table') parts.push(renderTableBlock(block, context));
+    if (block.type === 'attachments') parts.push(renderAttachmentsBlock(block));
+  }
+  flushShapes();
+  flush();
+  return parts.join('');
 }
 
 function cellStyle(cell: TableCellBlock): CssStyleObject {
@@ -546,6 +723,7 @@ function renderAttachmentsBlock(block: AttachmentsBlock): string {
 }
 
 export function defaultMsDocCss(): string {
+  // doc-viewer: 쪽(머리말·꼬리말·각주)·번호·글상자 모양을 더했다. 쪽 카드 모양은 앱이 정한다.
   return `
 .msdoc-root{box-sizing:border-box;max-width:100%;padding:24px;background:#fff;color:#111;font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 .msdoc-root *{box-sizing:border-box}
@@ -562,7 +740,114 @@ export function defaultMsDocCss(): string {
 .msdoc-attachments{margin-top:20px;padding-top:12px;border-top:1px solid #e5e7eb}
 .msdoc-attachments-title{font-weight:600;margin-bottom:8px}
 .msdoc-page-break{display:block;height:0;border-top:1px dashed #cbd5e1;margin:16px 0}
+.msdoc-header{margin:0 0 16px;padding-bottom:6px;border-bottom:1px solid #e5e7eb;color:#444;font-size:0.92em}
+.msdoc-footer{margin:16px 0 0;padding-top:6px;border-top:1px solid #e5e7eb;color:#444;font-size:0.92em}
+.msdoc-header .msdoc-paragraph,.msdoc-footer .msdoc-paragraph{margin-bottom:2px}
+.msdoc-notes{margin-top:20px;font-size:0.9em}
+.msdoc-notes::before{content:"";display:block;width:33%;margin-bottom:6px;border-top:1px solid #6b7280}
+.msdoc-note{display:flex;gap:6px;align-items:baseline}
+.msdoc-note>.msdoc-note-body{flex:1;min-width:0}
+.msdoc-note-label,.msdoc-note-ref a{color:inherit;text-decoration:none}
+.msdoc-note-ref{font-size:0.75em;line-height:0}
+.msdoc-note-label{vertical-align:super;font-size:0.75em}
+.msdoc-list-label{white-space:pre}
+.msdoc-shape{max-width:100%;margin:8px 0;overflow-wrap:anywhere}
+.msdoc-shape-textbox{padding:6px 8px}
+.msdoc-shape-picture img{max-width:100%;height:auto}
+.msdoc-shape-row{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:flex-start;margin:8px 0}
+.msdoc-shape-row>.msdoc-shape{margin:0}
+.msdoc-tab-columns{display:flex;gap:12px;align-items:baseline}
+.msdoc-tab-columns>span{flex:1 1 0;min-width:0}
+.msdoc-tab-center{text-align:center}
+.msdoc-tab-right{text-align:right}
 `;
+}
+
+interface PageDraft {
+  sectionIndex: number;
+  firstOfSection: boolean;
+  blocks: MsDocBlock[];
+}
+
+function blockSection(block: MsDocBlock): number | undefined {
+  if (block.type === 'paragraph' || block.type === 'table') return block.sectionIndex;
+  return undefined;
+}
+
+function hasVisibleContent(page: PageDraft): boolean {
+  return page.blocks.some((block) => block.type !== 'paragraph' || block.inlines.length > 0 || Boolean(block.listLabel) || Boolean(block.anchors?.length));
+}
+
+/**
+ * doc-viewer: 명시적 쪽 나누기(0x0C, 문단 앞 쪽 나눔)와 새 쪽에서 시작하는 구역 나누기로 쪽을 나눈다.
+ * 글자 흐름에 따른 자동 쪽 나눔은 하지 않는다(화면 폭에 맞춰 줄이 다시 흐르기 때문).
+ */
+function paginate(blocks: MsDocBlock[], sections: SectionInfo[]): PageDraft[] {
+  const pages: PageDraft[] = [];
+  let current: PageDraft = { sectionIndex: 0, firstOfSection: true, blocks: [] };
+  let currentSection = blockSection(blocks.find((block) => blockSection(block) != null) ?? blocks[0]!) ?? 0;
+  current.sectionIndex = currentSection;
+  const startNewPage = (sectionIndex: number, firstOfSection: boolean) => {
+    if (hasVisibleContent(current)) pages.push(current);
+    else if (current.blocks.length && pages.length) pages[pages.length - 1]!.blocks.push(...current.blocks);
+    else if (current.blocks.length) {
+      current = { sectionIndex, firstOfSection, blocks: current.blocks };
+      return;
+    }
+    current = { sectionIndex, firstOfSection, blocks: [] };
+  };
+  for (const block of blocks) {
+    const sectionIndex = blockSection(block);
+    if (sectionIndex != null && sectionIndex !== currentSection) {
+      const section = sections[sectionIndex];
+      currentSection = sectionIndex;
+      if (!section || section.breakType >= 2) startNewPage(sectionIndex, true);
+    }
+    if (block.type !== 'paragraph') {
+      current.blocks.push(block);
+      continue;
+    }
+    if (block.paraState.pageBreakBefore && hasVisibleContent(current)) startNewPage(currentSection, false);
+    // 문단 안의 쪽 나누기 문자에서 문단을 둘로 나눈다.
+    let fragment: InlineNode[] = [];
+    let first = true;
+    for (const node of block.inlines) {
+      if (node.type !== 'pageBreak') {
+        fragment.push(node);
+        continue;
+      }
+      if (fragment.length || !first) current.blocks.push({ ...block, inlines: fragment, listLabel: first ? block.listLabel : undefined, anchors: first ? block.anchors : undefined });
+      else if (first && block.anchors?.length) current.blocks.push({ ...block, inlines: [], listLabel: undefined });
+      startNewPage(currentSection, false);
+      fragment = [];
+      first = false;
+    }
+    if (first) current.blocks.push(block);
+    else if (fragment.length) current.blocks.push({ ...block, inlines: fragment, listLabel: undefined, anchors: undefined });
+  }
+  if (current.blocks.length || !pages.length) pages.push(current);
+  return pages;
+}
+
+function pageLabels(pages: PageDraft[], sections: SectionInfo[]): string[] {
+  const labels: string[] = [];
+  let number = 0;
+  pages.forEach((page) => {
+    const section = sections[page.sectionIndex];
+    if (page.firstOfSection && section?.pageNumberRestart) number = (section.pageNumberStart ?? 1) - 1;
+    number += 1;
+    labels.push(formatListNumber(number, section?.pageNumberFormat ?? 0) || String(number));
+  });
+  return labels;
+}
+
+function renderNotes(notes: NoteInfo[], context: RenderContext, title = ''): string {
+  if (!notes.length) return '';
+  const items = notes.map((note) => {
+    const body = renderBlockList(note.blocks, { ...context, inNote: true, noteRefs: [] }, { inline: true });
+    return `<div class="msdoc-note" id="${escapeHtml(note.id)}">${body.includes('msdoc-note-label') ? '' : `<a class="msdoc-note-label" href="#${escapeHtml(note.id)}-ref">${escapeHtml(note.label)}</a>`}<div class="msdoc-note-body">${body}</div></div>`;
+  }).join('');
+  return `<section class="msdoc-notes"${title ? ` aria-label="${escapeHtml(title)}"` : ''}>${items}</section>`;
 }
 
 /**
@@ -572,29 +857,52 @@ export function defaultMsDocCss(): string {
  */
 export function renderMsDoc(parsed: MsDocParseResult, options: MsDocRenderOptions = {}): MsDocRenderResult {
   const css = options.css ?? defaultMsDocCss();
-  const context: RenderContext = {
+  const baseContext: RenderContext = {
     reviewMode: options.reviewMode ?? 'all',
     externalLinkPolicy: options.externalLinkPolicy ?? 'block',
     externalResourcePolicy: options.externalResourcePolicy ?? 'block',
   };
-  const parts: string[] = [];
-  let paragraphs: ParagraphBlock[] = [];
-  const flushParagraphs = () => {
-    parts.push(...reviewParagraphs(paragraphs, context).map(block => renderParagraphBlock(block, context)));
-    paragraphs = [];
-  };
-  for (const block of parsed.blocks) {
-    if (block.type === 'paragraph') {
-      paragraphs.push(block);
-      continue;
+  // doc-viewer: 쪽을 나눈 뒤 쪽마다 머리말 + 본문 + 그 쪽 각주 + 꼬리말을 그린다. 미주는 마지막 쪽에 둔다.
+  const sections: SectionInfo[] = parsed.sections?.length
+    ? parsed.sections
+    : [{ index: 0, cpStart: 0, cpEnd: 0, breakType: 2, titlePage: false, headers: {}, footers: {} }];
+  const drafts = parsed.blocks.length ? paginate(parsed.blocks, sections) : [{ sectionIndex: 0, firstOfSection: true, blocks: [] }];
+  const labels = pageLabels(drafts, sections);
+  const footnotes = new Map((parsed.notes?.footnotes ?? []).map((note) => [note.id, note]));
+  const placedFootnotes = new Set<string>();
+  const pages: MsDocRenderedPage[] = drafts.map((draft, index) => {
+    const context: RenderContext = { ...baseContext, pageLabel: labels[index], pageCount: drafts.length, noteRefs: [] };
+    const section = sections[draft.sectionIndex] ?? sections[0]!;
+    const pageNumberInSection = drafts.slice(0, index + 1).filter((page, k) => page.sectionIndex === draft.sectionIndex && k <= index).length;
+    const pick = (map: SectionInfo['headers']) => {
+      if (section.titlePage && draft.firstOfSection) return map.first;
+      if (map.even && pageNumberInSection % 2 === 0) return map.even;
+      return map.default;
+    };
+    const header = pick(section.headers);
+    const footer = pick(section.footers);
+    const body = renderBlockList(draft.blocks, context);
+    const pageNotes = (context.noteRefs ?? [])
+      .filter((id) => !placedFootnotes.has(id) && footnotes.has(id))
+      .map((id) => {
+        placedFootnotes.add(id);
+        return footnotes.get(id)!;
+      });
+    const isLast = index === drafts.length - 1;
+    if (isLast) {
+      for (const note of footnotes.values()) {
+        if (!placedFootnotes.has(note.id)) pageNotes.push(note);
+      }
     }
-    flushParagraphs();
-    if (block.type === 'table') parts.push(renderTableBlock(block, context));
-    if (block.type === 'attachments') parts.push(renderAttachmentsBlock(block));
-  }
-  flushParagraphs();
-  const html = parts.join('');
+    const notesHtml = renderNotes(pageNotes, context)
+      + (isLast ? renderNotes(parsed.notes?.endnotes ?? [], context, 'endnotes') : '');
+    const headerHtml = header?.length ? `<header class="msdoc-header">${renderBlockList(header, context, { tabColumns: true })}</header>` : '';
+    const footerHtml = footer?.length ? `<footer class="msdoc-footer">${renderBlockList(footer, context, { tabColumns: true })}</footer>` : '';
+    return { html: headerHtml + body + notesHtml + footerHtml, sectionIndex: draft.sectionIndex };
+  });
+  const html = pages.map((page) => `<section class="msdoc-page">${page.html}</section>`).join('');
   return {
+    pages,
     html,
     css,
     warnings: parsed.warnings || [],

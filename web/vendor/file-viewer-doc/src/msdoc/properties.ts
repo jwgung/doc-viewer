@@ -15,7 +15,7 @@ export function propertyArrayToMaps(properties: DecodedProperty[]): {
 } {
   const out: { char: Record<string, unknown>; para: Record<string, unknown>; table: Record<string, unknown> } = { char: {}, para: {}, table: {} };
   for (const prop of properties || []) {
-    if (prop.kind === 'unknown') continue;
+    if (prop.kind !== 'char' && prop.kind !== 'para' && prop.kind !== 'table') continue;
     const bucket = out[prop.kind];
     bucket[prop.name] = prop.value;
   }
@@ -63,8 +63,6 @@ export function charPropsToState(properties: DecodedProperty[]): CharState {
         }
         break;
       case 'bold':
-      case 'revisionDeleted':
-      case 'revisionInserted':
       case 'italic':
       case 'strike':
       case 'hidden':
@@ -74,6 +72,15 @@ export function charPropsToState(properties: DecodedProperty[]): CharState {
       case 'shadow':
       case 'emboss':
       case 'imprint':
+      case 'doubleStrike':
+      case 'boldBi':
+      case 'italicBi':
+        // doc-viewer: 토글 피연산자(0x80 = 스타일 값 그대로, 0x81 = 스타일 값 반대)는 병합 단계
+        // (mergePropertyArrays)에서 풀리고, 기준 값이 없을 때만 여기까지 온다(기준 = 꺼짐).
+        state[prop.name] = prop.value === 0x81 ? true : prop.value === 0x80 ? false : Boolean(prop.value);
+        break;
+      case 'revisionDeleted':
+      case 'revisionInserted':
       case 'rtl':
       case 'data':
       case 'ole2':
@@ -81,6 +88,14 @@ export function charPropsToState(properties: DecodedProperty[]): CharState {
       case 'special':
         state[prop.name] = Boolean(prop.value);
         break;
+      case 'iss': state.iss = (prop.value as number | undefined) || 0; break;
+      case 'sizePos': {
+        // Word 6 sprmCSizePos: 글자 크기(0이면 그대로)와 위치
+        const value = prop.value as { hps?: number; hpsPos?: number } | undefined;
+        if (value?.hps) state.fontSizeHalfPoints = value.hps;
+        if (value?.hpsPos != null) state.positionHalfPoints = value.hpsPos > 127 ? value.hpsPos - 256 : value.hpsPos;
+        break;
+      }
       case 'underline': state.underline = (prop.value as number | undefined) ?? 0; break;
       case 'fontSizeHalfPoints': state.fontSizeHalfPoints = prop.value as number | undefined; break;
       case 'fontFamilyId': state.fontFamilyId = prop.value as number | undefined; break;

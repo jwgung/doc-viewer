@@ -1,6 +1,7 @@
 import { BinaryReader } from '../core/binary.js';
 import { alignEven } from '../core/utils.js';
 import { decodeGrpprl } from './sprm.js';
+import { decodeGrpprl6 } from './sprm6.js';
 import type {
   DecodedProperty,
   FibRgFcLcb,
@@ -29,13 +30,32 @@ const REPEATABLE_TABLE_PROPERTIES = new Set([
   'cellNoWrap',
 ]);
 
+// doc-viewer: 글자 토글 속성. 값 0x80은 '기준(스타일) 값 그대로', 0x81은 '기준 값의 반대'다([MS-DOC] ToggleOperand).
+const TOGGLE_CHAR_PROPERTIES = new Set([
+  'bold', 'italic', 'strike', 'outline', 'shadow', 'smallCaps', 'caps', 'hidden',
+  'emboss', 'imprint', 'doubleStrike', 'boldBi', 'italicBi',
+]);
+
+function toggleBase(value: unknown): boolean {
+  return value === 0x81 ? true : value === 0x80 ? false : Boolean(value);
+}
+
 function mergePropertyArrays(...arrays: Array<DecodedProperty[] | undefined | null>): DecodedProperty[] {
   const map = new Map<string, DecodedProperty>();
   let sequence = 0;
   for (const array of arrays) {
     for (const prop of array || []) {
       const repeatable = prop.kind === 'table' && REPEATABLE_TABLE_PROPERTIES.has(prop.name);
-      map.set(repeatable ? `${prop.kind}:${prop.name}:${sequence++}` : `${prop.kind}:${prop.name}`, prop);
+      const key = repeatable ? `${prop.kind}:${prop.name}:${sequence++}` : `${prop.kind}:${prop.name}`;
+      if (prop.kind === 'char' && TOGGLE_CHAR_PROPERTIES.has(prop.name) && (prop.value === 0x80 || prop.value === 0x81)) {
+        const previous = map.get(key);
+        if (previous) {
+          const base = toggleBase(previous.value);
+          map.set(key, { ...prop, value: prop.value === 0x80 ? base : !base });
+          continue;
+        }
+      }
+      map.set(key, prop);
     }
   }
   return Array.from(map.values());
@@ -78,7 +98,15 @@ function parseStdfBase(bytes: Uint8Array, offset: number): StyleBase {
   };
 }
 
-function parseLpUpxPapx(bytes: Uint8Array, offset: number): { cbUpx: number; styleId: number; properties: DecodedProperty[]; nextOffset: number } {
+// doc-viewer: Word 6/95 스타일의 grpprl은 1바이트 sprm이다. version으로 해석기를 고른다.
+type GrpprlDecoder = (bytes: Uint8Array, start: number, end: number) => DecodedProperty[];
+
+function grpprlDecoder(version: number): GrpprlDecoder {
+  if (version === 6) return (bytes, start, end) => decodeGrpprl6(bytes, start, end, { version: 6 });
+  return decodeGrpprl;
+}
+
+function parseLpUpxPapx(bytes: Uint8Array, offset: number, decode: GrpprlDecoder = decodeGrpprl): { cbUpx: number; styleId: number; properties: DecodedProperty[]; nextOffset: number } {
   const reader = new BinaryReader(bytes);
   const cbUpx = reader.u16(offset);
   const start = offset + 2;
@@ -88,19 +116,27 @@ function parseLpUpxPapx(bytes: Uint8Array, offset: number): { cbUpx: number; sty
   let properties: DecodedProperty[] = [];
   if (papx.length >= 2) {
     styleId = papx[0] | ((papx[1] ?? 0) << 8);
-    properties = decodeGrpprl(papx, 2, papx.length);
+    properties = decode(papx, 2, papx.length);
   }
   return { cbUpx, styleId, properties, nextOffset: alignEven(end) };
 }
 
-function parseLpUpxChpx(bytes: Uint8Array, offset: number): { cbUpx: number; properties: DecodedProperty[]; nextOffset: number } {
+function parseLpUpxChpx(bytes: Uint8Array, offset: number, decode: GrpprlDecoder = decodeGrpprl): { cbUpx: number; properties: DecodedProperty[]; nextOffset: number } {
   const reader = new BinaryReader(bytes);
   const cbUpx = reader.u16(offset);
   const start = offset + 2;
   const end = start + cbUpx;
   const chpx = bytes.subarray(start, Math.min(end, bytes.length));
-  const properties = decodeGrpprl(chpx, 0, chpx.length);
+  const properties = decode(chpx, 0, chpx.length);
   return { cbUpx, properties, nextOffset: alignEven(end) };
+}
+
+/** Word 6/95 스타일 이름: 길이 1바이트 + 8비트 글자 + 0 */
+function parseLegacyStyleName(bytes: Uint8Array, offset: number, decodeName: (raw: Uint8Array) => string): { value: string; nextOffset: number } {
+  const cch = bytes[offset] ?? 0;
+  const raw = bytes.subarray(offset + 1, Math.min(bytes.length, offset + 1 + cch));
+  // 이름 뒤 0 종료 바이트를 건너뛰고, UPX는 STD 시작에서 짝수 위치에 온다.
+  return { value: decodeName(raw).replace(/\u0000+$/, ''), nextOffset: alignEven(offset + 1 + cch + 1) };
 }
 
 function parseLpUpxTapx(bytes: Uint8Array, offset: number): { cbUpx: number; properties: DecodedProperty[]; nextOffset: number } {
@@ -113,7 +149,13 @@ function parseLpUpxTapx(bytes: Uint8Array, offset: number): { cbUpx: number; pro
   return { cbUpx, properties, nextOffset: alignEven(end) };
 }
 
-function parseStyleStd(stdBytes: Uint8Array, cbSTDBaseInFile: number, istd: number): StyleDefinition {
+function parseStyleStd(
+  stdBytes: Uint8Array,
+  cbSTDBaseInFile: number,
+  istd: number,
+  version = 8,
+  decodeName: (raw: Uint8Array) => string = (raw) => new TextDecoder('windows-1252').decode(raw),
+): StyleDefinition {
   if (!stdBytes.length) {
     return {
       istd,
@@ -125,11 +167,15 @@ function parseStyleStd(stdBytes: Uint8Array, cbSTDBaseInFile: number, istd: numb
       tableProps: [],
     };
   }
-  const baseSize = Math.max(10, Math.min(cbSTDBaseInFile || 10, stdBytes.length));
+  const legacy = version !== 8;
+  const baseSize = legacy
+    ? Math.max(8, Math.min(cbSTDBaseInFile || 8, stdBytes.length))
+    : Math.max(10, Math.min(cbSTDBaseInFile || 10, stdBytes.length));
   const stdfBase = parseStdfBase(stdBytes, 0);
   let offset = baseSize;
-  const nameInfo = parseXstz(stdBytes, offset);
+  const nameInfo = legacy ? parseLegacyStyleName(stdBytes, offset, decodeName) : parseXstz(stdBytes, offset);
   offset = nameInfo.nextOffset;
+  const decode = grpprlDecoder(version);
 
   let paraProps: DecodedProperty[] = [];
   let charProps: DecodedProperty[] = [];
@@ -138,17 +184,17 @@ function parseStyleStd(stdBytes: Uint8Array, cbSTDBaseInFile: number, istd: numb
   try {
     if (stdfBase.stk === 1) {
       if (stdfBase.cupx >= 1 && offset + 2 <= stdBytes.length) {
-        const papx = parseLpUpxPapx(stdBytes, offset);
+        const papx = parseLpUpxPapx(stdBytes, offset, decode);
         paraProps = papx.properties;
         offset = papx.nextOffset;
       }
       if (stdfBase.cupx >= 2 && offset + 2 <= stdBytes.length) {
-        const chpx = parseLpUpxChpx(stdBytes, offset);
+        const chpx = parseLpUpxChpx(stdBytes, offset, decode);
         charProps = chpx.properties;
       }
     } else if (stdfBase.stk === 2) {
       if (offset + 2 <= stdBytes.length) {
-        const chpx = parseLpUpxChpx(stdBytes, offset);
+        const chpx = parseLpUpxChpx(stdBytes, offset, decode);
         charProps = chpx.properties;
       }
     } else if (stdfBase.stk === 3) {
@@ -182,7 +228,16 @@ function parseStyleStd(stdBytes: Uint8Array, cbSTDBaseInFile: number, istd: numb
   };
 }
 
-export function parseStyles(tableBytes: Uint8Array, fibRgFcLcb: FibRgFcLcb): StyleCollection {
+export function parseStyles(
+  tableBytes: Uint8Array,
+  fibRgFcLcb: FibRgFcLcb,
+  version = 8,
+  decodeName?: (raw: Uint8Array) => string,
+): StyleCollection {
+  // doc-viewer: Word 2의 스타일 시트는 구조가 전혀 달라 읽지 않는다(기본 서식으로 그린다).
+  if (version === 2) {
+    return { styles: new Map(), header: null, resolveStyle(istd: number | null | undefined): ResolvedStyle { return resolveStyle(new Map(), istd); } };
+  }
   const fcStshf = fibRgFcLcb.fcStshf as number | undefined;
   const lcbStshf = fibRgFcLcb.lcbStshf as number | undefined;
   if (fcStshf == null || lcbStshf == null || lcbStshf <= 0) {
@@ -221,7 +276,7 @@ export function parseStyles(tableBytes: Uint8Array, fibRgFcLcb: FibRgFcLcb): Sty
       continue;
     }
     const stdBytes = bytes.subarray(stdStart, Math.min(stdEnd, bytes.length));
-    const style = parseStyleStd(stdBytes, cbSTDBaseInFile, istd);
+    const style = parseStyleStd(stdBytes, cbSTDBaseInFile, istd, version, decodeName);
     styles.set(istd, style);
     offset = alignEven(stdEnd);
   }
