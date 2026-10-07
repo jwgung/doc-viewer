@@ -23,6 +23,11 @@ const RENDERERS = {
 };
 
 const PASSWORD_CANCELLED = 'password cancelled';
+// 압축을 풀면 이보다 커지는 ZIP 문서(docx·xlsx·pptx·hwpx)는 열지 않는다. 풀다가 기기 메모리를 넘겨 렌더러가 죽거나
+// 기기 전체가 느려지기 전에 거른다(압축 폭탄 등). 시험 문서 1,007개 중 가장 큰 것은 87MB다.
+const MAX_EXPANDED_BYTES = 1024 ** 3;
+/** 압축을 풀면 너무 커서 열지 않는 문서. 최후 대안(본문 글자 뽑기)도 압축을 풀어야 하므로 건너뛴다. */
+class TooLargeError extends Error {}
 const CFB_MAGIC = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
 const container = document.getElementById('doc');
 const status = document.getElementById('status');
@@ -156,6 +161,11 @@ async function open({ fmt: format, src, mode = 'scroll', fit, page = 0, scroll =
         renderer = await RENDERERS[fmt]();
       }
     }
+    if (bytes[0] === 0x50 && bytes[1] === 0x4b) {
+      const { zipExpandedSize } = await import('./containers.js');
+      const expanded = zipExpandedSize(bytes);
+      if (expanded > MAX_EXPANDED_BYTES) throw new TooLargeError(`압축을 풀면 ${expanded}바이트`);
+    }
     const loadMs = Math.round(performance.now() - t0);
     const size = bytes.length; // 워커로 넘기면 bytes가 비워지므로 미리 잰다.
     const result = (await renderer.render(bytes, container, ctx)) ?? {};
@@ -175,13 +185,14 @@ async function open({ fmt: format, src, mode = 'scroll', fit, page = 0, scroll =
       ...(result.extra ?? {}),
     });
   } catch (error) {
-    // 암호 입력을 취소했으면 대안 없이 안내만 한다. 그 밖의 실패는 본문 글자라도 보여 준다(최후 대안).
+    // 암호 입력을 취소했거나 너무 큰 문서면 대안 없이 안내만 한다. 그 밖의 실패는 본문 글자라도 보여 준다(최후 대안).
     const cancelled = error?.message === PASSWORD_CANCELLED;
-    const fallback = cancelled ? 'cancelled' : await showFallback(src).catch(() => 'failed');
+    const tooLarge = error instanceof TooLargeError;
+    const fallback = cancelled ? 'cancelled' : tooLarge ? 'tooLarge' : await showFallback(src).catch(() => 'failed');
     report('error', { message: String(error?.message ?? error), stack: String(error?.stack ?? '').slice(0, 1000), fallback });
     if (fallback === 'text') return;
     status.dataset.kind = 'error';
-    status.textContent = { cancelled: t.passwordRequired, encrypted: t.encryptedUnsupported }[fallback] ?? t.renderFailed;
+    status.textContent = { cancelled: t.passwordRequired, encrypted: t.encryptedUnsupported, tooLarge: t.tooLargeExpanded }[fallback] ?? t.renderFailed;
   }
 }
 

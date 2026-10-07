@@ -67,15 +67,48 @@ export function readZip(bytes) {
   };
 }
 
+/**
+ * 압축을 풀면 몇 바이트가 되는지: 중앙 디렉터리에 적힌 항목 크기의 합. 압축 폭탄처럼 풀면 기기 메모리를 넘는 문서를
+ * 렌더러에 넘기기 전에 거르는 데 쓴다. 목차가 없거나 깨졌으면 0(거르지 않는다).
+ */
+export function zipExpandedSize(bytes) {
+  const v = view(bytes);
+  const end = findZipEnd(bytes);
+  if (end < 0) return 0;
+  let total = 0;
+  let o = v.getUint32(end + 16, true);
+  const count = v.getUint16(end + 10, true);
+  for (let i = 0; i < count && o + 46 <= bytes.length && v.getUint32(o, true) === ZIP_CENTRAL; i++) {
+    const nameLength = v.getUint16(o + 28, true);
+    const extraLength = v.getUint16(o + 30, true);
+    let size = v.getUint32(o + 24, true);
+    // 4GB 이상이면 0xFFFFFFFF로 적고 실제 크기는 ZIP64 확장 필드에 둔다.
+    if (size === 0xffffffff) size = zip64Size(v, o + 46 + nameLength, Math.min(bytes.length, o + 46 + nameLength + extraLength)) ?? size;
+    total += size;
+    o += 46 + nameLength + extraLength + v.getUint16(o + 32, true);
+  }
+  return total;
+}
+
+/** ZIP64 확장 필드(id 1)의 첫 값(푼 크기). */
+function zip64Size(v, from, to) {
+  for (let p = from; p + 4 <= to; p += 4 + v.getUint16(p + 2, true)) {
+    if (v.getUint16(p, true) === 0x0001 && v.getUint16(p + 2, true) >= 8 && p + 12 <= to) return Number(v.getBigUint64(p + 4, true));
+  }
+  return null;
+}
+
+function findZipEnd(bytes) {
+  const v = view(bytes);
+  for (let o = bytes.length - 22; o >= Math.max(0, bytes.length - 65557); o--) {
+    if (v.getUint32(o, true) === ZIP_END) return o;
+  }
+  return -1;
+}
+
 function readCentralDirectory(bytes) {
   const v = view(bytes);
-  let end = -1;
-  for (let o = bytes.length - 22; o >= Math.max(0, bytes.length - 65557); o--) {
-    if (v.getUint32(o, true) === ZIP_END) {
-      end = o;
-      break;
-    }
-  }
+  const end = findZipEnd(bytes);
   if (end < 0) return null;
   const entries = new Map();
   let o = v.getUint32(end + 16, true);
