@@ -354,7 +354,7 @@ body.reading .scrubber {
   color: var(--error);
 }
 
-/* docx-preview: 쪽 너비를 화면 너비에 맞춰 줄인다(zoom은 main에서 계산). */
+/* docx-preview 감싸개(지금은 inWrapper: false라 쓰지 않는다). 쪽은 renderers/docx.js가 칸 폭에 맞춰 줄인다. */
 .docx-wrapper {
   padding: 0 !important;
   background: transparent !important;

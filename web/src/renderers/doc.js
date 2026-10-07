@@ -1,4 +1,5 @@
 import { parseMsDoc, renderMsDoc } from '@file-viewer/doc/core';
+import { placePage, sizeOf } from '../fit-page.js';
 import { PagedViewer } from '../paged-viewer.js';
 import './doc.css';
 
@@ -28,8 +29,6 @@ export async function render(bytes, container, ctx) {
   holder.className = 'offscreen';
   document.body.appendChild(holder);
   const measured = new Map(); // 쪽 번호 → 화면 밖에서 재 둔 쪽 요소
-  // 쪽 크기는 배치 크기로 잰다. transform으로 줄인 뒤에도 같으므로 쪽 칸 안에서 재도 된다.
-  const sizeOf = (card) => ({ width: card.offsetWidth, height: card.offsetHeight });
 
   let viewer = null;
   const doc = {
@@ -49,27 +48,11 @@ export async function render(bytes, container, ctx) {
       }
       return sizes[index];
     },
+    // 칸 폭에 맞춰 줄여 단다. 그림을 기다리지 않고 글자를 먼저 보이며, 그림이 자리 잡아 쪽이 길어지면 칸을 다시 맞춘다.
     renderInto: async (index, el) => {
       const card = measured.get(index) ?? pageCard(pages[index], papers[index]);
       measured.delete(index);
-      el.replaceChildren(card);
-      sizes[index] = sizeOf(card);
-      const place = () => {
-        viewer?.resizePage(index, sizes[index]); // 연속 스크롤 칸을 실제 크기로
-        // 칸 폭에 맞춰 줄인다. zoom은 작은 글자로 줄을 다시 나눠 쪽이 길어지고 끝이 잘리므로, 배치를 그대로 두는 transform을 쓴다.
-        card.style.transform = `scale(${el.clientWidth / sizes[index].width})`;
-      };
-      place();
-      // 크기 정보가 없는 그림은 풀리기 전 높이가 0이다. 글자를 먼저 보이고, 그림이 자리 잡으면 다시 재서 칸을 바로잡는다.
-      const images = [...card.querySelectorAll('img')];
-      if (!images.length) return;
-      Promise.all(images.map((img) => img.decode().catch(() => {}))).then(() => {
-        if (!card.isConnected || card.offsetHeight === sizes[index].height) return;
-        sizes[index] = sizeOf(card);
-        // 한 쪽씩·두 쪽씩 칸은 쪽 뷰어가 잡은 크기라 높이만 같은 비율로 바로잡는다.
-        if (viewer?.mode !== 'scroll') el.style.height = `${Math.floor((sizes[index].height * el.clientWidth) / sizes[index].width)}px`;
-        place();
-      });
+      placePage(card, index, el, sizes, viewer);
     },
     // 인쇄: 쪽마다 새 용지에서 시작하고, 용지보다 긴 쪽은 줄이지 않고 다음 장으로 잇는다(쪽 뷰어 기본 인쇄는 한 장에 줄여 넣는다).
     printInto: async (root) => {

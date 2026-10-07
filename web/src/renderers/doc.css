@@ -4,7 +4,6 @@
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  transform-origin: 0 0;
 }
 
 /* 꼬리말은 본문이 짧아도 용지 아래쪽에 */

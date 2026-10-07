@@ -1,5 +1,6 @@
 import { openLazyAsync, renderAsync } from 'docx-preview';
 import { readZip } from '../containers.js';
+import { placePage } from '../fit-page.js';
 import { PagedViewer } from '../paged-viewer.js';
 import { t } from '../strings.js';
 
@@ -97,7 +98,7 @@ async function openByPage(bytes, holder) {
   }
 
   /**
-   * 탭 간격은 잰 위치에 따라 달라지므로 확대(zoom)하기 전, 화면 밖에서 원래 크기로 한 번 맞춘다
+   * 탭 간격은 잰 위치에 따라 달라지므로 칸 폭에 맞춰 줄이기 전, 화면 밖에서 원래 크기로 한 번 맞춘다
    * (원본 방식도 화면 밖에 있는 쪽은 이렇게 맞췄다). 이미지·글꼴이 자리 잡은 뒤에 한다.
    */
   const alignTabs = (entry) =>
@@ -113,10 +114,11 @@ async function openByPage(bytes, holder) {
     // 한 쪽씩·두 쪽씩 보기가 쪽 칸을 잡기 전에 실제 크기를 알려 준다. 못 그리면 추정 크기를 쓴다.
     measure: (index) => {
       try {
-        return build(index).size;
+        build(index);
       } catch {
-        return sizes[index];
+        // 못 그리면 추정 크기
       }
+      return sizes[index];
     },
     pageElement: (index) => build(index).page.element,
     renderInto: async (index, el, viewer) => {
@@ -131,9 +133,7 @@ async function openByPage(bytes, holder) {
       entry.busy++;
       try {
         await alignTabs(entry);
-        viewer?.resizePage(index, entry.size);
-        entry.page.element.style.zoom = String(el.clientWidth / entry.size.width);
-        el.replaceChildren(entry.page.element);
+        placePage(entry.page.element, index, el, sizes, viewer);
       } finally {
         entry.busy--;
       }
@@ -155,10 +155,7 @@ async function openWhole(bytes, holder) {
     count: sections.length,
     sizes,
     pageElement: (index) => sections[index],
-    renderInto: async (index, el) => {
-      sections[index].style.zoom = String(el.clientWidth / sizes[index].width);
-      el.replaceChildren(sections[index]);
-    },
+    renderInto: async (index, el, viewer) => placePage(sections[index], index, el, sizes, viewer),
   };
 }
 
