@@ -10,6 +10,7 @@
   --accent: #2f6fde;
   --on-accent: #fff;
   --page-shadow: 0 1px 3px rgb(0 0 0 / 20%);
+  /* 쪽 번호는 흰 종이 위에 겹치므로 다크 모드에서도 어두운 바탕에 흰 글자로 둔다. */
   --indicator-bg: rgb(0 0 0 / 55%);
   --scrub-thumb: rgb(0 0 0 / 35%);
   --error: #b00020;
@@ -28,7 +29,6 @@
     --accent: #8ab4f8;
     --on-accent: #0f1a2e;
     --page-shadow: 0 1px 4px rgb(0 0 0 / 60%);
-    --indicator-bg: rgb(255 255 255 / 18%);
     --scrub-thumb: rgb(255 255 255 / 35%);
     --error: #ff8a80;
   }
@@ -365,7 +365,7 @@ body.reading .scrubber {
   box-shadow: var(--page-shadow);
 }
 
-/* 흰 카드에 그리는 문서(마크다운·txt·최후 대안, doc은 쪽마다 카드 하나 — renderers/doc.css). */
+/* 흰 카드에 그리는 문서(마크다운·txt·최후 대안). */
 .flow {
   margin: 0 8px;
   padding: 16px;
@@ -667,10 +667,6 @@ body.searching #doc {
   .flow {
     margin: 0 !important;
     box-shadow: none !important;
-  }
-
-  .flow.doc-page {
-    break-after: page;
   }
 }
 

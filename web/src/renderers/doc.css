@@ -1,10 +1,18 @@
-/* 구형 Word(.doc) 쪽 카드. 카드 모양(흰 바탕·그림자·안쪽 여백·다크 모드 글자색)은 viewer.css의 .flow를 따르고,
-   여기서는 카드 사이 간격과 카드 안 머리말·꼬리말·각주 모양만 정한다. */
-.flow.doc-page {
-  margin-bottom: 8px;
+/* 구형 Word(.doc) 쪽. 흰 바탕·그림자·다크 모드 글자색은 쪽 칸(viewer.css의 .page)이 정하고, 여기서는 쪽 안 배치와
+   머리말·꼬리말·각주 모양만 정한다. 용지 크기·여백은 renderers/doc.js가 쪽마다 넣는다. */
+.doc-page {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  transform-origin: 0 0;
 }
 
-/* 렌더러 기본 CSS의 바깥 여백(24px)은 카드 여백(.flow 16px)과 겹치므로 없앤다.
+/* 꼬리말은 본문이 짧아도 용지 아래쪽에 */
+.doc-page > .doc-page-bottom {
+  margin-top: auto;
+}
+
+/* 렌더러 기본 CSS의 바깥 여백(24px)은 쪽 여백(용지 여백)과 겹치므로 없앤다.
    줄 간격·문단 간격은 원본(Word 기본 '한 줄', 문단 뒤 0)에 가깝게 줄인다. 렌더러 기본값(1.6, 문단 아래 8px)은
    빈 문단으로 간격을 띄운 문서를 두 배로 벌려 놓는다. 문서가 정한 간격(인라인 style)은 그대로 따른다. */
 .doc-page .msdoc-root {
@@ -35,8 +43,22 @@
   font-size: 0.85em;
 }
 
-/* 글상자: 원래 자리에 띄우지 않고 고정 문단 앞에 블록으로 그린다. 좁은 화면에서는 폭을 넘지 않게 줄인다. */
+/* 글상자: 원래 자리에 띄우지 않고 고정 문단 앞에 블록으로 그린다. 쪽 폭을 넘지 않게 줄인다. */
 .doc-page .msdoc-shape-textbox {
   box-sizing: border-box;
   max-width: 100%;
+}
+
+/* 인쇄: 고른 용지 폭에 맞춰 다시 흐르게 하고(여백은 원래대로), 쪽마다 새 장에서 시작한다.
+   용지보다 긴 쪽은 다음 장으로 이어진다. 최소 높이를 두면 반올림으로 용지를 살짝 넘어 빈 장이 생기므로 뺀다. */
+@media print {
+  .print-root > .doc-page {
+    width: auto !important;
+    min-height: 0 !important;
+    break-after: page;
+  }
+
+  .print-root > .doc-page:last-child {
+    break-after: auto;
+  }
 }

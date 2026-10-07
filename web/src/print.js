@@ -1,6 +1,7 @@
 // 인쇄·PDF로 저장. 화면에는 보이는 근처 쪽만 그려 두므로, 인쇄할 때는 모든 쪽을 인쇄용 층에 따로 그린다.
 // 앱이 window.viewer.preparePrint()를 부르면 다 그린 뒤 'printReady'를 알리고, 앱이 WebView 인쇄를 시작한다.
 // 인쇄가 끝나면 앱이 finishPrint()를 불러 인쇄용 층을 걷어 낸다. 쪽 없는 문서는 화면의 문서를 그대로 인쇄한다.
+// 인쇄 모양이 따로 있는 렌더러(doc)는 doc.printInto(층)로 직접 그린다.
 
 /** 인쇄용으로 한꺼번에 그리는 쪽 수 상한. 모든 쪽을 동시에 DOM에 두므로 넘으면 렌더러 메모리가 바닥난다. */
 export const MAX_PRINT_PAGES = 100;
@@ -15,12 +16,14 @@ export class TooManyPagesError extends Error {
 /** @returns {Promise<{width: number, height: number} | null>} 첫 쪽 크기(앱이 용지 방향을 고르는 데 쓴다) */
 export async function preparePrint(viewer) {
   finishPrint(null);
-  if (viewer && viewer.doc.count > MAX_PRINT_PAGES) throw new TooManyPagesError();
+  // 쪽 그림(SVG·캔버스)을 모두 새로 그리는 경우만 쪽 수를 제한한다. doc 쪽은 HTML 글자라 가볍다.
+  if (viewer && !viewer.doc.printInto && viewer.doc.count > MAX_PRINT_PAGES) throw new TooManyPagesError();
   document.body.classList.add('printing');
   if (!viewer) return null;
   const root = document.createElement('div');
   root.className = 'print-root';
   document.body.appendChild(root);
+  if (viewer.doc.printInto) return viewer.doc.printInto(root);
   let first = null;
   for (let index = 0; index < viewer.doc.count; index++) {
     const size = viewer.doc.measure?.(index) ?? viewer.doc.sizes[index];
