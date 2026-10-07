@@ -2,9 +2,20 @@
 // 앱이 window.viewer.preparePrint()를 부르면 다 그린 뒤 'printReady'를 알리고, 앱이 WebView 인쇄를 시작한다.
 // 인쇄가 끝나면 앱이 finishPrint()를 불러 인쇄용 층을 걷어 낸다. 쪽 없는 문서는 화면의 문서를 그대로 인쇄한다.
 
+/** 인쇄용으로 한꺼번에 그리는 쪽 수 상한. 모든 쪽을 동시에 DOM에 두므로 넘으면 렌더러 메모리가 바닥난다. */
+export const MAX_PRINT_PAGES = 100;
+
+export class TooManyPagesError extends Error {
+  constructor() {
+    super('too many pages to print');
+    this.name = 'TooManyPagesError';
+  }
+}
+
 /** @returns {Promise<{width: number, height: number} | null>} 첫 쪽 크기(앱이 용지 방향을 고르는 데 쓴다) */
 export async function preparePrint(viewer) {
   finishPrint(null);
+  if (viewer && viewer.doc.count > MAX_PRINT_PAGES) throw new TooManyPagesError();
   document.body.classList.add('printing');
   if (!viewer) return null;
   const root = document.createElement('div');

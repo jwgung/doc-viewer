@@ -10,7 +10,7 @@ import { openWorkbook } from '../spreadsheet/workbook.js';
 
 const FIRST_BLOCKS = 2;
 const KEEP_SHEETS = 2;
-const MAX_HITS = 10000;
+const MAX_HITS = 10000; // 검색 결과 상한(화면 검색과 같다)
 
 let book = null;
 const loading = new Map(); // 시트 번호 → Promise<SheetModel>

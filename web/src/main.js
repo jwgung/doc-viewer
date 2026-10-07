@@ -53,12 +53,12 @@ window.viewer = {
   },
   /** 인쇄 준비: 모든 쪽을 인쇄용 층에 그린 뒤 'printReady'(첫 쪽 크기)를 알린다. */
   preparePrint: async () => {
-    const { preparePrint } = await import('./print.js');
+    const { preparePrint, TooManyPagesError, MAX_PRINT_PAGES } = await import('./print.js');
     try {
       const size = await preparePrint(viewer);
       report('printReady', size ?? {});
     } catch (error) {
-      report('printFailed', { message: String(error?.message ?? error) });
+      report('printFailed', { tooManyPages: error instanceof TooManyPagesError, limit: MAX_PRINT_PAGES, message: String(error?.message ?? error) });
     }
   },
   finishPrint: async () => (await import('./print.js')).finishPrint(viewer),

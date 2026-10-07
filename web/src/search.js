@@ -7,6 +7,9 @@
 // 사람마다 달라 '산불 조심'으로 '산불조심'을 찾을 수 있어야 한다. 대소문자도 가리지 않는다.
 import { t } from './strings.js';
 
+/** 결과를 이만큼까지만 모은다(아주 흔한 글자를 찾을 때 메모리·시간이 끝없이 늘지 않게). */
+const MAX_HITS = 10000;
+
 const ICONS = {
   prev: '<svg viewBox="0 0 24 24"><path d="M7.4 15.4 12 10.8l4.6 4.6L18 14l-6-6-6 6z"/></svg>',
   next: '<svg viewBox="0 0 24 24"><path d="M7.4 8.6 12 13.2l4.6-4.6L18 10l-6 6-6-6z"/></svg>',
@@ -100,7 +103,8 @@ export function createSearch({ container, viewer, textOf, provider }) {
       for (let page = 0; page < paged.doc.count; page++) {
         const text = normalize(await source(page).catch(() => ''));
         if (token !== generation) return;
-        for (let nth = 0, at = text.indexOf(query); at >= 0; nth++, at = text.indexOf(query, at + query.length)) hits.push({ page, nth });
+        for (let nth = 0, at = text.indexOf(query); at >= 0 && hits.length < MAX_HITS; nth++, at = text.indexOf(query, at + query.length)) hits.push({ page, nth });
+        if (hits.length >= MAX_HITS) break;
         // 앞쪽에서 찾았으면 다 세기 전에 먼저 보여 준다.
         if (current < 0 && hits.length && hits.at(-1).page >= paged.current) {
           current = hits.findIndex((hit) => hit.page >= paged.current);
@@ -125,7 +129,7 @@ export function createSearch({ container, viewer, textOf, provider }) {
       return;
     }
     const index = textIndex(container);
-    for (let at = index.text.indexOf(query); at >= 0; at = index.text.indexOf(query, at + query.length)) {
+    for (let at = index.text.indexOf(query); at >= 0 && hits.length < MAX_HITS; at = index.text.indexOf(query, at + query.length)) {
       hits.push(rangeAt(index, at, at + query.length));
     }
     if (!hits.length) {
@@ -173,7 +177,7 @@ export function createSearch({ container, viewer, textOf, provider }) {
   }
 
   function updateCount() {
-    count.textContent = hits.length ? `${current + 1}/${hits.length}${scanning ? '+' : ''}` : '';
+    count.textContent = hits.length ? `${current + 1}/${hits.length}${scanning || hits.length >= MAX_HITS ? '+' : ''}` : '';
   }
 
   function step(delta) {
