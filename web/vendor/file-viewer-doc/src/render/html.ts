@@ -446,7 +446,8 @@ function renderInlineNodes(nodes: InlineNode[], context: RenderContext): string 
       const value = node.field === 'page'
         ? context.pageLabel ?? node.text
         : context.pageCount != null ? String(context.pageCount) : node.text;
-      return renderTextNode({ type: 'text', text: value, style: node.style, href: node.href }, context);
+      // doc-viewer: 앱이 자동 쪽 나눔으로 쪽을 다시 나누면 쪽 번호를 바꿔 넣을 수 있게 필드 자리를 표시한다.
+      return `<span class="msdoc-field" data-field="${node.field}">${renderTextNode({ type: 'text', text: value, style: node.style, href: node.href }, context)}</span>`;
     }
     return '';
   }).join('');
@@ -898,11 +899,34 @@ export function renderMsDoc(parsed: MsDocParseResult, options: MsDocRenderOption
       + (isLast ? renderNotes(parsed.notes?.endnotes ?? [], context, 'endnotes') : '');
     const headerHtml = header?.length ? `<header class="msdoc-header">${renderBlockList(header, context, { tabColumns: true })}</header>` : '';
     const footerHtml = footer?.length ? `<footer class="msdoc-footer">${renderBlockList(footer, context, { tabColumns: true })}</footer>` : '';
-    return { html: headerHtml + body + notesHtml + footerHtml, sectionIndex: draft.sectionIndex };
+    return {
+      html: headerHtml + body + notesHtml + footerHtml,
+      sectionIndex: draft.sectionIndex,
+      firstOfSection: draft.firstOfSection,
+      bodyHtml: body + notesHtml,
+      headerHtml,
+      footerHtml,
+    };
   });
   const html = pages.map((page) => `<section class="msdoc-page">${page.html}</section>`).join('');
+  // doc-viewer: 앱이 자동 쪽 나눔으로 쪽을 더 나누면 나눈 쪽마다 머리말·꼬리말(첫 쪽·기본·짝수 쪽)을 고를 수 있게 구역마다 함께 낸다.
+  const variants = (map: SectionInfo['headers'], tag: 'header' | 'footer') => {
+    const context: RenderContext = { ...baseContext, noteRefs: [] };
+    const result: Partial<Record<'first' | 'default' | 'even', string>> = {};
+    for (const key of ['first', 'default', 'even'] as const) {
+      const blocks = map[key];
+      if (blocks?.length) result[key] = `<${tag} class="msdoc-${tag}">${renderBlockList(blocks, context, { tabColumns: true })}</${tag}>`;
+    }
+    return result;
+  };
+  const sectionHeaders = sections.map((section) => ({
+    titlePage: section.titlePage,
+    header: variants(section.headers, 'header'),
+    footer: variants(section.footers, 'footer'),
+  }));
   return {
     pages,
+    sectionHeaders,
     html,
     css,
     warnings: parsed.warnings || [],

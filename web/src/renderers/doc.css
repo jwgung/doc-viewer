@@ -47,17 +47,3 @@
   box-sizing: border-box;
   max-width: 100%;
 }
-
-/* 인쇄: 고른 용지 폭에 맞춰 다시 흐르게 하고(여백은 원래대로), 쪽마다 새 장에서 시작한다.
-   용지보다 긴 쪽은 다음 장으로 이어진다. 최소 높이를 두면 반올림으로 용지를 살짝 넘어 빈 장이 생기므로 뺀다. */
-@media print {
-  .print-root > .doc-page {
-    width: auto !important;
-    min-height: 0 !important;
-    break-after: page;
-  }
-
-  .print-root > .doc-page:last-child {
-    break-after: auto;
-  }
-}

@@ -63,7 +63,7 @@ window.viewer = {
       const size = await preparePrint(viewer);
       report('printReady', size ?? {});
     } catch (error) {
-      report('printFailed', { tooManyPages: error instanceof TooManyPagesError, limit: MAX_PRINT_PAGES, message: String(error?.message ?? error) });
+      report('printFailed', { tooManyPages: error instanceof TooManyPagesError, limit: error?.limit ?? MAX_PRINT_PAGES, message: String(error?.message ?? error) });
     }
   },
   finishPrint: async () => (await import('./print.js')).finishPrint(viewer),
@@ -125,6 +125,8 @@ async function open({ fmt: format, src, mode = 'scroll', fit, page = 0, scroll =
     fmt,
     mode,
     fit,
+    /** 이어보기로 열 쪽. 뒤에서 쪽을 나누는 렌더러는 이 쪽까지 먼저 나눈 뒤 보여 준다. */
+    startPage: page,
     setViewer(paged) {
       viewer = paged;
       // 이어보기: 렌더러가 첫 화면을 그리기 전에 시작 쪽을 정한다.
@@ -184,6 +186,8 @@ async function open({ fmt: format, src, mode = 'scroll', fit, page = 0, scroll =
       ...heap(),
       ...(result.extra ?? {}),
     });
+    // 뒤에서 쪽을 나누는 문서(doc·docx): 다 나눈 시각과 쪽 수(측정용)
+    viewer?.doc.paginated?.then(() => report('paginated', { pages: viewer?.doc.count ?? null, ms: Math.round(performance.now() - t0), ...heap() }));
   } catch (error) {
     // 암호 입력을 취소했거나 너무 큰 문서면 대안 없이 안내만 한다. 그 밖의 실패는 본문 글자라도 보여 준다(최후 대안).
     const cancelled = error?.message === PASSWORD_CANCELLED;

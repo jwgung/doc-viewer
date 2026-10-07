@@ -868,11 +868,25 @@ export interface MsDocParseResult {
 export interface MsDocRenderedPage {
   html: string;
   sectionIndex: number;
+  /** doc-viewer: 구역의 첫 쪽인지, 본문(각주·미주 포함)·머리말·꼬리말 HTML을 따로 */
+  firstOfSection?: boolean;
+  bodyHtml?: string;
+  headerHtml?: string;
+  footerHtml?: string;
+}
+
+/** doc-viewer: 구역의 머리말·꼬리말 종류별 HTML(쪽 번호 필드는 data-field 자리) */
+export interface MsDocSectionHeaders {
+  titlePage: boolean;
+  header: Partial<Record<'first' | 'default' | 'even', string>>;
+  footer: Partial<Record<'first' | 'default' | 'even', string>>;
 }
 
 export interface MsDocRenderResult {
   /** doc-viewer: 명시적 쪽 나누기·구역 나누기로 나눈 쪽. html은 이 쪽들을 이어 붙인 것이다. */
   pages?: MsDocRenderedPage[];
+  /** doc-viewer: 구역마다 머리말·꼬리말 종류별 HTML(앱의 자동 쪽 나눔용) */
+  sectionHeaders?: MsDocSectionHeaders[];
   html: string;
   css: string;
   warnings: MsDocWarning[];

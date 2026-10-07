@@ -105,3 +105,13 @@
 - PAPX가 덮지 못한 본문 구간을 문단 표시로 나눠 채운다(예전에는 그 글자가 사라졌다).
 - 글상자 고정 문자(0x08)를 지우면서 글자 위치가 한 칸씩 밀려 서식이 어긋나던 문제를 고쳤다(문자는 두고 그릴 때 건너뛴다).
 - 목록·도형·머리말·각주를 읽다가 실패해도 본문은 그린다(경고 `MSDOC_PARTIAL_FAILURE`).
+
+### 앱의 자동 쪽 나눔을 위한 출력(3.1.2-docviewer.2)
+
+앱(`web/src/paginate.js`)이 렌더러가 나눈 쪽(쪽 나누기·구역 나누기 단위)을 다시 용지 높이로 나누므로, 나눈 쪽마다
+머리말·꼬리말과 쪽 번호를 새로 넣을 수 있게 출력을 더했다.
+
+- 쪽 번호 필드(PAGE·NUMPAGES·SECTIONPAGES)를 `<span class="msdoc-field" data-field="page|numpages">`로 감싼다.
+- `pages[i]`에 `bodyHtml`(본문 + 그 쪽 각주·미주), `headerHtml`, `footerHtml`, `firstOfSection`을 더한다. `html`은 그대로다.
+- 결과에 `sectionHeaders`(구역마다 머리말·꼬리말의 첫 쪽·기본·짝수 쪽 HTML과 `titlePage`)를 더한다.
+- `core.ts`에서 번호 서식 함수 `formatListNumber`를 `formatPageNumber`로 내보낸다(구역의 쪽 번호 서식: 로마 숫자 등).

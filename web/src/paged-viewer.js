@@ -9,6 +9,8 @@
 // renderInto는 element 크기에 맞춰 그 쪽을 그리고, 끝나면 resolve한다.
 // 쪽 크기를 그려 봐야 아는 렌더러(docx·doc)는 sizes에 추정값을 주고, 한 쪽씩·두 쪽씩 보기가 크기를 읽기 전에
 // doc.measure(index)(선택)로 정확한 크기를 돌려주며, 연속 스크롤에서는 그린 뒤 resizePage로 자리를 바로잡는다.
+// 뒤에서 쪽을 나누는 렌더러(docx·doc)는 다 셀 때까지 doc.complete가 false이고(쪽 번호는 '1 / …'), 쪽이 늘면
+// sizes에 더한 뒤 grow()를 부른다. doc.paginated는 다 나누면 풀리는 약속이다(검색·인쇄가 기다린다).
 import { openSheet } from './sheet.js';
 import { t } from './strings.js';
 
@@ -70,6 +72,7 @@ export class PagedViewer {
   /** 첫 쪽이 그려지면 resolve한다. */
   render() {
     this.observer?.disconnect();
+    this.slots = null;
     this.container.replaceChildren();
     this.container.dataset.mode = this.mode;
     this.container.dataset.fit = this.fit;
@@ -97,7 +100,7 @@ export class PagedViewer {
       value: this.current + 1,
       min: 1,
       max: this.doc.count,
-      suffix: `/ ${this.doc.count}`,
+      suffix: `/ ${this.total()}`,
       confirmLabel: t.go,
       cancelLabel: t.cancel,
     });
@@ -168,15 +171,28 @@ export class PagedViewer {
   /** 렌더러가 그려 보고서야 쪽 크기를 알았을 때, 연속 스크롤 자리를 실제 크기로 바로잡는다. */
   resizePage(index, size) {
     this.doc.sizes[index] = size;
-    const el = this.mode === 'scroll' ? this.container.children[index] : null;
+    const el = this.slots?.[index];
     if (el) this.sizeScrollPage(el, size);
+  }
+
+  /** 뒤에서 쪽을 나누는 문서의 쪽이 늘었거나 다 셌다. 연속 스크롤이면 새 쪽 자리를 붙이고, 쪽 번호·손잡이를 고친다. */
+  grow() {
+    if (this.slots) this.addSlots();
+    if (!this.placeThumb) this.buildScrubber();
+    this.showIndicator();
+    if (!this.isScrubbing?.()) this.placeThumb?.(this.current);
+  }
+
+  /** 전체 쪽 수. 아직 세는 중이면 '…'. */
+  total() {
+    return this.doc.complete === false ? '…' : String(this.doc.count);
   }
 
   goTo(index) {
     const step = this.mode === 'spread' ? 2 : 1;
     const target = Math.max(0, Math.min(this.doc.count - 1, index));
     if (this.mode === 'scroll') {
-      this.container.children[target]?.scrollIntoView();
+      this.slots?.[target]?.scrollIntoView();
       // 관찰자가 알아채기 전에 바로 그리기 시작해, 기다리는 쪽(검색 등)이 그 쪽을 곧 쓸 수 있게 한다.
       this.showPage?.(target);
       return;
@@ -189,16 +205,8 @@ export class PagedViewer {
 
   // ---- 연속 스크롤 -------------------------------------------------------
   renderScroll() {
-    const fitWidth = this.container.clientWidth - 16;
-    const fitHeight = innerHeight - 16;
-    const pages = this.doc.sizes.map((size, index) => {
-      const el = document.createElement('div');
-      el.className = 'page';
-      this.sizeScrollPage(el, size, fitWidth, fitHeight);
-      el.dataset.index = String(index);
-      this.container.appendChild(el);
-      return el;
-    });
+    this.slots = [];
+    const pages = this.slots;
     const wanted = new Set();
     const show = async (index) => {
       if (wanted.has(index)) return;
@@ -223,11 +231,26 @@ export class PagedViewer {
       },
       { rootMargin: '100% 0px' },
     );
-    pages.forEach((el) => this.observer.observe(el));
+    this.addSlots();
     pages[this.current]?.scrollIntoView();
     // 시작 쪽이 곧 보이는 쪽이면 관찰자가 바뀜을 알리지 않으므로 쪽 번호를 직접 채운다.
     this.changed(this.current);
     return pages.length ? show(this.current) : Promise.resolve();
+  }
+
+  /** 연속 스크롤의 쪽 자리를 doc.count까지 붙인다(처음에, 그리고 쪽이 늘 때마다). */
+  addSlots() {
+    const fitWidth = this.container.clientWidth - 16;
+    const fitHeight = innerHeight - 16;
+    for (let index = this.slots.length; index < this.doc.count; index++) {
+      const el = document.createElement('div');
+      el.className = 'page';
+      this.sizeScrollPage(el, this.doc.sizes[index], fitWidth, fitHeight);
+      el.dataset.index = String(index);
+      this.container.appendChild(el);
+      this.observer.observe(el);
+      this.slots.push(el);
+    }
   }
 
   // ---- 한 쪽씩 · 두 쪽씩 ----------------------------------------------------
@@ -333,10 +356,15 @@ export class PagedViewer {
 
   changed(index) {
     this.current = index;
-    const last = this.mode === 'spread' ? Math.min(index + 2, this.doc.count) : index + 1;
-    this.indicator.textContent = last > index + 1 ? `${index + 1}-${last} / ${this.doc.count}` : `${index + 1} / ${this.doc.count}`;
+    this.showIndicator();
     if (!this.isScrubbing?.()) this.placeThumb?.(index);
     this.onPageChange?.(index);
+  }
+
+  showIndicator() {
+    const index = this.current;
+    const last = this.mode === 'spread' ? Math.min(index + 2, this.doc.count) : index + 1;
+    this.indicator.textContent = last > index + 1 ? `${index + 1}-${last} / ${this.total()}` : `${index + 1} / ${this.total()}`;
   }
 }
 

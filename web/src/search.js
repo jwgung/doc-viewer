@@ -100,6 +100,9 @@ export function createSearch({ container, viewer, textOf, provider }) {
     if (paged && source) {
       count.textContent = t.searching;
       scanning = true;
+      // 뒤에서 쪽을 나누는 문서는 다 나눈 뒤에 찾는다(쪽 번호가 정해져야 결과로 옮겨 갈 수 있다).
+      await paged.doc.paginated;
+      if (token !== generation) return;
       for (let page = 0; page < paged.doc.count; page++) {
         const text = normalize(await source(page).catch(() => ''));
         if (token !== generation) return;

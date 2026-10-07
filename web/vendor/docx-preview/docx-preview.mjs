@@ -6,7 +6,8 @@
  */
 /*
  * 변경 고지(Apache License 2.0 4(b)): 이 파일은 doc-viewer가 docx-preview 0.4.1의 ESM 빌드를 고친 것이다.
- * 파일 끝의 "쪽 단위 지연 렌더링" 블록(openLazyAsync)과 export 줄만 더했고 원본 코드는 고치지 않았다.
+ * 파일 끝의 "쪽 단위 지연 렌더링" 블록(openLazyAsync)과 export 줄을 더했다. 원본 코드는 표의 머리글 행 표시
+ * (renderTableRow의 data-repeat, "doc-viewer:" 주석) 한 곳만 고쳤다.
  * 원본 소스맵 참조 주석은 소스맵을 함께 두지 않아 지웠다.
  */
 import JSZip from 'jszip';
@@ -3715,7 +3716,11 @@ section.${c}>footer { z-index: 1; }
         if (elem.gridAfter)
             children.push(this.renderTableCellPlaceholder(elem.gridAfter));
         this.currentCellPosition.row++;
-        return this.toHTML(elem, ns.html, "tr", children);
+        const row = this.toHTML(elem, ns.html, "tr", children);
+        // doc-viewer: 머리글 행 반복(tblHeader). 앱이 표를 쪽마다 나눌 때 다음 쪽에도 이 행을 그린다.
+        if (elem.isHeader)
+            row.dataset.repeat = "header";
+        return row;
     }
     renderTableCellPlaceholder(colSpan) {
         return this.h({ tagName: "td", colSpan, style: { border: "none" } });

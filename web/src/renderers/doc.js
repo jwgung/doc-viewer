@@ -1,18 +1,16 @@
-import { parseMsDoc, renderMsDoc } from '@file-viewer/doc/core';
-import { placePage, sizeOf } from '../fit-page.js';
+import { formatPageNumber, parseMsDoc, renderMsDoc } from '@file-viewer/doc/core';
+import { placePage } from '../fit-page.js';
+import { HTML_PRINT_LIMIT, createPager, fillPages, loadPage } from '../paginate.js';
 import { PagedViewer } from '../paged-viewer.js';
 import './doc.css';
 
-// 구형 Word(.doc). 명시적 쪽 나누기·새 쪽 구역 나누기마다 한 쪽으로 나누고, 쪽마다 그 구역의 머리말·꼬리말과
-// 그 쪽에서 참조한 각주를 넣는다(미주는 마지막 쪽). 쪽은 구역의 용지 크기·여백으로 그려 쪽 뷰어에 넘기므로
-// 쪽 번호·쪽 이동·한 쪽씩/두 쪽씩 보기가 다른 형식과 같다. 쪽은 화면에 들어올 때 만든다.
-// 글자 흐름에 따른 자동 쪽 나눔은 하지 않는다. 그래서 내용이 용지보다 긴 쪽은 용지보다 길게 그린다.
+// 구형 Word(.doc). 렌더러가 쪽 나누기·새 쪽 구역 나누기로 나눈 쪽을 다시 용지 높이로 나눠(자동 쪽 나눔, paginate.js)
+// 쪽 뷰어에 넘긴다. 쪽은 구역의 용지 크기·여백으로 그리고, 쪽마다 그 구역의 머리말·꼬리말(첫 쪽·기본·짝수 쪽)과
+// 쪽 번호를 새로 넣는다. 각주는 참조한 원래 쪽(쪽 나누기 단위)의 끝에, 미주는 마지막 쪽에 둔다.
 
 // 문서에 용지·여백이 없을 때 쓰는 Word 기본값(twips): Letter 8.5×11in, 좌우 1.25in, 위아래 1in.
 const DEFAULT_PAPER = { width: 12240, height: 15840, left: 1800, right: 1800, top: 1440, bottom: 1440 };
 const TWIPS_PER_PX = 15;
-// 크기를 재 두고 아직 화면에 달지 않은 쪽을 이만큼만 들고 있는다(한 쪽씩·두 쪽씩 보기가 재고 곧 그린다).
-const KEEP_MEASURED = 4;
 
 export async function render(bytes, container, ctx) {
   const parsed = parseMsDoc(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
@@ -21,60 +19,109 @@ export async function render(bytes, container, ctx) {
   const style = document.createElement('style');
   style.textContent = rendered.css;
   document.head.appendChild(style);
-  const pages = rendered.pages?.length ? rendered.pages : [{ html: rendered.html, sectionIndex: 0 }];
-  const papers = pages.map((page) => paperOf(parsed.sections?.[page.sectionIndex]));
-  // 쪽 크기는 용지 크기로 시작하고, 쪽을 만들어 재면 실제 크기(내용이 길면 더 길다)로 바꾼다.
-  const sizes = papers.map(({ width, height }) => ({ width, height }));
   const holder = document.createElement('div');
   holder.className = 'offscreen';
   document.body.appendChild(holder);
-  const measured = new Map(); // 쪽 번호 → 화면 밖에서 재 둔 쪽 요소
+  await document.fonts.ready;
 
+  const pager = createPager(pageElements(rendered, parsed.sections ?? [], holder));
+  const sizes = [];
+  const sync = () => {
+    for (let index = sizes.length; index < pager.pages.length; index++) sizes.push(pager.pages[index].size);
+  };
+  // 첫 쪽(이어보기면 그 쪽까지)만 먼저 나눈다. 나머지는 첫 쪽을 보인 뒤 쉬는 틈에 나눈다.
+  await pager.fill((ctx.startPage ?? 0) + 1);
+  sync();
+
+  /** 보관한 쪽을 요소로 되살린다. 전체 쪽 수 필드는 다 센 뒤에만 채운다. */
+  const pageAt = (index) => {
+    const page = loadPage(pager.pages[index].saved);
+    if (pager.done) page.querySelectorAll('[data-field="numpages"]').forEach((field) => setField(field, String(sizes.length)));
+    return page;
+  };
   let viewer = null;
   const doc = {
-    count: pages.length,
+    get count() {
+      return sizes.length;
+    },
+    get complete() {
+      return pager.done;
+    },
+    paginated: pager.finished,
+    printLimit: HTML_PRINT_LIMIT,
     sizes,
-    // 한 쪽씩·두 쪽씩 보기가 쪽 칸을 잡기 전에 실제 크기를 묻는다.
-    measure: (index) => {
-      if (!measured.has(index)) {
-        if (measured.size >= KEEP_MEASURED) {
-          measured.forEach((card) => card.remove());
-          measured.clear();
-        }
-        const card = pageCard(pages[index], papers[index]);
-        holder.appendChild(card);
-        sizes[index] = sizeOf(card);
-        measured.set(index, card);
-      }
-      return sizes[index];
-    },
-    // 칸 폭에 맞춰 줄여 단다. 그림을 기다리지 않고 글자를 먼저 보이며, 그림이 자리 잡아 쪽이 길어지면 칸을 다시 맞춘다.
-    renderInto: async (index, el) => {
-      const card = measured.get(index) ?? pageCard(pages[index], papers[index]);
-      measured.delete(index);
-      placePage(card, index, el, sizes, viewer);
-    },
-    // 인쇄: 쪽마다 새 용지에서 시작하고, 용지보다 긴 쪽은 줄이지 않고 다음 장으로 잇는다(쪽 뷰어 기본 인쇄는 한 장에 줄여 넣는다).
-    printInto: async (root) => {
-      const cards = pages.map((page, index) => root.appendChild(pageCard(page, papers[index])));
-      await Promise.all(cards.flatMap((card) => [...card.querySelectorAll('img')].map((img) => img.decode().catch(() => {}))));
-      return { width: papers[0].width, height: papers[0].height };
-    },
+    measure: (index) => sizes[index],
+    renderInto: async (index, el) => placePage(pageAt(index), index, el, sizes, viewer),
   };
   viewer = new PagedViewer(container, doc, { mode: ctx.mode, fit: ctx.fit });
   ctx.setViewer(viewer);
-  // 검색: 쪽 HTML의 글자. template 안에서는 그림을 불러오지 않는다.
+  // 검색: 보관한 쪽의 글자. template 안에서는 그림을 불러오지 않는다.
   const template = document.createElement('template');
   ctx.setTextSource(async (index) => {
-    template.innerHTML = pages[index].html;
+    template.innerHTML = pager.pages[index].saved;
     return template.content.textContent;
   });
   await viewer.render();
   ctx.markFirstPage();
+  pager.background(() => {
+    sync();
+    viewer.grow();
+    if (pager.done) {
+      // 다 셌으면 이미 그린 쪽의 전체 쪽 수 필드도 고친다.
+      container.querySelectorAll('[data-field="numpages"]').forEach((field) => setField(field, String(sizes.length)));
+      holder.remove();
+    }
+  });
   return {
-    pages: pages.length,
-    extra: { warnings: parsed.warnings?.length ?? 0, wordVersion: parsed.meta?.fib?.version ?? null },
+    pages: sizes.length,
+    extra: { warnings: parsed.warnings?.length ?? 0, wordVersion: parsed.meta?.fib?.version ?? null, docSegments: rendered.pages?.length ?? 1 },
   };
+}
+
+/**
+ * 렌더러가 나눈 쪽(쪽 나누기 단위)마다 본문 블록을 용지 높이로 채워 쪽 요소를 차례로 내놓는다.
+ * 쪽 번호는 구역 설정(다시 시작·시작 번호·서식)을 따라 나눈 쪽마다 매긴다.
+ */
+async function* pageElements(rendered, sections, holder) {
+  const segments = rendered.pages?.length ? rendered.pages : [{ html: rendered.html, sectionIndex: 0, firstOfSection: true }];
+  const kinds = rendered.sectionHeaders ?? [];
+  let pageNumber = 0;
+  for (const segment of segments) {
+    const section = sections[segment.sectionIndex];
+    const headers = kinds[segment.sectionIndex];
+    const paper = paperOf(section);
+    const template = document.createElement('template');
+    template.innerHTML = segment.bodyHtml ?? segment.html;
+    let first = true;
+    const shell = () => {
+      const firstOfSection = first && segment.firstOfSection !== false;
+      if (firstOfSection && section?.pageNumberRestart) pageNumber = (section.pageNumberStart ?? 1) - 1;
+      pageNumber += 1;
+      // 머리말·꼬리말: 구역 첫 쪽(첫 쪽 다르게 설정)·짝수 쪽·기본 중에서 고른다(Word와 같다).
+      const pick = (map) => (headers.titlePage && firstOfSection ? map.first : map.even && pageNumber % 2 === 0 ? map.even : map.default) ?? '';
+      const header = headers ? pick(headers.header) : first ? (segment.headerHtml ?? '') : '';
+      const footer = headers ? pick(headers.footer) : first ? (segment.footerHtml ?? '') : '';
+      first = false;
+      const card = pageCard(paper, header, footer);
+      const label = formatPageNumber(pageNumber, section?.pageNumberFormat ?? 0) || String(pageNumber);
+      card.querySelectorAll('[data-field="page"]').forEach((field) => setField(field, label));
+      holder.appendChild(card);
+      return { page: card, body: card.querySelector('.doc-page-body') };
+    };
+    yield* fillPages([...template.content.childNodes], shell);
+  }
+}
+
+/** 필드 자리의 글자를 바꾼다(글자 모양을 담은 span은 그대로 둔다). */
+function setField(field, text) {
+  const walker = document.createTreeWalker(field, NodeFilter.SHOW_TEXT);
+  const first = walker.nextNode();
+  if (!first) {
+    field.textContent = text;
+    return;
+  }
+  first.data = text;
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) node.data = '';
 }
 
 /** 구역의 용지 크기와 여백(px). 값이 없거나 터무니없으면 Word 기본값을 쓴다. */
@@ -96,25 +143,18 @@ function paperOf(section) {
 }
 
 /**
- * 한 쪽: 용지 크기(높이는 최소값)와 여백으로 그린다. 꼬리말은 본문이 짧아도 용지 아래쪽에 붙인다.
- * 렌더러 CSS가 .msdoc-root 아래에 걸려 있으므로 꼬리말도 .msdoc-root로 따로 감싼다.
+ * 빈 쪽: 용지 크기(높이는 최소값)와 여백, 위에서부터 머리말·본문·꼬리말. 꼬리말은 용지 아래쪽에 붙는다.
+ * 렌더러 CSS가 .msdoc-root 아래에 걸려 있으므로 셋 다 .msdoc-root로 감싼다.
  */
-function pageCard(page, paper) {
+function pageCard(paper, headerHtml, footerHtml) {
   const card = document.createElement('div');
   card.className = 'doc-page';
   card.style.width = `${paper.width}px`;
   card.style.minHeight = `${paper.height}px`;
   card.style.padding = `${paper.top}px ${paper.right}px ${paper.bottom}px ${paper.left}px`;
-  const body = document.createElement('div');
-  body.className = 'msdoc-root';
-  body.innerHTML = page.html;
-  card.appendChild(body);
-  const footer = body.querySelector(':scope > .msdoc-footer');
-  if (footer) {
-    const bottom = document.createElement('div');
-    bottom.className = 'msdoc-root doc-page-bottom';
-    bottom.appendChild(footer);
-    card.appendChild(bottom);
-  }
+  card.innerHTML =
+    `<div class="msdoc-root doc-page-top">${headerHtml}</div>` +
+    '<div class="msdoc-root doc-page-body"></div>' +
+    `<div class="msdoc-root doc-page-bottom">${footerHtml}</div>`;
   return card;
 }
