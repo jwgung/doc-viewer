@@ -56,12 +56,20 @@ function finish({ page, body }) {
   return page;
 }
 
-/** 크기 정보가 없는 그림은 풀리기 전 높이가 0이라, 그림이 든 블록은 그림이 풀린 뒤에 잰다. */
+/**
+ * 크기 정보가 없는 그림은 풀리기 전 높이가 0이라, 그런 그림이 든 블록은 그림이 풀린 뒤에 잰다. 너비·높이가 정해진
+ * 그림은 풀기를 기다리지 않는다(표지의 큰 사진을 기다리느라 저사양 기기에서 첫 쪽이 0.5초 늦었다).
+ */
 function imagesReady(block) {
   if (block.nodeType !== Node.ELEMENT_NODE) return null;
-  const images = block.tagName === 'IMG' ? [block] : block.querySelectorAll('img');
-  return images.length ? Promise.all([...images].map((img) => img.decode().catch(() => {}))) : null;
+  const images = [...(block.tagName === 'IMG' ? [block] : block.querySelectorAll('img'))].filter((img) => !img.complete && !sized(img));
+  return images.length ? Promise.all(images.map((img) => img.decode().catch(() => {}))) : null;
 }
+
+// 너비·높이를 고정 단위(px·pt 등)로 정한 그림. 'auto'·%는 그림이 풀려야 크기가 정해진다.
+const fixed = (value) => /^[\d.]+(px|pt|pc|cm|mm|in|em|rem)$/.test(value ?? '');
+const sized = (img) =>
+  (fixed(img.style.width) && fixed(img.style.height)) || (/^\d+$/.test(img.getAttribute('width') ?? '') && /^\d+$/.test(img.getAttribute('height') ?? ''));
 
 function open(shell) {
   const { page, body } = shell();
