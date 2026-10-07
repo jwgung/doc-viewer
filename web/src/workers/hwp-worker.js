@@ -23,7 +23,13 @@ globalThis.measureTextWidth = (font, text) => {
 };
 
 const A4 = { width: 794, height: 1123 };
-const ready = init({ module_or_path: wasmUrl });
+// 측정: 워커 시작부터 wasm 준비·문서 열기까지 걸린 시간('done' 측정값에 함께 실린다).
+const startedAt = performance.now();
+let initMs = 0;
+const ready = init({ module_or_path: wasmUrl }).then((wasm) => {
+  initMs = Math.round(performance.now() - startedAt);
+  return wasm;
+});
 let doc = null;
 let locked = null; // 암호를 기다리는 문서 바이트
 
@@ -40,7 +46,13 @@ function pageSize(index) {
 function opened(wasm) {
   const pages = doc.pageCount();
   const sizes = Array.from({ length: pages }, (_, i) => pageSize(i));
-  self.postMessage({ type: 'opened', pages, sizes, wasmMemoryBytes: wasm.memory.buffer.byteLength });
+  self.postMessage({
+    type: 'opened',
+    pages,
+    sizes,
+    wasmMemoryBytes: wasm.memory.buffer.byteLength,
+    timing: { initMs, openMs: Math.round(performance.now() - startedAt) },
+  });
 }
 
 // rhwp 오류 문구로 암호 문서·틀린 암호를 가린다(전용 오류 형식이 없다).
@@ -82,7 +94,9 @@ self.onmessage = async ({ data }) => {
       locked = null;
       opened(wasm);
     } else if (data.type === 'page') {
-      self.postMessage({ type: 'page', index: data.index, svg: doc.renderPageSvg(data.index) });
+      const t0 = performance.now();
+      const svg = doc.renderPageSvg(data.index);
+      self.postMessage({ type: 'page', index: data.index, svg, renderMs: Math.round(performance.now() - t0) });
     } else if (data.type === 'text') {
       self.postMessage({ type: 'text', index: data.index, text: svgText(doc.renderPageSvg(data.index)) });
     } else if (data.type === 'layout') {
