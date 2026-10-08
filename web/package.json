@@ -1,0 +1,25 @@
+{
+  "name": "doc-viewer-web",
+  "private": true,
+  "type": "module",
+  "description": "Android·iOS 앱이 WebView로 띄우는 공용 문서 렌더러 번들",
+  "scripts": {
+    "dev": "vite --port 5175 --strictPort",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@file-viewer/doc": "file:vendor/file-viewer-doc",
+    "@rhwp/core": "file:vendor/rhwp-core",
+    "@web-ppt/core": "file:vendor/web-ppt-core",
+    "docx-preview": "file:vendor/docx-preview",
+    "dompurify": "3.4.16",
+    "jszip": "3.10.1",
+    "marked": "18.1.0",
+    "pdfjs-dist": "6.4.299",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+  },
+  "devDependencies": {
+    "playwright": "1.63.0",
+    "vite": "8.3.3"
+  }
+}

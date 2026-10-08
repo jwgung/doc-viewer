@@ -1,0 +1,700 @@
+:root {
+  color-scheme: light;
+  /* 앱 화면 색. 문서(쪽·표·본문 카드)는 다크 모드에서도 원래 색으로 그린다. */
+  --bg: #e9e9ec;
+  --surface: #fff;
+  --text: #1f1f23;
+  --text-2: #6b6b70;
+  --border: #d0d0d6;
+  --muted-button: #eeeef1;
+  --accent: #2f6fde;
+  --on-accent: #fff;
+  --page-shadow: 0 1px 3px rgb(0 0 0 / 20%);
+  /* 쪽 번호는 흰 종이 위에 겹치므로 다크 모드에서도 어두운 바탕에 흰 글자로 둔다. */
+  --indicator-bg: rgb(0 0 0 / 55%);
+  --scrub-thumb: rgb(0 0 0 / 35%);
+  --error: #b00020;
+}
+
+/* 앱이 다크 테마면 WebView도 prefers-color-scheme: dark를 알린다. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: #121214;
+    --surface: #1c1d21;
+    --text: #e8e8ec;
+    --text-2: #a0a0a8;
+    --border: #3a3b40;
+    --muted-button: #2a2b30;
+    --accent: #8ab4f8;
+    --on-accent: #0f1a2e;
+    --page-shadow: 0 1px 4px rgb(0 0 0 / 60%);
+    --scrub-thumb: rgb(255 255 255 / 35%);
+    --error: #ff8a80;
+  }
+}
+
+/* 문서 영역(쪽·본문 카드)은 다크 모드에서도 종이처럼 밝게 둔다(스프레드시트 표는 renderers/sheet.css).
+   글자색을 명시하지 않은 문서가 흰 바탕에 흰 글자가 되지 않게 색 체계와 기본 글자색을 고정한다. */
+.page,
+.flow,
+.docx-wrapper section.docx {
+  color-scheme: light;
+  color: #000;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--bg);
+  font-family: system-ui, sans-serif;
+}
+
+/* 쪽 이동은 오른쪽 빠른 이동 손잡이로 하므로 자체 스크롤바는 숨긴다. */
+* {
+  scrollbar-width: none;
+}
+
+::-webkit-scrollbar {
+  display: none;
+}
+
+#doc {
+  padding: 8px 0 24px;
+}
+
+/* 고정 배치 문서(hwp·ppt)의 쪽. 크기는 렌더러가 aspect-ratio로 잡아 두고 화면에 들어올 때 그린다. */
+.page {
+  position: relative;
+  width: calc(100% - 16px);
+  margin: 0 auto 8px;
+  background: #fff;
+  box-shadow: var(--page-shadow);
+  overflow: hidden;
+}
+
+.page > svg,
+.page > canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* 한 쪽씩·두 쪽씩: 화면 한 장에 쪽을 맞추고 세로 스크롤을 없앤다. */
+#doc[data-mode='page'],
+#doc[data-mode='spread'] {
+  padding: 0;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.flip-stage {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+}
+
+.flip-stage > .page {
+  margin: 0;
+  flex: none;
+}
+
+/* 한 쪽씩·두 쪽씩 + 화면 가득: 쪽이 화면보다 길면 세로로 스크롤한다. */
+#doc[data-mode='page'][data-fit='width'],
+#doc[data-mode='spread'][data-fit='width'] {
+  overflow-y: auto;
+}
+
+#doc[data-fit='width'] .flip-stage {
+  align-items: flex-start;
+  height: auto;
+  min-height: 100%;
+  padding: 8px 0;
+  box-sizing: border-box;
+}
+
+.page-indicator {
+  position: fixed;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 14px;
+  font-size: 14px;
+  color: #fff;
+  background: var(--indicator-bg);
+  border: none;
+  border-radius: 16px;
+}
+
+/* docx는 화면 밖에서 전체를 그린 뒤 쪽을 옮겨 단다. */
+.offscreen {
+  position: absolute;
+  top: 0;
+  left: -100000px;
+  visibility: hidden;
+}
+
+/* PDF 텍스트 층(pdf.js pdf_viewer.css에서 필요한 부분만): 투명한 글자를 겹쳐 선택·복사를 가능하게 한다. */
+.textLayer {
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  line-height: 1;
+  text-align: initial;
+  text-size-adjust: none;
+  transform-origin: 0 0;
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+}
+
+.textLayer :is(span, br) {
+  position: absolute;
+  color: transparent;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+  user-select: text;
+}
+
+.textLayer > :not(.markedContent),
+.textLayer .markedContent span:not(.markedContent) {
+  --font-height: 0;
+  --scale-x: 1;
+  --rotate: 0deg;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+
+.textLayer .markedContent {
+  display: contents;
+}
+
+.textLayer ::selection {
+  background: rgb(47 111 222 / 30%);
+}
+
+/* 아래에서 올라오는 입력 시트(쪽 이동·암호 입력) */
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: flex-end;
+  background: rgb(0 0 0 / 0%);
+  transition: background 0.2s;
+}
+
+.sheet-backdrop.open {
+  background: rgb(0 0 0 / 35%);
+}
+
+.sheet {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 20px 20px 16px;
+  color: var(--text);
+  background: var(--surface);
+  border-radius: 16px 16px 0 0;
+  transform: translateY(100%);
+  transition: transform 0.2s ease-out;
+}
+
+.sheet-backdrop.open .sheet {
+  transform: none;
+}
+
+.sheet h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.sheet p {
+  margin: 6px 0 0;
+  font-size: 14px;
+  color: var(--text-2);
+}
+
+.sheet p:empty,
+.sheet-field span:empty {
+  display: none;
+}
+
+.sheet-field {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin: 16px 0 20px;
+}
+
+.sheet-field input {
+  flex: 1;
+  min-width: 0;
+  padding: 12px 14px;
+  font-size: 22px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  outline: none;
+}
+
+.sheet-field input:focus {
+  border-color: var(--accent);
+}
+
+.sheet-field input::-webkit-outer-spin-button,
+.sheet-field input::-webkit-inner-spin-button {
+  margin: 0;
+  -webkit-appearance: none;
+}
+
+.sheet-field span {
+  font-size: 18px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.sheet-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.sheet-actions button {
+  flex: 1;
+  padding: 13px;
+  font-size: 16px;
+  border: none;
+  border-radius: 10px;
+}
+
+.sheet-cancel {
+  color: var(--text);
+  background: var(--muted-button);
+}
+
+.sheet-confirm {
+  font-weight: 600;
+  color: var(--on-accent);
+  background: var(--accent);
+}
+
+/* 읽기 모드: 문서만 보이게 쪽 번호와 빠른 이동 손잡이를 숨긴다. */
+body.reading .page-indicator,
+body.reading .scrubber {
+  display: none;
+}
+
+/* 오른쪽 가장자리 빠른 이동 손잡이 */
+.scrubber {
+  position: fixed;
+  top: 8px;
+  right: 0;
+  bottom: 60px;
+  z-index: 5;
+  width: 28px;
+  touch-action: none;
+}
+
+.scrubber-thumb {
+  position: absolute;
+  right: 4px;
+  width: 6px;
+  height: 44px;
+  background: var(--scrub-thumb);
+  border-radius: 3px;
+  transition: width 0.15s, background 0.15s;
+}
+
+.scrubber.active .scrubber-thumb {
+  width: 10px;
+  background: var(--accent);
+}
+
+.scrubber-bubble {
+  position: absolute;
+  right: 22px;
+  display: none;
+  min-width: 36px;
+  padding: 8px 12px;
+  margin-top: 2px;
+  font-size: 16px;
+  font-weight: 600;
+  text-align: center;
+  color: var(--on-accent);
+  background: var(--accent);
+  border-radius: 20px;
+}
+
+.scrubber.active .scrubber-bubble {
+  display: block;
+}
+
+#status {
+  position: fixed;
+  inset: auto 0 0;
+  padding: 12px;
+  font-size: 14px;
+  text-align: center;
+  color: var(--text-2);
+  background: var(--surface);
+}
+
+#status:empty {
+  display: none;
+}
+
+#status[data-kind='error'] {
+  color: var(--error);
+}
+
+/* docx-preview 감싸개(지금은 inWrapper: false라 쓰지 않는다). 쪽은 renderers/docx.js가 칸 폭에 맞춰 줄인다. */
+.docx-wrapper {
+  padding: 0 !important;
+  background: transparent !important;
+}
+
+.docx-wrapper > section.docx {
+  margin: 0 auto 8px !important;
+  box-shadow: var(--page-shadow);
+}
+
+/* 흰 카드에 그리는 문서(마크다운·txt·최후 대안). */
+.flow {
+  margin: 0 8px;
+  padding: 16px;
+  background: #fff;
+  box-shadow: var(--page-shadow);
+  overflow-x: auto;
+}
+
+/* 마크다운: 넓은 화면에서도 한 줄이 너무 길지 않게 폭을 제한하고 가운데 둔다. */
+.flow.markdown {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 24px 22px 32px;
+}
+
+.markdown {
+  font-size: 16px;
+  line-height: 1.65;
+  color: #1f2328;
+  overflow-wrap: anywhere;
+}
+
+.markdown h1,
+.markdown h2 {
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid #d8dee4;
+}
+
+.markdown pre {
+  padding: 12px;
+  overflow-x: auto;
+  background: #f6f8fa;
+  border-radius: 6px;
+}
+
+.markdown code {
+  font-size: 0.9em;
+  font-family: ui-monospace, monospace;
+}
+
+.markdown :not(pre) > code {
+  padding: 0.15em 0.35em;
+  background: #eff1f3;
+  border-radius: 4px;
+}
+
+.markdown blockquote {
+  margin: 0;
+  padding: 0 1em;
+  color: #59636e;
+  border-left: 4px solid #d1d9e0;
+}
+
+.markdown table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+
+.markdown th,
+.markdown td {
+  padding: 6px 12px;
+  border: 1px solid #d1d9e0;
+}
+
+.markdown img {
+  max-width: 100%;
+}
+
+/* 최후 대안: 원래 모양 없이 본문 글자만 */
+.flow.fallback {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 20px 22px 32px;
+  font-size: 16px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.fallback-note {
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  font-size: 14px;
+  color: #59636e;
+  background: #f6f8fa;
+  border-radius: 6px;
+}
+
+.fallback p {
+  margin: 0 0 0.6em;
+  white-space: pre-wrap;
+}
+
+.fallback h2 {
+  margin: 1.2em 0 0.5em;
+  font-size: 18px;
+}
+
+.fallback table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.fallback td,
+.fallback th {
+  padding: 2px 8px;
+  white-space: pre-wrap;
+  border: 1px solid #d1d9e0;
+}
+
+.fallback img {
+  max-width: 100%;
+}
+
+/* 문서 안 검색 */
+.search-bar {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 20;
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  padding: 6px 6px 6px 10px;
+  background: var(--surface);
+  box-shadow: 0 1px 4px rgb(0 0 0 / 20%);
+}
+
+.search-bar[hidden] {
+  display: none;
+}
+
+.search-bar input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  font-size: 16px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.search-count {
+  min-width: 3em;
+  padding: 0 4px;
+  font-size: 13px;
+  text-align: center;
+  white-space: nowrap;
+  color: var(--text-2);
+}
+
+.search-bar button {
+  width: 40px;
+  height: 40px;
+  padding: 8px;
+  background: none;
+  border: 0;
+  border-radius: 20px;
+}
+
+.search-bar button svg {
+  width: 24px;
+  height: 24px;
+  fill: var(--text);
+}
+
+/* 막대가 첫 쪽 위를 가리지 않게 문서를 그만큼 내린다. */
+body.searching #doc {
+  padding-top: 52px;
+}
+
+::highlight(search-hit) {
+  background-color: rgb(255 213 0 / 45%);
+}
+
+::highlight(search-current) {
+  background-color: rgb(255 140 0 / 75%);
+}
+
+/* 목차 시트 */
+.outline-sheet {
+  max-height: 70vh;
+  padding-bottom: 8px;
+  overflow-y: auto;
+}
+
+.outline-list {
+  margin: 12px -20px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.outline-list button {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  width: 100%;
+  padding: 11px 20px 11px 12px;
+  font-size: 15px;
+  text-align: left;
+  color: var(--text);
+  background: none;
+  border: 0;
+}
+
+.outline-list button:active {
+  background: var(--bg);
+}
+
+.outline-list button span:first-child {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+
+.outline-page {
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.outline-empty {
+  padding: 12px 20px;
+  color: var(--text-2);
+}
+
+/* 텍스트 파일 */
+.flow.plaintext {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 20px 18px 32px;
+}
+
+.plaintext pre {
+  margin: 0;
+  font: 15px/1.6 system-ui, sans-serif;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  tab-size: 4;
+}
+
+/* 인쇄·PDF로 저장 */
+@media screen {
+  .print-root {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 794px;
+    visibility: hidden;
+    pointer-events: none;
+    transform: translateX(-300vw);
+  }
+}
+
+@media print {
+  @page {
+    margin: 0;
+  }
+
+  html,
+  body {
+    background: #fff !important;
+  }
+
+  /* 쪽 있는 문서: 인쇄용 층만 */
+  body.printing:has(.print-root) > :not(.print-root) {
+    display: none !important;
+  }
+
+  /* 쪽 하나가 용지 한 장에 꼭 들어가게 너비·높이 중 작은 쪽에 맞춘다(넘치면 빈 장이 생긴다). */
+  .print-page {
+    width: min(100vw, calc(100vh * var(--ratio) * 0.995)) !important;
+    margin: 0 auto !important;
+    overflow: hidden;
+    box-shadow: none !important;
+    break-inside: avoid;
+  }
+
+  .print-page:not(:last-child) {
+    break-after: page;
+  }
+
+  /* 쪽 없는 문서: 화면의 문서를 그대로, 덧씌운 부품은 빼고 */
+  .search-bar,
+  .page-indicator,
+  .scrubber,
+  #status,
+  .sheet-backdrop,
+  .fallback-note {
+    display: none !important;
+  }
+
+  body.searching #doc {
+    padding-top: 0;
+  }
+
+  .flow {
+    margin: 0 !important;
+    box-shadow: none !important;
+  }
+}
+
+/* HWP 선택·복사용 글자 층(투명 글자를 그림 글자 위에 겹친다) */
+.hwp-text-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  line-height: 1;
+}
+
+.hwp-text-layer span {
+  position: absolute;
+  font-family: sans-serif;
+  white-space: pre;
+  color: transparent;
+  cursor: text;
+  transform-origin: 0 0;
+}
+
+.hwp-text-layer ::selection {
+  background: rgb(0 90 255 / 25%);
+}
+
+/* 그림 글자는 고르지 못하게(글자마다 줄이 바뀌던 원인). 검색 표시는 그대로 그림 글자에 한다. */
+.hwp-page svg text {
+  user-select: none;
+  -webkit-user-select: none;
+}
+

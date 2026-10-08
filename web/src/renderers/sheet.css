@@ -1,0 +1,236 @@
+/* 스프레드시트: 시트 탭 막대는 앱 색(다크 모드 따라감), 표는 다크 모드에서도 흰 바탕 문서로 그린다. */
+#doc.sheet-doc {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  height: 100vh;
+  height: 100dvh;
+  padding: 0;
+}
+
+.sheet-tabs {
+  display: flex;
+  flex: none;
+  gap: 4px;
+  padding: 6px 8px;
+  overflow-x: auto;
+  background: var(--bg);
+}
+
+.sheet-tabs[hidden] {
+  display: none;
+}
+
+.sheet-tabs button {
+  padding: 4px 10px;
+  font-size: 13px;
+  white-space: nowrap;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.sheet-tabs button[aria-selected='true'] {
+  color: var(--on-accent);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.sheet-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  color-scheme: light;
+  color: #000;
+  background: #fff;
+}
+
+.sheet-note {
+  flex: none;
+  margin: 0;
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--text-2);
+  background: var(--bg);
+}
+
+.sheet-note:empty {
+  display: none;
+}
+
+.sheet-scrubber {
+  bottom: 12px;
+}
+
+.sheet-scrubber[hidden] {
+  display: none;
+}
+
+/* ---- 표 뼈대 ---------------------------------------------------------- */
+.sg-canvas {
+  position: relative;
+}
+
+.sg-band {
+  position: relative;
+  display: flex;
+}
+
+.sg-head {
+  position: sticky;
+  z-index: 4;
+}
+
+.sg-top {
+  position: sticky;
+  z-index: 3;
+  box-shadow: 0 1px 0 #8f8f8f;
+}
+
+.sg-main {
+  z-index: 1;
+}
+
+/* 영역마다 쌓임 맥락을 따로 둬서, 셀의 테두리 층(z-index)이 고정 열·머리글 위로 올라오지 않게 한다. */
+.sg-band > div {
+  position: relative;
+  z-index: 0;
+  flex: none;
+  height: 100%;
+  overflow: hidden;
+}
+
+.sg-band > .sg-corner,
+.sg-band > .sg-rowhead {
+  position: sticky;
+  z-index: 3;
+  background: #f3f3f3;
+}
+
+.sg-band > .sg-fz {
+  position: sticky;
+  z-index: 2;
+  background: #fff;
+  box-shadow: 1px 0 0 #8f8f8f;
+}
+
+.sg-colhead,
+.sg-band > .sg-colhead.sg-fz {
+  background: #f3f3f3;
+}
+
+.sg-top > .sg-cells {
+  background: #fff;
+}
+
+.sg-corner {
+  box-sizing: border-box;
+  border-right: 1px solid #c6c6c6;
+  border-bottom: 1px solid #c6c6c6;
+}
+
+.sg-hc,
+.sg-hr {
+  position: absolute;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  font: 11px/1 system-ui, sans-serif;
+  white-space: nowrap;
+  color: #5f5f5f;
+}
+
+.sg-hc {
+  top: 0;
+  height: 100%;
+  border-right: 1px solid #d4d4d4;
+  border-bottom: 1px solid #c6c6c6;
+}
+
+.sg-hr {
+  left: 0;
+  width: 100%;
+  border-right: 1px solid #c6c6c6;
+  border-bottom: 1px solid #d4d4d4;
+}
+
+/* ---- 셀 ----------------------------------------------------------------
+   셀은 시트 좌표에서 왼쪽·위로 1px 넓게 놓는다. 이웃 셀의 테두리, 눈금선과 같은 자리에 겹쳐 선이 하나로 보인다.
+   글자는 엑셀 기본값처럼 아래쪽에 붙이고, 서식(x번호 클래스)이 정렬·글꼴·채우기·테두리를 덮어쓴다. */
+.sg-cells {
+  font-family: Calibri, Carlito, 'Malgun Gothic', sans-serif;
+  font-size: 14.67px;
+  color: #000;
+}
+
+.sg-cells .gv,
+.sg-cells .gh {
+  position: absolute;
+  background: #e2e2e2;
+}
+
+.sg-cells .gv {
+  width: 1px;
+}
+
+.sg-cells .gh {
+  height: 1px;
+}
+
+.sg-cells .c {
+  position: absolute;
+  box-sizing: border-box;
+  display: flex;
+  align-items: flex-end;
+  padding: 0 3px 1px 4px;
+  line-height: 1.15;
+  white-space: pre;
+}
+
+/* 글자는 칸 안에서 자른다(셀 상자는 테두리 층이 밖으로 나가야 해서 자르지 않는다). */
+.sg-cells .c > span {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-height: 100%;
+  overflow: hidden;
+}
+
+/* 테두리 층(서식별 규칙이 content와 선·위치를 준다). 채우기와 글자보다 위에 그린다. */
+.sg-cells .c::after {
+  position: absolute;
+  z-index: 2;
+  box-sizing: border-box;
+  pointer-events: none;
+}
+
+/* 옆 빈 칸으로 넘치는 글자는 뒤에 그려지는 이웃 칸의 채우기보다 위에 둔다. */
+.sg-cells .sp {
+  z-index: 1;
+}
+
+/* 채우기 없는 병합 셀: 안쪽 눈금선만 가린다. */
+.sg-cells .mw {
+  background: linear-gradient(#fff, #fff) 1px 1px / calc(100% - 2px) calc(100% - 2px) no-repeat;
+}
+
+.sg-cells .ar {
+  text-align: right;
+}
+
+.sg-cells .ac {
+  text-align: center;
+}
+
+/* 문서 안 검색에서 지금 결과인 칸 */
+.sheet-body .sg-cells .sg-found {
+  z-index: 3;
+  background-color: rgb(255 213 0 / 45%) !important;
+  outline: 2px solid rgb(255 140 0);
+  outline-offset: -2px;
+}
+
