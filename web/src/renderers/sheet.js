@@ -39,8 +39,16 @@ export async function render(bytes, container, ctx) {
     current = index;
     tabs.querySelectorAll('button').forEach((button) => button.setAttribute('aria-selected', String(Number(button.dataset.index) === index)));
     const meta = payload.meta;
+    // 차트는 슬라이드 렌더러의 차트 코드로 그린다. 차트가 있는 시트를 처음 열 때만 불러온다.
+    if (!grid.renderChart && payload.media?.some((m) => m?.type === 'chart')) {
+      try {
+        grid.renderChart = (await import('@web-ppt/core/chart')).chartToSvg;
+      } catch (error) {
+        console.warn('[sheet] chart renderer unavailable', error);
+      }
+    }
     note.textContent =
-      meta.kind !== 'sheet'
+      meta.kind !== 'sheet' && !meta.pictures.length
         ? t.chartSheet
         : meta.truncatedRow >= 0
           ? t.rowsLimited(meta.truncatedRow.toLocaleString(), meta.totalRows.toLocaleString())

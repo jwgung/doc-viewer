@@ -234,7 +234,8 @@ export async function readXlsx(bytes) {
   const rels = await readRels(zip, bookPath);
   const relOf = (pattern) => rels.find((r) => pattern.test(r.type))?.target;
 
-  const theme = parseTheme(await zip.text(relOf(/\/theme$/) ?? 'xl/theme/theme1.xml'));
+  const themeXml = await zip.text(relOf(/\/theme$/) ?? 'xl/theme/theme1.xml');
+  const theme = parseTheme(themeXml);
   const stylesXml = (await zip.text(relOf(/\/styles$/) ?? 'xl/styles.xml')) ?? '';
   const { xfs, numFmts, fonts } = parseStyles(stylesXml, theme);
   const strings = await readSharedStrings(zip, relOf(/\/sharedStrings$/) ?? 'xl/sharedStrings.xml');
@@ -272,10 +273,17 @@ export async function readXlsx(bytes) {
     styles,
     load: async (index) => {
       const s = sheets[index];
-      if (!s || s.kind === 'chart' || !s.path || !zip.has(s.path)) return SheetModel.placeholder(s?.name ?? '', s?.kind === 'sheet' ? 'sheet' : 'chart');
-      const model = await readSheet(zip, s, context, styles, mdw, baseFont);
+      if (!s || !s.path || !zip.has(s.path) || (s.kind !== 'sheet' && s.kind !== 'chart')) return SheetModel.placeholder(s?.name ?? '', s?.kind === 'sheet' ? 'sheet' : 'chart');
+      // 차트 시트는 표가 없고 그리기 파트에 차트 하나가 있다.
+      const model = s.kind === 'chart' ? SheetModel.placeholder(s.name, 'chart') : await readSheet(zip, s, context, styles, mdw, baseFont);
+      if (s.kind === 'chart') model.geometry.showGrid = false;
       try {
-        model.drawing = await readPictures(zip, s.path);
+        model.drawing = await readDrawing(zip, s.path, themeXml, (name) => {
+          // 차트가 다른 시트 값을 가리키면 그 시트를 따로 읽는다(같은 시트면 방금 읽은 것).
+          if (name === s.name && s.kind === 'sheet') return model;
+          const ref = sheets.find((x) => x.name === name && x.kind === 'sheet' && x.path && zip.has(x.path));
+          return ref ? readSheet(zip, ref, context, styles, mdw, baseFont) : null;
+        });
       } catch (error) {
         console.warn('[sheet] pictures skipped', error); // 그림을 못 읽어도 표는 보인다.
       }
@@ -534,9 +542,11 @@ function isDelimiter(c) {
 }
 
 // ---- 그림 ----------------------------------------------------------------
-// 시트에 딸린 그리기 파트(xl/drawings/drawingN.xml)에서 그림(pic)만 읽는다. 차트·도형·글상자는 아직 그리지 않는다.
+// 시트에 딸린 그리기 파트(xl/drawings/drawingN.xml)에서 그림(pic)과 차트(graphicFrame → chartN.xml)를 읽는다.
+// 차트는 XML째 넘기고 화면이 자리 크기에 맞춰 SVG로 그린다(web-ppt 차트 렌더러). 도형·글상자는 아직 그리지 않는다.
 // 위치는 셀 기준(열·행 + EMU 오프셋)으로 넘기고, 화면이 그린 행 높이·열 너비로 픽셀 자리를 정한다.
 const EMU_PER_PX = 9525;
+const ITEM = /<(?:\w+:)?(pic|graphicFrame)\b[^>]*>([\s\S]*?)<\/(?:\w+:)?\1>/g;
 const ANCHOR = /<(?:\w+:)?(twoCellAnchor|oneCellAnchor|absoluteAnchor)\b[^>]*>([\s\S]*?)<\/(?:\w+:)?\1>/g;
 const FALLBACK = /<(?:\w+:)?Fallback\b[\s\S]*?<\/(?:\w+:)?Fallback>/g;
 const MAX_PICTURES = 2000;
@@ -561,15 +571,18 @@ function xfrmOf(xml) {
   };
 }
 
-/** { pictures: [{ from, to, pos, size, box, media, crop, rot, flipH, flipV }], media: [{ type, data } | { type, svg }] } 또는 null */
-async function readPictures(zip, sheetPath) {
+/**
+ * { pictures: [{ from, to, pos, size, box, media, crop, rot, flipH, flipV }], media } 또는 null.
+ * media 항목: { type, data } | { type, svg }(그림) | { type: 'chart', xml, theme }(차트)
+ */
+async function readDrawing(zip, sheetPath, themeXml, sheetByName) {
   const drawingPath = (await readRels(zip, sheetPath)).find((r) => /\/drawing$/.test(r.type))?.target;
   if (!drawingPath) return null;
   const xml = await zip.text(drawingPath);
   if (!xml) return null;
-  const rels = new Map((await readRels(zip, drawingPath)).map((r) => [r.id, r.target]));
+  const rels = new Map((await readRels(zip, drawingPath)).map((r) => [r.id, r]));
   const pictures = [];
-  const mediaIndex = new Map();
+  const mediaIndex = new Map(); // 파트 경로 → { index, chart }
   for (const [, kind, raw] of xml.matchAll(ANCHOR)) {
     const body = raw.indexOf('Fallback') >= 0 ? raw.replace(FALLBACK, '') : raw;
     const from = kind === 'absoluteAnchor' ? null : cellAnchor(element(body, 'from')?.body);
@@ -577,42 +590,102 @@ async function readPictures(zip, sheetPath) {
     const ext = kind === 'twoCellAnchor' ? null : emptyTag(body, 'ext');
     const pos = kind === 'absoluteAnchor' ? emptyTag(body, 'pos') : null;
     const size = ext ? [Number(ext.cx) / EMU_PER_PX || 0, Number(ext.cy) / EMU_PER_PX || 0] : null;
-    // 그룹 안 그림은 그룹의 자식 좌표계(chOff·chExt)로 앵커 상자 안 비율 자리를 구한다.
+    // 그룹 안 항목은 그룹의 자식 좌표계(chOff·chExt)로 앵커 상자 안 비율 자리를 구한다.
     const group = /<(?:\w+:)?grpSp\b/.test(body) ? xfrmOf(element(body, 'grpSpPr')?.body ?? '') : null;
-    for (const pic of elements(body, 'pic')) {
+    for (const [, tag, item] of body.matchAll(ITEM)) {
       if (pictures.length >= MAX_PICTURES) break;
-      const nv = emptyTag(pic.body, 'cNvPr');
+      const nv = emptyTag(item, 'cNvPr');
       if (nv && truthy(nv.hidden)) continue;
-      const blip = emptyTag(pic.body, 'blip');
-      const target = blip?.embed && rels.get(blip.embed);
+      let target;
+      let chart = false;
+      if (tag === 'pic') {
+        const blip = emptyTag(item, 'blip');
+        target = blip?.embed && rels.get(blip.embed)?.target;
+      } else {
+        const ref = emptyTag(item, 'chart');
+        const rel = ref?.id && rels.get(ref.id);
+        // chartEx(새 차트 종류: 폭포·트리맵 등)는 다른 형식이라 아직 그리지 않는다.
+        target = rel && /\/chart$/.test(rel.type) ? rel.target : null;
+        chart = true;
+      }
       if (!target) continue;
-      const xf = xfrmOf(element(pic.body, 'spPr')?.body ?? '');
+      const xf = xfrmOf(tag === 'pic' ? element(item, 'spPr')?.body ?? '' : item);
       let box = [0, 0, 1, 1];
       if (group && xf && group.chCx > 0 && group.chCy > 0) {
         const fx = (x) => (x - group.chX) / group.chCx;
         const fy = (y) => (y - group.chY) / group.chCy;
         box = [fx(xf.x), fy(xf.y), fx(xf.x + xf.cx), fy(xf.y + xf.cy)];
       }
-      const src = emptyTag(pic.body, 'srcRect');
+      const src = tag === 'pic' && emptyTag(item, 'srcRect');
       const crop = src ? ['l', 't', 'r', 'b'].map((k) => (Number(src[k]) || 0) / 100000) : null;
-      let media = mediaIndex.get(target);
-      if (media === undefined) {
-        media = mediaIndex.size;
-        mediaIndex.set(target, media);
+      let entry = mediaIndex.get(target);
+      if (!entry) {
+        entry = { index: mediaIndex.size, chart };
+        mediaIndex.set(target, entry);
       }
       pictures.push({
         from, to, size,
         pos: pos ? [Number(pos.x) / EMU_PER_PX || 0, Number(pos.y) / EMU_PER_PX || 0] : null,
-        box, media,
+        box, media: entry.index,
         crop: crop?.some((v) => v !== 0) ? crop : null,
-        rot: xf?.rot ?? 0, flipH: xf?.flipH ?? false, flipV: xf?.flipV ?? false,
+        rot: chart ? 0 : xf?.rot ?? 0, flipH: !chart && (xf?.flipH ?? false), flipV: !chart && (xf?.flipV ?? false),
       });
     }
   }
   if (!pictures.length) return null;
-  // 그림 하나를 못 읽어도 나머지는 보인다.
-  const media = await Promise.all([...mediaIndex.keys()].map((path) => readMedia(zip, path).catch(() => null)));
+  // 하나를 못 읽어도 나머지는 보인다.
+  const media = await Promise.all(
+    [...mediaIndex].map(([path, { chart }]) =>
+      (chart ? readChart(zip, path, themeXml, sheetByName) : readMedia(zip, path)).catch(() => null)),
+  );
   return { pictures: pictures.filter((p) => media[p.media]), media };
+}
+
+async function readChart(zip, path, themeXml, sheetByName) {
+  const text = await zip.text(path);
+  return text ? { type: 'chart', xml: await fillChartCache(text, sheetByName), theme: themeXml } : null;
+}
+
+// 값 캐시(numCache·strCache)가 없는 계열 참조(POI 등 프로그램이 만든 파일). 엑셀은 열 때 셀에서 다시 읽는다.
+const BARE_REF = /<((?:\w+:)?)(numRef|strRef)>\s*<\1f>([^<]*)<\/\1f>\s*<\/\1\2>/g;
+const SHEET_REF = /^(?:'((?:[^']|'')+)'|([^'!]+))!(\$?[A-Za-z]{1,3}\$?\d+)(?::(\$?[A-Za-z]{1,3}\$?\d+))?$/;
+const MAX_CACHE_POINTS = 10000;
+
+/** 캐시 없는 참조를 시트 값으로 채운다. 한 범위(시트!A1:B2)만 읽고, 여러 범위·이름 정의는 그대로 둔다. */
+async function fillChartCache(xml, sheetByName) {
+  if (!sheetByName || !/<(?:\w+:)?(?:numRef|strRef)>\s*<(?:\w+:)?f>[^<]*<\/(?:\w+:)?f>\s*<\/(?:\w+:)?(?:numRef|strRef)>/.test(xml)) return xml;
+  const sheetsRead = new Map();
+  const escape = (t) => t.replace(/[&<>]/g, (c) => (c === '&' ? '&amp;' : c === '<' ? '&lt;' : '&gt;'));
+  const replacements = [];
+  for (const m of xml.matchAll(BARE_REF)) {
+    const [all, prefix, kind, formula] = m;
+    const ref = SHEET_REF.exec(unescapeXml(formula).trim());
+    if (!ref) continue;
+    const name = ref[1]?.replace(/''/g, "'") ?? ref[2];
+    if (!sheetsRead.has(name)) sheetsRead.set(name, Promise.resolve(sheetByName(name)).catch(() => null));
+    const model = await sheetsRead.get(name);
+    if (!model) continue;
+    const [r1, c1, r2, c2] = decodeRange(ref[4] ? `${ref[3]}:${ref[4]}` : ref[3]);
+    const count = (r2 - r1 + 1) * (c2 - c1 + 1);
+    if (!(count > 0) || count > MAX_CACHE_POINTS) continue;
+    let pts = '';
+    let i = 0;
+    for (let r = r1; r <= r2; r++) {
+      for (let c = c1; c <= c2; c++, i++) {
+        const v = model.cellValue(r, c);
+        if (!v) continue;
+        if (kind === 'numRef') {
+          if (Number.isFinite(v.num)) pts += `<${prefix}pt idx="${i}"><${prefix}v>${v.num}</${prefix}v></${prefix}pt>`;
+        } else if (v.text) pts += `<${prefix}pt idx="${i}"><${prefix}v>${escape(v.text)}</${prefix}v></${prefix}pt>`;
+      }
+    }
+    const cache = kind === 'numRef' ? 'numCache' : 'strCache';
+    const head = kind === 'numRef' ? `<${prefix}formatCode>General</${prefix}formatCode>` : '';
+    replacements.push([m.index, all.length, all.replace(`</${prefix}f>`, `</${prefix}f><${prefix}${cache}>${head}<${prefix}ptCount val="${count}"/>${pts}</${prefix}${cache}>`)]);
+  }
+  let out = xml;
+  for (const [at, length, text] of replacements.reverse()) out = out.slice(0, at) + text + out.slice(at + length);
+  return out;
 }
 
 async function readMedia(zip, path) {

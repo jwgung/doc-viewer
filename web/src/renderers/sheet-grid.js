@@ -136,10 +136,32 @@ export class SheetGrid {
     return new Promise((resolve) => requestAnimationFrame(() => resolve()));
   }
 
-  /** 그림 바이트를 주소(blob URL)로 바꾼다. 앞 시트의 주소는 놓아준다. */
+  /**
+   * 그림 바이트를 주소(blob URL)로 바꾼다. 앞 시트의 주소는 놓아준다.
+   * 차트는 놓일 크기를 알아야 그리므로 여기서는 XML만 들고 있다가 buildPictures에서 그린다(chartUrl).
+   */
   setMedia(media = []) {
     for (const url of this.mediaUrls ?? []) if (url) URL.revokeObjectURL(url);
-    this.mediaUrls = media.map((m) => (m ? URL.createObjectURL(new Blob([m.svg ?? m.data], { type: m.type })) : null));
+    for (const url of this.chartUrls?.values() ?? []) if (url) URL.revokeObjectURL(url);
+    this.media = media;
+    this.chartUrls = new Map();
+    this.mediaUrls = media.map((m) => (m && m.type !== 'chart' ? URL.createObjectURL(new Blob([m.svg ?? m.data], { type: m.type })) : null));
+  }
+
+  /** 차트 하나를 처음 놓인 크기로 SVG로 그려 주소를 만든다(그림마다 한 번). 그리기 함수가 없거나 실패하면 null */
+  chartUrl(i, p) {
+    if (this.chartUrls.has(i)) return this.chartUrls.get(i);
+    let url = null;
+    const m = this.media[p.media];
+    const r = this.pictureRect(p);
+    try {
+      const svg = this.renderChart && r.w > 0 && r.h > 0 ? this.renderChart(m.xml, m.theme, r.w, r.h) : null;
+      if (svg) url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
+    } catch (error) {
+      console.warn('[sheet] chart skipped', error);
+    }
+    this.chartUrls.set(i, url);
+    return url;
   }
 
   indexSparse() {
@@ -260,7 +282,7 @@ export class SheetGrid {
       const layer = div('sg-pics');
       const items = [];
       pictures.forEach((p, i) => {
-        const url = this.mediaUrls[p.media];
+        const url = this.media[p.media]?.type === 'chart' ? this.chartUrl(i, p) : this.mediaUrls[p.media];
         if (!url) return;
         const el = div('sg-pic');
         const img = document.createElement('img');

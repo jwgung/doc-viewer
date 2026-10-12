@@ -335,7 +335,10 @@ function group3(intPart: string): string {
 }
 
 function applySection(value: number, sec: string): string {
-  const s = sec.replace(/\[[^\]]*\]/g, '');
+  // [doc-viewer] 공백으로 자릿수를 나누는 형식(핀란드·프랑스 등: "#\ ##0")은 쉼표 묶기로 읽고 묶음 기호만 공백으로 바꾼다.
+  // 원본은 '\' 앞에서 숫자 자리 패턴을 끊어 "3750 ##0"처럼 나왔다.
+  const spaced = /[#0?]\\ [#0?]/.test(sec);
+  const s = (spaced ? sec.replace(/\\ (?=[#0?])/g, ',') : sec).replace(/\[[^\]]*\]/g, '');
   let v = value;
   const neg = v < 0;
   v = Math.abs(v);
@@ -368,7 +371,7 @@ function applySection(value: number, sec: string): string {
   const minInt = (intPatt.match(/0/g) ?? []).length;
   if (ip.length < minInt) ip = ip.padStart(minInt, '0');
   if (minInt === 0 && ip === '0' && dp) ip = '';
-  if (grouped) ip = group3(ip);
+  if (grouped) ip = spaced ? group3(ip).replace(/,/g, '\u00a0') : group3(ip);
   return (neg ? '-' : '') + pre + ip + (dp ? '.' + dp : '') + suf;
 }
 
