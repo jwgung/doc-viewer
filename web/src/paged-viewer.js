@@ -26,7 +26,7 @@ const MIN_SHRINK = 0.5;
 // 용지 맞춤으로 한 화면에 줄이면 읽을 수 없으므로 너비에 맞추고 세로로 스크롤한다.
 const LONG_PAGE_RATIO = 2;
 // 이 요소 위에서 시작한 터치는 쪽 넘기기 제스처로 보지 않는다.
-const UI_SELECTOR = '.scrubber, .page-indicator, .sheet-backdrop';
+const UI_SELECTOR = '.scrubber, .page-indicator, .notes-panel, .sheet-backdrop';
 
 /**
  * 연속 스크롤에서 지금 쪽: 화면에 가장 많이 보이는 쪽(같으면 위쪽). 가로 슬라이드처럼 짧은 쪽이 여러 장 보일 때
@@ -61,6 +61,8 @@ export class PagedViewer {
     this.current = 0;
     /** 연속 스크롤에서 쪽 칸을 줄인 비율(1이면 처음 크기) */
     this.shrink = 1;
+    /** 화면 아래를 가린 높이(발표자 노트 칸). 쪽을 맞출 때 그만큼 뺀다. */
+    this.bottomInset = 0;
     /** 쪽 번호 → 그 쪽을 그리는 중인(또는 다 그린) 약속 */
     this.rendering = new Map();
     // 쪽 번호는 늘 보여주고, 누르면 쪽 번호를 입력해 바로 이동한다.
@@ -97,6 +99,19 @@ export class PagedViewer {
     this.fit = fit;
     this.setShrink(1);
     return this.render();
+  }
+
+  /** 화면 아래를 가린 높이가 바뀌었다. 화면 높이에 맞추는 배치(한 쪽씩·두 쪽씩, 용지 맞춤)만 다시 맞춘다. */
+  setBottomInset(height) {
+    if (height === this.bottomInset) return;
+    this.bottomInset = height;
+    // 아직 처음 그리기 전이면(노트 칸을 켠 채 열 때) 처음 그릴 때 이 높이로 맞춘다.
+    if (this.container.dataset.mode && (this.mode !== 'scroll' || this.fit === 'page')) return this.render();
+  }
+
+  /** 쪽을 맞출 화면 높이 */
+  availableHeight() {
+    return innerHeight - 16 - this.bottomInset;
   }
 
   /** 쪽 번호를 입력받아 그 쪽으로 이동한다. */
@@ -170,7 +185,7 @@ export class PagedViewer {
   }
 
   /** 연속 스크롤의 쪽 자리 크기. 용지 맞춤이면 쪽 하나가 화면 높이 안에 들어오게 너비를 줄인다(아주 긴 쪽은 빼고). */
-  sizeScrollPage(el, { width, height }, fitWidth = this.container.clientWidth - 16, fitHeight = innerHeight - 16) {
+  sizeScrollPage(el, { width, height }, fitWidth = this.container.clientWidth - 16, fitHeight = this.availableHeight()) {
     el.style.aspectRatio = `${width} / ${height}`;
     // 줄인 비율(--shrink)은 CSS 변수로 곱해, 오므리는 동안 쪽마다 크기를 다시 매기지 않는다.
     if (this.fit === 'page' && height / width <= LONG_PAGE_RATIO)
@@ -315,7 +330,7 @@ export class PagedViewer {
   /** 연속 스크롤의 쪽 자리를 doc.count까지 붙인다(처음에, 그리고 쪽이 늘 때마다). */
   addSlots() {
     const fitWidth = this.container.clientWidth - 16;
-    const fitHeight = innerHeight - 16;
+    const fitHeight = this.availableHeight();
     for (let index = this.slots.length; index < this.doc.count; index++) {
       const el = document.createElement('div');
       el.className = 'page';
@@ -336,7 +351,7 @@ export class PagedViewer {
     stage.className = 'flip-stage';
     const gap = 8;
     const availWidth = (this.container.clientWidth - 16 - gap * (step - 1)) / step;
-    const availHeight = innerHeight - 16;
+    const availHeight = this.availableHeight();
     const sizes = indexes.map((index) => this.doc.measure?.(index) ?? this.doc.sizes[index]);
     const fitWidth = this.fit === 'width' || sizes.some(({ width, height }) => height / width > LONG_PAGE_RATIO);
     this.container.dataset.fit = fitWidth ? 'width' : this.fit; // 긴 쪽이면 세로 스크롤을 연다(CSS)

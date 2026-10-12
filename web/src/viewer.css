@@ -60,7 +60,8 @@ body {
 }
 
 #doc {
-  padding: 8px 0 24px;
+  /* 발표자 노트 칸이 있으면 마지막 쪽까지 칸 위로 올려 볼 수 있게 그만큼 띄운다. */
+  padding: 8px 0 calc(24px + var(--notes-height, 0px));
 }
 
 /* 고정 배치 문서(hwp·ppt)의 쪽. 크기는 렌더러가 aspect-ratio로 잡아 두고 화면에 들어올 때 그린다. */
@@ -102,7 +103,7 @@ body {
 #doc[data-mode='page'],
 #doc[data-mode='spread'] {
   padding: 0;
-  height: 100vh;
+  height: calc(100vh - var(--notes-height, 0px));
   overflow: hidden;
 }
 
@@ -136,7 +137,7 @@ body {
 
 .page-indicator {
   position: fixed;
-  bottom: 12px;
+  bottom: calc(12px + var(--notes-height, 0px));
   left: 50%;
   transform: translateX(-50%);
   padding: 6px 14px;
@@ -304,6 +305,43 @@ body {
   background: var(--accent);
 }
 
+/* 발표자 노트 칸: 화면 아래에 높이를 정해 붙이고, 노트가 길면 칸 안에서 스크롤한다. */
+.notes-panel {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 4;
+  box-sizing: border-box;
+  height: min(30vh, 240px);
+  padding: 10px 16px 12px;
+  overflow-y: auto;
+  color: var(--text);
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  overscroll-behavior: contain;
+}
+
+.notes-panel h2 {
+  margin: 4px 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+
+.notes-panel p {
+  margin: 0 0 12px;
+  font-size: 15px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.notes-panel p.empty {
+  color: var(--text-2);
+}
+
 /* 읽기 모드: 문서만 보이게 쪽 번호와 빠른 이동 손잡이를 숨긴다. */
 body.reading .page-indicator,
 body.reading .scrubber {
@@ -315,7 +353,7 @@ body.reading .scrubber {
   position: fixed;
   top: 8px;
   right: 0;
-  bottom: 60px;
+  bottom: calc(60px + var(--notes-height, 0px));
   z-index: 5;
   width: 28px;
   touch-action: none;

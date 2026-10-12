@@ -2010,6 +2010,38 @@ diff -ruN a/packages/core/src/ppt/records.ts b/packages/core/src/ppt/records.ts
    /** PowerPoint 97 之后追加的能力都塞在 ProgTags 下的二进制扩展块里 */
    ProgTags: 0x1388,
    ProgBinaryTag: 0x138a,
+diff -ruN a/packages/core/src/pptx/parser.ts b/packages/core/src/pptx/parser.ts
+--- a/packages/core/src/pptx/parser.ts
++++ b/packages/core/src/pptx/parser.ts
+@@ -1286,6 +1286,19 @@
+   return out.join('').replace(/\n+/g, '\n').trim();
+ }
+ 
++// [doc-viewer] 메모 페이지의 쪽 번호·머리글·바닥글·날짜·슬라이드 그림 자리표시자는 메모 글이 아니다.
++// 메모 글만 남긴다(쪽 번호 '1'이 메모 끝에 붙어 나왔다).
++const NOTES_CHROME = new Set(['sldNum', 'hdr', 'ftr', 'dt', 'sldImg']);
++
++function notesText(spTree: Element | null): string {
++  if (!spTree) return '';
++  return kids(spTree, 'sp')
++    .filter((sp) => !NOTES_CHROME.has(attr(walk(sp, 'nvSpPr', 'nvPr', 'ph'), 'type') ?? ''))
++    .map((sp) => extractText(sp))
++    .filter(Boolean)
++    .join('\n');
++}
++
+ // ---------------- 批注 ----------------
+ 
+ interface AuthorInfo {
+@@ -1612,7 +1625,7 @@
+   const slideH = emu(numAttr(sz, 'cy') ?? 6858000);
+ 
+   const notesPath = relByType(slideRels, '/notesSlide');
+-  const notes = notesPath ? extractText(walk(pkg.xml(notesPath), 'cSld', 'spTree')) : '';
++  const notes = notesPath ? notesText(walk(pkg.xml(notesPath), 'cSld', 'spTree')) : '';
+   const comments = parseSlideComments(pkg, slideRels, authors);
+ 
+   return {
 diff -ruN a/packages/core/src/xml-lite.ts b/packages/core/src/xml-lite.ts
 --- a/packages/core/src/xml-lite.ts
 +++ b/packages/core/src/xml-lite.ts
