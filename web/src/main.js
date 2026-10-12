@@ -1,7 +1,8 @@
 // 앱의 WebView가 viewer.html을 먼저 띄워 두고, 문서가 준비되면 window.viewer.open({...})으로 연다.
 // (WebView 준비와 파일 준비를 겹쳐 여는 시간을 줄인다. 검증 도구는 viewer.html?fmt=&src=로 바로 연다.)
 // 형식에 맞는 렌더러만 불러와 그리고, 측정값·읽던 위치·화면 탭은 앱이 주입한 AndroidViewer 통로로 넘긴다.
-// 앱은 window.viewer.setMode('scroll' | 'page' | 'spread'), applyFit('width' | 'page'), setChrome(보임 여부)를 부른다.
+// 앱은 window.viewer.setMode('scroll' | 'page' | 'spread'), applyFit('width' | 'page'), setChrome(보임 여부),
+// setNotes(발표자 노트 보임 여부)를 부른다.
 import { PagedViewer } from './paged-viewer.js';
 import { openSheet } from './sheet.js';
 import { t } from './strings.js';
@@ -41,6 +42,10 @@ let searchProvider = null;
 let search = null;
 /** 목차 항목을 돌려주는 함수. 렌더러가 ctx.setOutline으로 주거나, 쪽 없는 문서는 그려진 제목으로 만든다. */
 let outlineLoader = null;
+/** 쪽 번호 → 그 쪽의 발표자 노트 글자. 노트가 있는 발표 자료만 ctx.setNotes로 준다. */
+let notesOf = null;
+/** 발표자 노트 칸(켰을 때만 있다) */
+let notesPanel = null;
 
 window.viewer = {
   open: (options) => open(options),
@@ -48,6 +53,8 @@ window.viewer = {
   applyFit: (next) => viewer?.applyFit(next),
   /** 읽기 모드: 앱이 상단바를 숨기면 쪽 번호·빠른 이동 손잡이도 숨긴다. */
   setChrome: (visible) => document.body.classList.toggle('reading', !visible),
+  /** 발표자 노트 칸을 켜고 끈다(앱의 '더 보기' → 발표자 노트). 노트가 없는 문서면 아무것도 하지 않는다. */
+  setNotes: (visible) => setNotes(visible),
   /** 문서 안 검색 막대를 연다(앱 상단바의 검색 버튼). */
   openSearch: async () => {
     if (!search) {
@@ -89,6 +96,45 @@ window.viewer = {
   },
 };
 
+/**
+ * 발표자 노트 칸: 화면 아래에 높이를 정해 두고 붙인다. 쪽 뷰어는 그만큼 위에서 쪽을 맞추고(setBottomInset),
+ * 쪽 번호·빠른 이동 손잡이는 칸 위로 올린다(CSS --notes-height).
+ */
+function setNotes(visible) {
+  if (!notesOf || !viewer || visible === Boolean(notesPanel)) return;
+  if (visible) {
+    notesPanel = document.createElement('aside');
+    notesPanel.className = 'notes-panel';
+    document.body.appendChild(notesPanel);
+    showNotes();
+  } else {
+    notesPanel.remove();
+    notesPanel = null;
+  }
+  const height = notesPanel?.offsetHeight ?? 0;
+  document.documentElement.style.setProperty('--notes-height', `${height}px`);
+  viewer.setBottomInset(height);
+}
+
+/** 지금 보는 쪽(두 쪽씩이면 두 쪽)의 노트를 칸에 채운다. */
+function showNotes() {
+  if (!notesPanel || !viewer) return;
+  const first = viewer.current;
+  const indexes = viewer.mode === 'spread' ? [first, first + 1].filter((i) => i < viewer.doc.count) : [first];
+  notesPanel.replaceChildren(
+    ...indexes.flatMap((index) => {
+      const label = document.createElement('h2');
+      label.textContent = t.notesTitle(index + 1);
+      const body = document.createElement('p');
+      const text = notesOf(index)?.trim();
+      body.textContent = text || t.notesEmpty;
+      body.classList.toggle('empty', !text);
+      return [label, body];
+    }),
+  );
+  notesPanel.scrollTop = 0;
+}
+
 function report(event, data = {}) {
   const payload = JSON.stringify({ event, fmt, ...data });
   if (window.AndroidViewer) window.AndroidViewer.report(payload);
@@ -110,7 +156,7 @@ function reportPosition(position) {
   positionTimer = setTimeout(() => report('position', position), 500);
 }
 
-async function open({ fmt: format, src, mode = 'scroll', fit, page = 0, scroll = 0 }) {
+async function open({ fmt: format, src, mode = 'scroll', fit, page = 0, scroll = 0, notes = false }) {
   if (opened) return;
   opened = true;
   fmt = format;
@@ -131,7 +177,10 @@ async function open({ fmt: format, src, mode = 'scroll', fit, page = 0, scroll =
       viewer = paged;
       // 이어보기: 렌더러가 첫 화면을 그리기 전에 시작 쪽을 정한다.
       paged.current = Math.max(0, Math.min(page, paged.doc.count - 1));
-      paged.onPageChange = (index) => reportPosition({ page: index });
+      paged.onPageChange = (index) => {
+        reportPosition({ page: index });
+        showNotes();
+      };
     },
     askPassword(incorrect) {
       report('needsPassword', { incorrect });
@@ -148,6 +197,12 @@ async function open({ fmt: format, src, mode = 'scroll', fit, page = 0, scroll =
     setOutline(loader) {
       outlineLoader = loader;
       report('outline');
+    },
+    /** 발표자 노트가 있는 발표 자료가 쪽별 노트를 주는 함수를 준다. 앱은 이 알림을 받으면 '발표자 노트' 메뉴를 보인다. */
+    setNotes(source) {
+      notesOf = source;
+      report('notes');
+      if (notes) setNotes(true);
     },
   };
   try {
@@ -272,7 +327,7 @@ function bindChromeToggle() {
       const touch = e.touches.length === 1 ? e.touches[0] : null;
       // 화면 위 부품(검색 막대·시트·입력칸·버튼)을 누른 것은 문서 탭이 아니다.
       const onUi =
-        e.target instanceof Element && e.target.closest('.scrubber, .page-indicator, .sheet-backdrop, .sheet-tabs, .search-bar, a, button, input, textarea, select');
+        e.target instanceof Element && e.target.closest('.scrubber, .page-indicator, .notes-panel, .sheet-backdrop, .sheet-tabs, .search-bar, a, button, input, textarea, select');
       start = touch && !onUi ? { x: touch.clientX, y: touch.clientY, t: performance.now() } : null;
     },
     { passive: true },

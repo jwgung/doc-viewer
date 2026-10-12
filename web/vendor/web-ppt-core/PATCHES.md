@@ -29,7 +29,7 @@ Android의 `buildWebViewer` 작업은 `web/vendor/`도 입력으로 보므로 �
 ## 업스트림 0.4.5 대비 변경
 
 전체 차이는 [upstream-0.4.5.diff](upstream-0.4.5.diff)에 있다(업스트림 저장소 루트에서 `git apply upstream-0.4.5.diff`).
-고친 곳은 모두 .ppt(PowerPoint 97~2003) 경로인 `src/ppt/`뿐이고 pptx 경로는 건드리지 않았다. 코드에는 `[doc-viewer]` 표시를 달았다.
+고친 곳은 대부분 .ppt(PowerPoint 97~2003) 경로인 `src/ppt/`이고, pptx 경로는 XML 파서(열기 속도)와 발표자 노트만 고쳤다. 코드에는 `[doc-viewer]` 표시를 달았다.
 
 ### 글자 누락
 
@@ -86,6 +86,12 @@ Android의 `buildWebViewer` 작업은 `web/vendor/`도 입력으로 보므로 �
 | `xml-lite`는 `trim()`으로 공백뿐인 글자를 걸러 탭·NBSP만 든 글자 조각(`<a:t>\t</a:t>`)을 버렸다(`DOMParser`는 남긴다). 줄바꿈이 없는 공백 글자는 남긴다. | `xml-lite.ts` `parseXmlLite` |
 
 두 파서 결과가 같은지는 `spike/renderer-eval/corpus`의 ppt·pptx와 시험 문서 332개를 크롬에서 두 파서로 열어 모든 슬라이드 SVG를 비교해 확인했다(같지 않은 1개는 날짜·시각 필드라 같은 파서로 두 번 열어도 달라지는 파일).
+
+### 발표자 노트
+
+| 원인 | 고친 곳 |
+|---|---|
+| pptx 메모 페이지의 글을 모두 이어 붙여, 쪽 번호·머리글·바닥글·날짜 자리표시자 글자(쪽 번호 '1' 등)가 메모 끝에 붙었다. 이 자리표시자 도형은 빼고 메모 글만 남긴다. | `pptx/parser.ts` `notesText` |
 
 ## 검증 방법
 
