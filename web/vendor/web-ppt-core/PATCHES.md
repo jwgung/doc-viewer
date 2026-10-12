@@ -68,6 +68,7 @@ Android의 `buildWebViewer` 작업은 `web/vendor/`도 입력으로 보므로 �
 |---|---|
 | 도형의 그림 번호(pib)는 BStore의 BSE 순번인데 Pictures 스트림의 n번째 그림으로 읽었다. 지운 그림의 빈 BSE가 남은 파일에서 번호가 밀려 다른 그림(다른 OLE 미리보기 등)이 나왔다. BSE의 `foDelay` 위치에서 읽는다. | `escher.ts` `blipsFromStore`, `parser.ts` `parsePpt` |
 | DIB 그림을 BMP 파일 머리 없이 `image/bmp`로 넘겨 브라우저가 그리지 못했다. 14바이트 머리를 붙인다. | `escher.ts` `dibToBmp` |
+| EMF 글자(`EXTTEXTOUT`)의 글자 간격(dx)에 `exScale`을 곱했다. `exScale`은 페이지 단위를 0.01mm로 바꾸는 참고값(GM_COMPATIBLE에서 대개 25~30)이고 dx는 이미 논리 단위라, 글자 폭이 수십 배로 늘어 `textLength`로 눌린 검은 덩어리가 됐다(차트·표 미리보기, OLE 개체 이름 등). 곱하지 않는다. 시험 문서의 pptx·xlsx·docx EMF 중 해당 글자가 있는 12개를 전후 비교해 모두 원래 글자로 나옴을 확인. | `image/emf.ts` `extTextOut` |
 
 ### 열지 못하던 파일
 
@@ -98,6 +99,7 @@ Android의 `buildWebViewer` 작업은 `web/vendor/`도 입력으로 보므로 �
 | 원인 | 고친 곳 |
 |---|---|
 | 엑셀 그림 중 EMF·WMF를 SVG로 바꾸려고 메타파일 변환기만 따로 불러온다. 패키지 진입점(`.`)은 렌더러 전체를 불러온다. 변환기만 내보내는 `./image` 진입점을 더한다. | `package.json` `exports` |
+| xls 그림은 ppt와 같은 OfficeArt(Escher) 구조라 속성 표(`parseOpt`)·그림 저장소(`blipsFromStore`) 읽기를 함께 쓴다. `./escher` 진입점을 더한다. | `package.json` `exports` |
 
 ## 검증 방법
 

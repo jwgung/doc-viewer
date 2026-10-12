@@ -23,6 +23,7 @@
     "./worker": "./src/worker.ts",
     "./geometry": "./src/geometry/index.ts",
     "./image": "./src/image/index.ts",
+    "./escher": "./src/ppt/escher.ts",
     "./package.json": "./package.json"
   },
   "dependencies": {

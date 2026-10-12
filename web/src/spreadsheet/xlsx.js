@@ -7,6 +7,7 @@ import { BLANK, BOOL, BookContext, ERR, NUM, STR, SheetBuilder, SheetModel } fro
 import {
   DEFAULT_PALETTE, DEFAULT_THEME, StyleTable, applyTint, defaultColWidthPx, maxDigitWidth, paletteColor, patternFill, widthToPx,
 } from './styles.js';
+import { toMedia } from './media.js';
 import { isZip, openZip } from './zip.js';
 
 // SheetJS가 표에 없는 기본 서식 번호에 쓰는 형식(SSFImplicit)과 같게 맞춘다.
@@ -538,13 +539,6 @@ function isDelimiter(c) {
 const EMU_PER_PX = 9525;
 const ANCHOR = /<(?:\w+:)?(twoCellAnchor|oneCellAnchor|absoluteAnchor)\b[^>]*>([\s\S]*?)<\/(?:\w+:)?\1>/g;
 const FALLBACK = /<(?:\w+:)?Fallback\b[\s\S]*?<\/(?:\w+:)?Fallback>/g;
-const IMAGE_TYPES = [
-  [[0x89, 0x50, 0x4e, 0x47], 'image/png'],
-  [[0xff, 0xd8, 0xff], 'image/jpeg'],
-  [[0x47, 0x49, 0x46, 0x38], 'image/gif'],
-  [[0x42, 0x4d], 'image/bmp'],
-  [[0x52, 0x49, 0x46, 0x46], 'image/webp'],
-];
 const MAX_PICTURES = 2000;
 
 function cellAnchor(xml) {
@@ -621,13 +615,6 @@ async function readPictures(zip, sheetPath) {
   return { pictures: pictures.filter((p) => media[p.media]), media };
 }
 
-/** 그림 바이트를 형식에 맞게 넘긴다. EMF·WMF는 WebView가 못 그려 SVG로 바꾼다(필요할 때만 변환기를 불러온다). */
 async function readMedia(zip, path) {
-  const data = await zip.binary(path);
-  if (!data) return null;
-  for (const [magic, type] of IMAGE_TYPES) if (magic.every((b, i) => data[i] === b)) return { type, data };
-  if (/\.svg$/i.test(path)) return { type: 'image/svg+xml', data };
-  const { metafileToSvg } = await import('@web-ppt/core/image');
-  const svg = metafileToSvg(data);
-  return svg ? { type: 'image/svg+xml', svg } : null;
+  return toMedia(await zip.binary(path), { svgFile: /\.svg$/i.test(path) });
 }

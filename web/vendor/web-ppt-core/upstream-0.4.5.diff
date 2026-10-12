@@ -1,3 +1,26 @@
+diff -ruN a/packages/core/src/image/emf.ts b/packages/core/src/image/emf.ts
+--- a/packages/core/src/image/emf.ts
++++ b/packages/core/src/image/emf.ts
+@@ -368,7 +368,7 @@
+ function extTextOut(g: Gfx, r: Reader, bytes: Uint8Array, base: number, size: number, wide: boolean): void {
+   r.skip(16); // Bounds
+   r.u32();    // iGraphicsMode
+-  const exScale = r.f32();
++  r.f32();    // exScale
+   r.f32();    // eyScale
+   const ref = r.ptL();
+   const chars = r.u32();
+@@ -392,8 +392,8 @@
+     const dr = new Reader(bytes, dxAt, dxAt + chars * 4);
+     dx = [];
+     for (let i = 0; i < chars; i++) dx.push(dr.i32());
+-    // exScale 用于 ETO_PDY 之外的缩放场景，异常值忽略
+-    if (exScale > 0 && exScale !== 1 && Number.isFinite(exScale)) dx = dx.map((v) => v * exScale);
++    // [doc-viewer] dx는 이미 논리 단위다. exScale은 페이지 단위 → 0.01mm 환산값(GM_COMPATIBLE 참고값)이라 곱하지 않는다.
++    // 곱하면 글자 폭이 수십 배로 늘어 textLength로 눌린 검은 덩어리가 된다.
+   }
+   // ETO_OPAQUE = 0x0002
+   const opaque = (options & 0x0002) !== 0 ? rect : null;
 diff -ruN a/packages/core/src/ppt/cfb.ts b/packages/core/src/ppt/cfb.ts
 --- a/packages/core/src/ppt/cfb.ts
 +++ b/packages/core/src/ppt/cfb.ts

@@ -225,9 +225,16 @@ export class SheetGrid {
     return { rowTop, colLeft };
   }
 
-  /** 그림의 시트 좌표 상자. 셀 앵커는 그 칸의 왼쪽·위에서 오프셋(px)만큼 떨어진 자리다. */
+  /**
+   * 그림의 시트 좌표 상자. 셀 앵커는 그 칸의 왼쪽·위에서 오프셋만큼 떨어진 자리다.
+   * 오프셋은 px(xlsx)이거나, frac이면 그 칸 너비·높이에 대한 비율(xls)이다.
+   */
   pictureRect(p, rowTop = this.geo.rowTop, colLeft = this.geo.colLeft, nRows = this.geo.nRows, nCols = this.geo.nCols) {
-    const at = (a) => [colLeft[Math.min(a[0], nCols)] + a[1], rowTop[Math.min(a[2], nRows)] + a[3]];
+    const along = (edges, n, i, offset) => {
+      const k = Math.min(i, n);
+      return edges[k] + (p.frac ? offset * (k < n ? edges[k + 1] - edges[k] : 0) : offset);
+    };
+    const at = (a) => [along(colLeft, nCols, a[0], a[1]), along(rowTop, nRows, a[2], a[3])];
     const [x0, y0] = p.from ? at(p.from) : [1 + (p.pos?.[0] ?? 0), 1 + (p.pos?.[1] ?? 0)];
     const [x1, y1] = p.to ? at(p.to) : [x0 + (p.size?.[0] ?? 0), y0 + (p.size?.[1] ?? 0)];
     const [f0, g0, f1, g1] = p.box;
