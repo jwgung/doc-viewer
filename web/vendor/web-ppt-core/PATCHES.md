@@ -100,6 +100,14 @@ Android의 `buildWebViewer` 작업은 `web/vendor/`도 입력으로 보므로 �
 |---|---|
 | 엑셀 그림 중 EMF·WMF를 SVG로 바꾸려고 메타파일 변환기만 따로 불러온다. 패키지 진입점(`.`)은 렌더러 전체를 불러온다. 변환기만 내보내는 `./image` 진입점을 더한다. | `package.json` `exports` |
 | xls 그림은 ppt와 같은 OfficeArt(Escher) 구조라 속성 표(`parseOpt`)·그림 저장소(`blipsFromStore`) 읽기를 함께 쓴다. `./escher` 진입점을 더한다. | `package.json` `exports` |
+| 엑셀 시트 차트는 pptx 차트와 같은 DrawingML이라 차트 해석·SVG 그리기를 함께 쓴다. chart XML·테마 XML을 받아 독립 SVG를 돌려주는 `chartToSvg`(시트에는 마스터가 없어 clrMap은 엑셀 기본값)와 `./chart` 진입점을 더한다. | 새 파일 `chart-svg.ts`, `package.json` `exports` |
+
+### 차트
+
+| 원인 | 고친 곳 |
+|---|---|
+| 이름 없는 계열의 기본 이름이 중국어('系列 1')였다. 표시 언어가 한국어면 '계열1', 아니면 'Series1'(오피스와 같음). | `chart/model.ts` `parseSer` |
+| 공백으로 자릿수를 나누는 숫자 형식(`"$"#\ ##0`, 핀란드·프랑스 등)에서 `\` 앞에서 숫자 자리 패턴이 끊겨 '$3750 ##0'으로 나왔다. 쉼표 묶기로 읽고 묶음 기호를 공백으로 바꾼다('$3 750'). | `chart/util.ts` `applySection` |
 
 ## 검증 방법
 

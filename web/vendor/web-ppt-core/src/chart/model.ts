@@ -168,6 +168,9 @@ export const labelVisible = (l: DLblSpec): boolean =>
 
 // ---------- 系列 ----------
 
+// [doc-viewer] 이름 없는 계열의 기본 이름: 원본은 중국어('系列 1')였다. 오피스처럼 표시 언어를 따른다.
+const SERIES_LABEL = typeof navigator !== 'undefined' && /^ko/i.test(navigator.language ?? '') ? '계열' : 'Series';
+
 export interface MarkerSpec {
   symbol: string;
   size: number;
@@ -238,7 +241,7 @@ function parseSer(ser: Element, kind: PlotKind, ctx: ColorCtx, autoIdx: number, 
   return {
     idx: numChild(ser, 'idx') ?? autoIdx,
     order: numChild(ser, 'order') ?? autoIdx,
-    name: richText(kid(ser, 'tx')) || `系列 ${autoIdx + 1}`,
+    name: richText(kid(ser, 'tx')) || `${SERIES_LABEL}${autoIdx + 1}`,
     cats,
     vals,
     xs,

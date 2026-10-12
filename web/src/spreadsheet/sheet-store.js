@@ -374,6 +374,26 @@ export class SheetModel {
     return { start, count, offsets, cols: colA.slice(i0, i1), xfs: xfA.slice(i0, i1), kinds: kindA.slice(i0, i1), texts, colors };
   }
 
+  /** 칸 하나의 값 { num, text }(없으면 null). 차트 캐시 채우기처럼 칸 몇 개만 볼 때 쓴다. */
+  cellValue(row, col) {
+    if (row < 0 || row >= this.rowCount) return null;
+    const { colA, kindA, valA, xfA } = this.cells;
+    const ctx = this.context;
+    for (let i = this.rowStart[row]; i < this.rowStart[row + 1]; i++) {
+      if (colA[i] !== col) continue;
+      const kind = kindA[i];
+      const val = valA[i];
+      if (kind === NUM) return { num: val, text: ctx.formatNumber(val, xfA[i]) };
+      if (kind === BOOL) return { num: val, text: val ? 'TRUE' : 'FALSE' };
+      if (kind === STR || kind === ERR || kind === PRENUM) {
+        const text = ctx.strings[val] ?? '';
+        return { num: kind === PRENUM ? Number(text.replace(/[^\d.eE+-]/g, '')) : NaN, text };
+      }
+      return null;
+    }
+    return null;
+  }
+
   /** 행 묶음에서 쓰인 서식 번호(중복 없음) */
   usedXfs(block) {
     const set = new Set();
