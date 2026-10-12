@@ -2,6 +2,8 @@
 //   scroll: 쪽을 세로로 이어 붙이고 화면 근처의 쪽만 그린다.
 //   page:   한 쪽을 화면에 맞춰 보여주고 스와이프나 좌우 탭으로 넘긴다.
 //   spread: 두 쪽을 나란히 보여주고 두 쪽씩 넘긴다.
+// 연속 스크롤은 처음 크기보다 작게 오므려(줄이기) 여러 쪽을 한 화면에 볼 수 있다. WebView 확대는 쪽이 화면 너비에
+// 맞은 처음 크기 밑으로 줄지 않으므로, 처음 크기에서 더 오므리면 쪽 칸을 직접 줄여 한 줄에 여러 쪽을 놓는다.
 // 맞춤(fit)은 두 가지다.
 //   width: 쪽 너비를 화면 너비에 맞춘다(화면 가득). 쪽이 화면보다 길면 세로로 스크롤한다.
 //   page:  쪽 전체가 한 화면에 들어오게 줄인다(용지 맞춤).
@@ -18,6 +20,8 @@ const KEEP_RENDERED = 8;
 const SWIPE_MIN_PX = 50;
 const EDGE_TAP_RATIO = 0.3;
 const THUMB_PX = 44;
+// 연속 스크롤에서 줄일 수 있는 가장 작은 비율(한 줄에 두 쪽)
+const MIN_SHRINK = 0.5;
 // 높이가 너비의 이 배를 넘는 쪽은 용지 한 장이 아니라 쪽 나누기 없이 길게 이어진 문서(doc·docx)다.
 // 용지 맞춤으로 한 화면에 줄이면 읽을 수 없으므로 너비에 맞추고 세로로 스크롤한다.
 const LONG_PAGE_RATIO = 2;
@@ -55,6 +59,8 @@ export class PagedViewer {
     this.fit = fit ?? (mode === 'scroll' ? 'width' : 'page');
     this.onPageChange = onPageChange;
     this.current = 0;
+    /** 연속 스크롤에서 쪽 칸을 줄인 비율(1이면 처음 크기) */
+    this.shrink = 1;
     /** 쪽 번호 → 그 쪽을 그리는 중인(또는 다 그린) 약속 */
     this.rendering = new Map();
     // 쪽 번호는 늘 보여주고, 누르면 쪽 번호를 입력해 바로 이동한다.
@@ -82,12 +88,14 @@ export class PagedViewer {
   setMode(mode) {
     if (mode === this.mode) return;
     this.mode = mode;
+    this.setShrink(1);
     return this.render();
   }
 
   /** 맞춤을 적용한다. 같은 맞춤이어도 다시 배치해, 앱이 확대 비율을 되돌린 뒤 원래 모양으로 돌아오게 한다. */
   applyFit(fit) {
     this.fit = fit;
+    this.setShrink(1);
     return this.render();
   }
 
@@ -164,8 +172,45 @@ export class PagedViewer {
   /** 연속 스크롤의 쪽 자리 크기. 용지 맞춤이면 쪽 하나가 화면 높이 안에 들어오게 너비를 줄인다(아주 긴 쪽은 빼고). */
   sizeScrollPage(el, { width, height }, fitWidth = this.container.clientWidth - 16, fitHeight = innerHeight - 16) {
     el.style.aspectRatio = `${width} / ${height}`;
-    if (this.fit === 'page' && height / width <= LONG_PAGE_RATIO) el.style.width = `${Math.floor(Math.min(fitWidth, (fitHeight * width) / height))}px`;
+    // 줄인 비율(--shrink)은 CSS 변수로 곱해, 오므리는 동안 쪽마다 크기를 다시 매기지 않는다.
+    if (this.fit === 'page' && height / width <= LONG_PAGE_RATIO)
+      el.style.width = `calc(${Math.floor(Math.min(fitWidth, (fitHeight * width) / height))}px * var(--shrink, 1))`;
     else el.style.width = '';
+  }
+
+  /**
+   * 연속 스크롤의 쪽 칸을 줄인다. 손가락 사이(focusY) 아래의 쪽 자리가 그대로 있게 화면을 옮긴다.
+   * 줄인 동안에는 WebView 확대를 막아(touch-action) 벌리기를 이쪽에서 받아 처음 크기로 되돌린다.
+   */
+  setShrink(value, focusY = innerHeight / 2) {
+    const shrink = Math.min(1, Math.max(MIN_SHRINK, value));
+    if (shrink === this.shrink) return;
+    const anchor = this.slots?.length ? this.pageAt(focusY) : null;
+    const before = anchor?.getBoundingClientRect();
+    this.shrink = shrink;
+    this.container.style.setProperty('--shrink', String(shrink));
+    if (shrink < 1) this.container.dataset.shrunk = '';
+    else delete this.container.dataset.shrunk;
+    document.documentElement.style.touchAction = shrink < 1 ? 'pan-x pan-y' : '';
+    if (anchor) {
+      const after = anchor.getBoundingClientRect();
+      scrollBy(0, after.top + ((focusY - before.top) / before.height) * after.height - focusY);
+    }
+  }
+
+  /** 화면 높이 y에 걸친 쪽 칸(없으면 가장 가까운 쪽) */
+  pageAt(y) {
+    let nearest = null;
+    let distance = Infinity;
+    for (const el of this.slots) {
+      const rect = el.getBoundingClientRect();
+      if (rect.bottom < y - innerHeight) continue;
+      if (rect.top > y + innerHeight) break;
+      const d = y < rect.top ? rect.top - y : y > rect.bottom ? y - rect.bottom : 0;
+      if (d < distance) [nearest, distance] = [el, d];
+      if (d === 0) break;
+    }
+    return nearest;
   }
 
   /** 렌더러가 그려 보고서야 쪽 크기를 알았을 때, 연속 스크롤 자리를 실제 크기로 바로잡는다. */
@@ -212,16 +257,38 @@ export class PagedViewer {
     // 첫 쪽이 늦게 뜬다(SM-P200에서 PDF 첫 쪽이 위아래 쪽까지 함께 그리느라 늦었다).
     const start = this.current;
     let first = null;
+    // 쪽은 그릴 때의 칸 폭에 맞춰 그린다(PDF 그림 해상도, 글자 층 위치, docx 줄임 비율). 그린 폭을 적어 두고
+    // 줄이기가 끝나면 폭이 달라진 쪽을 다시 그린다.
+    const draw = (index) => {
+      const el = pages[index];
+      const rendering = this.doc.renderInto(index, el);
+      el.dataset.drawnWidth = String(el.clientWidth);
+      this.rendering.set(index, rendering);
+      return rendering;
+    };
+    // 화면 가까이의 쪽만 바로 다시 그리고, 먼 쪽은 지워 두어 다시 보일 때 새 폭으로 그리게 한다.
+    this.redrawResized = () => {
+      for (const index of wanted) {
+        const el = pages[index];
+        if (Math.abs(el.clientWidth - Number(el.dataset.drawnWidth)) <= 2) continue;
+        const rect = el.getBoundingClientRect();
+        if (rect.bottom > -innerHeight && rect.top < innerHeight * 2) draw(index);
+        else {
+          wanted.delete(index);
+          el.replaceChildren();
+        }
+      }
+    };
     const show = async (index) => {
       if (wanted.has(index)) return;
       wanted.add(index);
       if (index !== start && first) await first.catch(() => {});
       if (!wanted.has(index)) return;
-      const rendering = this.doc.renderInto(index, pages[index]);
+      const rendering = draw(index);
       if (index === start && !first) first = rendering;
-      this.rendering.set(index, rendering);
       await rendering;
-      if (wanted.size <= KEEP_RENDERED) return;
+      // 줄여서 한 화면에 쪽이 많이 보이면 그만큼 더 남겨 둔다(보이는 쪽을 지웠다 다시 그리지 않게).
+      if (wanted.size <= Math.ceil(KEEP_RENDERED / this.shrink ** 2)) return;
       const farthest = [...wanted].sort((a, b) => Math.abs(b - index) - Math.abs(a - index))[0];
       wanted.delete(farthest);
       pages[farthest].replaceChildren();
@@ -340,11 +407,58 @@ export class PagedViewer {
       },
       { passive: true },
     );
+    this.bindShrink();
     addEventListener('keydown', (e) => {
       if (this.mode === 'scroll') return;
       if (e.key === 'ArrowRight' || e.key === 'PageDown') this.next();
       if (e.key === 'ArrowLeft' || e.key === 'PageUp') this.prev();
     });
+  }
+
+  /**
+   * 연속 스크롤의 줄이기. WebView 확대가 처음 크기(1)일 때 두 손가락을 오므리면 쪽 칸을 줄이고, 벌리면 되돌린다.
+   * WebView가 확대한 상태에서는 그쪽에 맡기고, 처음 크기로 돌아온 그 자리부터 이어서 줄인다.
+   */
+  bindShrink() {
+    let pinch = null;
+    const distance = (touches) => Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
+    const focusY = (touches) => (touches[0].clientY + touches[1].clientY) / 2;
+    let frame = 0;
+    addEventListener(
+      'touchstart',
+      (e) => {
+        if (this.mode !== 'scroll' || e.touches.length !== 2) return;
+        pinch = { from: distance(e.touches), shrink: this.shrink };
+      },
+      { passive: true },
+    );
+    addEventListener(
+      'touchmove',
+      (e) => {
+        if (!pinch || e.touches.length !== 2) return;
+        const now = distance(e.touches);
+        if ((visualViewport?.scale ?? 1) > 1.01) {
+          pinch = { from: now, shrink: this.shrink };
+          return;
+        }
+        const target = (pinch.shrink * now) / pinch.from;
+        const y = focusY(e.touches);
+        cancelAnimationFrame(frame);
+        frame = requestAnimationFrame(() => this.setShrink(target, y));
+        pinch.moved = true;
+      },
+      { passive: true },
+    );
+    addEventListener(
+      'touchend',
+      (e) => {
+        if (!pinch || e.touches.length >= 2) return;
+        const moved = pinch.moved;
+        pinch = null;
+        if (moved) requestAnimationFrame(() => this.redrawResized?.());
+      },
+      { passive: true },
+    );
   }
 
   handleGesture(dx, dy, ms, x) {

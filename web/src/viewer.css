@@ -73,6 +73,24 @@ body {
   overflow: hidden;
 }
 
+/* 연속 스크롤: 처음 크기보다 오므리면 쪽 칸을 줄여(--shrink) 한 줄에 여러 쪽을 놓는다. */
+#doc[data-mode='scroll'] .page {
+  width: calc((100% - 8px) * var(--shrink, 1) - 8px);
+}
+
+#doc[data-mode='scroll'][data-shrunk] {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  justify-content: center;
+  column-gap: 8px;
+}
+
+#doc[data-mode='scroll'][data-shrunk] .page {
+  margin: 0 0 8px;
+  flex: none;
+}
+
 .page > svg,
 .page > canvas {
   display: block;
