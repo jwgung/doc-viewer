@@ -16,6 +16,7 @@ const RT = {
   DIMENSIONS: 0x0200, DEFAULTROWHEIGHT: 0x0225, DEFCOLWIDTH: 0x0055, COLINFO: 0x007d, ROW: 0x0208,
   NUMBER: 0x0203, RK: 0x027e, MULRK: 0x00bd, LABELSST: 0x00fd, LABEL: 0x0204, RSTRING: 0x00d6, BOOLERR: 0x0205,
   FORMULA: 0x0006, STRING: 0x0207, BLANK: 0x0201, MULBLANK: 0x00be, MERGEDCELLS: 0x00e5, WINDOW2: 0x023e, PANE: 0x0041,
+  MSODRAWINGGROUP: 0x00eb, MSODRAWING: 0x00ec,
 };
 const ERRORS = { 0x00: '#NULL!', 0x07: '#DIV/0!', 0x0f: '#VALUE!', 0x17: '#REF!', 0x1d: '#NAME?', 0x24: '#NUM!', 0x2a: '#N/A', 0x2b: '#GETTING_DATA' };
 
@@ -145,6 +146,7 @@ export function readXls(bytes) {
   let date1904 = false;
   let active = 0;
   let ansi = ansiDecoder(1252);
+  const drawingGroup = []; // MSODRAWINGGROUP(+CONTINUE) 조각: 그림 저장소
   // 글자 수(1·2바이트) 뒤에 오는 문자열. BIFF8은 유니코드 문자열, BIFF5는 코드페이지 8비트 문자열이다.
   const text = (start, end, cchBytes) => {
     if (biff === 8) return new Segments(stream, [[start, end]]).string(cchBytes);
@@ -208,6 +210,11 @@ export function readXls(bytes) {
         break;
       case RT.WINDOW1:
         if (size >= 12) active = dv.getUint16(body + 10, true);
+        break;
+      case RT.MSODRAWINGGROUP:
+        if (biff !== 8) break;
+        drawingGroup.push([body, body + size]);
+        pos = collectContinue(dv, pos, len, drawingGroup);
         break;
       case RT.SST: {
         if (biff !== 8) break;
@@ -295,7 +302,18 @@ export function readXls(bytes) {
       if (!s || s.dt === 2) return SheetModel.placeholder(s?.name ?? '', 'chart');
       const offset = offsetOf(s);
       if (offset < 0) return SheetModel.placeholder(s.name, 'sheet');
-      return readSheet(stream, dv, { ...s, offset }, { biff, text, context, styles, mdw });
+      const model = readSheet(stream, dv, { ...s, offset }, { biff, text, context, styles, mdw });
+      const ranges = model.drawingRanges;
+      delete model.drawingRanges;
+      if (!ranges.length || !drawingGroup.length) return model;
+      // 그림 읽기(OfficeArt)는 그림이 있는 시트에서만 불러온다.
+      return import('./xls-drawing.js')
+        .then(({ readXlsPictures }) => readXlsPictures(join(stream, drawingGroup), join(stream, ranges)))
+        .catch((error) => console.warn('[sheet] pictures skipped', error)) // 그림을 못 읽어도 표는 보인다.
+        .then((drawing) => {
+          model.drawing = drawing ?? null;
+          return model;
+        });
     },
   };
 }
@@ -405,6 +423,8 @@ function readSheet(stream, dv, sheet, { biff, text: readText, context, styles, m
   let depth = 0;
   let frozen = false;
   let pending = null; // 수식 결과 문자열을 기다리는 칸
+  const drawing = []; // MSODRAWING(+CONTINUE) 조각: 도형 트리. 사이사이 OBJ·TXO 레코드는 빼고 잇는다.
+  let inDrawing = false;
   while (pos + 4 <= len) {
     const type = dv.getUint16(pos, true);
     const size = dv.getUint16(pos + 2, true);
@@ -420,6 +440,12 @@ function readSheet(stream, dv, sheet, { biff, text: readText, context, styles, m
       continue;
     }
     if (depth !== 1) continue; // 시트 안에 든 차트 등
+    if (type === RT.MSODRAWING || (type === RT.CONTINUE && inDrawing)) {
+      if (biff === 8) drawing.push([body, body + size]);
+      inDrawing = true;
+      continue;
+    }
+    inDrawing = false;
     switch (type) {
       case RT.NUMBER:
         builder.add(dv.getUint16(body, true), dv.getUint16(body + 2, true), NUM, dv.getFloat64(body + 6, true), dv.getUint16(body + 4, true));
@@ -562,7 +588,19 @@ function readSheet(stream, dv, sheet, { biff, text: readText, context, styles, m
     }
     if (type !== RT.FORMULA && type !== RT.STRING && pending && isCellRecord(type)) pending = null;
   }
-  return builder.finish(sheet.name, context);
+  const model = builder.finish(sheet.name, context);
+  model.drawingRanges = drawing;
+  return model;
+}
+
+function join(stream, ranges) {
+  const out = new Uint8Array(ranges.reduce((n, [a, b]) => n + b - a, 0));
+  let k = 0;
+  for (const [a, b] of ranges) {
+    out.set(stream.subarray(a, b), k);
+    k += b - a;
+  }
+  return out;
 }
 
 function collectContinue(dv, pos, len, ranges) {
