@@ -78,6 +78,15 @@ Android의 `buildWebViewer` 작업은 `web/vendor/`도 입력으로 보므로 �
 | PowerPoint 95/97 이중 저장 파일은 루트에 95 형식, `PP97_DUALSTORAGE` 저장소 안에 97 형식 스트림을 같은 이름으로 둔다. 이름만으로 찾아 95 형식을 잡았다. 저장소 안 스트림을 먼저 쓴다. | `cfb.ts` `hasStorage`, `streamIn` |
 | PowerPoint 95(레코드 머리 16바이트)와 4.0(`PP40` 스트림)은 읽지 못했다. 글자만이라도 보여 준다. 95는 슬라이드별 글 상자 위치와 글자를, 4.0은 길이가 붙은 글자 레코드를 골라 레코드 사이 간격으로 슬라이드를 나눈다(공개 명세가 없어 도형·서식은 읽지 않는다). | 새 파일 `legacy.ts`, `parser.ts` `parsePpt` |
 
+### 열기 속도
+
+| 원인 | 고친 곳 |
+|---|---|
+| 브라우저에서는 XML을 내장 `DOMParser`로 읽었는데, Android WebView에서 슬라이드가 많은 pptx를 열 때 대부분의 시간을 썼다(28장 2MB 파일: 크롬 프로파일에서 `parseXml` 0.78초, SM-P200에서 첫 슬라이드 3.2초). 워커용으로 이미 들어 있는 최소 파서(`xml-lite`)를 늘 쓴다. | `xml.ts` `parseXml` |
+| `xml-lite`는 `trim()`으로 공백뿐인 글자를 걸러 탭·NBSP만 든 글자 조각(`<a:t>\t</a:t>`)을 버렸다(`DOMParser`는 남긴다). 줄바꿈이 없는 공백 글자는 남긴다. | `xml-lite.ts` `parseXmlLite` |
+
+두 파서 결과가 같은지는 `spike/renderer-eval/corpus`의 ppt·pptx와 시험 문서 332개를 크롬에서 두 파서로 열어 모든 슬라이드 SVG를 비교해 확인했다(같지 않은 1개는 날짜·시각 필드라 같은 파서로 두 번 열어도 달라지는 파일).
+
 ## 검증 방법
 
 - 업스트림 자체 테스트: 포크(`/home/capalace/Git/web-ppt-fork`)의 `packages/core/src`를 이 사본으로 맞춘 뒤 `node tooling/test-core.mjs`(1873항목). ppt 표본 3개의 렌더링 스냅숏은 글 상자 여백 변경으로 다시 만들었고, 전후 화면을 비교해 의도한 차이임을 확인했다.

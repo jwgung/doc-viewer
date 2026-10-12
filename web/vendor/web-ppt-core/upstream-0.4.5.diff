@@ -2010,3 +2010,49 @@ diff -ruN a/packages/core/src/ppt/records.ts b/packages/core/src/ppt/records.ts
    /** PowerPoint 97 之后追加的能力都塞在 ProgTags 下的二进制扩展块里 */
    ProgTags: 0x1388,
    ProgBinaryTag: 0x138a,
+diff -ruN a/packages/core/src/xml-lite.ts b/packages/core/src/xml-lite.ts
+--- a/packages/core/src/xml-lite.ts
++++ b/packages/core/src/xml-lite.ts
+@@ -97,7 +97,9 @@
+       const raw = text.slice(i, lt);
+       // 元素之间的纯空白不产生文本节点，避免 textContent 混入缩进
+       if (stack.length && raw.trim()) stack[stack.length - 1].childNodes.push(decode(raw));
+-      else if (stack.length && raw.includes(' ')) stack[stack.length - 1].childNodes.push(raw);
++      // doc-viewer 패치: 줄바꿈 없는 공백 글자(탭·NBSP만 든 <a:t>)도 남긴다. trim()은 탭·NBSP도 지워서 글자가 사라졌다.
++      // 줄바꿈이 든 공백(들여쓰기)은 예전처럼 스페이스가 있을 때만 남긴다.
++      else if (stack.length && (raw.includes(' ') || !/[\r\n]/.test(raw))) stack[stack.length - 1].childNodes.push(raw);
+     }
+ 
+     if (text.startsWith('<!--', lt)) {
+diff -ruN a/packages/core/src/xml.ts b/packages/core/src/xml.ts
+--- a/packages/core/src/xml.ts
++++ b/packages/core/src/xml.ts
+@@ -5,21 +5,14 @@
+  * OOXML 的前缀（p:/a:/r:）在不同生成器里不稳定，一律按 localName 匹配。
+  */
+ 
+-// Web Worker 里没有 DOMParser（Window-only API），此时回退到自带的最小解析器。
+-// 两者结构等价，实测 xml-lite 约为原生的 1.8×，换来主线程零阻塞。
+-const nativeParser = typeof DOMParser !== 'undefined' ? new DOMParser() : null;
+-
++// doc-viewer 패치: 브라우저에서도 늘 자체 최소 파서(xml-lite)를 쓴다. Android WebView의 DOMParser는
++// 슬라이드가 많은 pptx에서 열 때 대부분의 시간을 썼다(28장 2MB 파일에서 DOMParser 0.78초, xml-lite 전체 해석 0.05초).
++// 두 파서의 결과 구조는 같다(아래 멤버만 쓰며 LiteElement가 모두 구현한다).
+ export function parseXml(text: string): Element {
+-  if (!nativeParser) {
+-    // 只用到 localName / firstElementChild / nextElementSibling / children /
+-    // attributes / getAttribute / textContent / getElementsByTagName 这几个成员，
+-    // LiteElement 全部实现，因此这里的断言是安全的。
+-    return parseXmlLite(text) as unknown as Element;
+-  }
+-  const doc = nativeParser.parseFromString(text, 'application/xml');
+-  const err = doc.getElementsByTagName('parsererror')[0];
+-  if (err) throw new Error('XML 解析失败: ' + (err.textContent ?? '').slice(0, 200));
+-  return doc.documentElement;
++  // 只用到 localName / firstElementChild / nextElementSibling / children /
++  // attributes / getAttribute / textContent / getElementsByTagName 这几个成员，
++  // LiteElement 全部实现，因此这里的断言是安全的。
++  return parseXmlLite(text) as unknown as Element;
+ }
+ 
+ export function kids(el: Element | null, name: string): Element[] {

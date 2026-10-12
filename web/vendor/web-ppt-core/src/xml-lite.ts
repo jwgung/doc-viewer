@@ -97,7 +97,9 @@ export function parseXmlLite(text: string): LiteElement {
       const raw = text.slice(i, lt);
       // 元素之间的纯空白不产生文本节点，避免 textContent 混入缩进
       if (stack.length && raw.trim()) stack[stack.length - 1].childNodes.push(decode(raw));
-      else if (stack.length && raw.includes(' ')) stack[stack.length - 1].childNodes.push(raw);
+      // doc-viewer 패치: 줄바꿈 없는 공백 글자(탭·NBSP만 든 <a:t>)도 남긴다. trim()은 탭·NBSP도 지워서 글자가 사라졌다.
+      // 줄바꿈이 든 공백(들여쓰기)은 예전처럼 스페이스가 있을 때만 남긴다.
+      else if (stack.length && (raw.includes(' ') || !/[\r\n]/.test(raw))) stack[stack.length - 1].childNodes.push(raw);
     }
 
     if (text.startsWith('<!--', lt)) {

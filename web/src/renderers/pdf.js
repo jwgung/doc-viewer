@@ -60,6 +60,8 @@ export async function render(bytes, container, ctx) {
     el.style.setProperty('--scale-factor', String(scale));
     el.style.setProperty('--total-scale-factor', String(scale));
     el.replaceChildren(canvas, textLayer);
+    // 그림이 보이면 첫 쪽으로 알린다(스피너를 걷는다). 글자 층은 그 뒤에 붙고, 검색은 이 함수가 끝나기를 기다린다.
+    ctx.markFirstPage();
     await new pdfjs.TextLayer({
       textContentSource: page.streamTextContent(),
       container: textLayer,

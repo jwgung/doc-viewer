@@ -47,7 +47,10 @@ export async function render(bytes, container, ctx) {
   const renderInto = async (index, el) => {
     el.innerHTML = renderSlideToSvg(pres, pres.slides[index], { textMode: 'html' });
   };
-  const viewer = new PagedViewer(container, { count: pres.slides.length, sizes: pres.slides.map(() => size), renderInto }, { mode: ctx.mode, fit: ctx.fit });
+  // pptx 슬라이드는 처음 읽을 때 해석된다(web-ppt lazy). slides.map은 모든 슬라이드를 읽어 다 해석하므로
+  // 개수만 쓴다(28장 6.5MB XML 파일에서 첫 슬라이드가 그만큼 늦었다).
+  const count = pres.slides.length;
+  const viewer = new PagedViewer(container, { count, sizes: Array.from({ length: count }, () => size), renderInto }, { mode: ctx.mode, fit: ctx.fit });
   ctx.setViewer(viewer);
   // 검색: 화면에 그리지 않는 발표자 노트는 빼고 슬라이드 글자만 센다.
   ctx.setTextSource(async (index) => slideText({ ...pres.slides[index], notes: undefined }));
