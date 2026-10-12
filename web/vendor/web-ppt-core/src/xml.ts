@@ -5,21 +5,14 @@ import { parseXmlLite } from './xml-lite';
  * OOXML 的前缀（p:/a:/r:）在不同生成器里不稳定，一律按 localName 匹配。
  */
 
-// Web Worker 里没有 DOMParser（Window-only API），此时回退到自带的最小解析器。
-// 两者结构等价，实测 xml-lite 约为原生的 1.8×，换来主线程零阻塞。
-const nativeParser = typeof DOMParser !== 'undefined' ? new DOMParser() : null;
-
+// doc-viewer 패치: 브라우저에서도 늘 자체 최소 파서(xml-lite)를 쓴다. Android WebView의 DOMParser는
+// 슬라이드가 많은 pptx에서 열 때 대부분의 시간을 썼다(28장 2MB 파일에서 DOMParser 0.78초, xml-lite 전체 해석 0.05초).
+// 두 파서의 결과 구조는 같다(아래 멤버만 쓰며 LiteElement가 모두 구현한다).
 export function parseXml(text: string): Element {
-  if (!nativeParser) {
-    // 只用到 localName / firstElementChild / nextElementSibling / children /
-    // attributes / getAttribute / textContent / getElementsByTagName 这几个成员，
-    // LiteElement 全部实现，因此这里的断言是安全的。
-    return parseXmlLite(text) as unknown as Element;
-  }
-  const doc = nativeParser.parseFromString(text, 'application/xml');
-  const err = doc.getElementsByTagName('parsererror')[0];
-  if (err) throw new Error('XML 解析失败: ' + (err.textContent ?? '').slice(0, 200));
-  return doc.documentElement;
+  // 只用到 localName / firstElementChild / nextElementSibling / children /
+  // attributes / getAttribute / textContent / getElementsByTagName 这几个成员，
+  // LiteElement 全部实现，因此这里的断言是安全的。
+  return parseXmlLite(text) as unknown as Element;
 }
 
 export function kids(el: Element | null, name: string): Element[] {

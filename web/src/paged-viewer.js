@@ -208,10 +208,17 @@ export class PagedViewer {
     this.slots = [];
     const pages = this.slots;
     const wanted = new Set();
+    // 처음 보일 쪽을 먼저 다 그린 뒤에 둘레 쪽을 그린다. 같이 그리면 렌더러(pdf.js 워커·HWP 워커)를 나눠 써서
+    // 첫 쪽이 늦게 뜬다(SM-P200에서 PDF 첫 쪽이 위아래 쪽까지 함께 그리느라 늦었다).
+    const start = this.current;
+    let first = null;
     const show = async (index) => {
       if (wanted.has(index)) return;
       wanted.add(index);
+      if (index !== start && first) await first.catch(() => {});
+      if (!wanted.has(index)) return;
       const rendering = this.doc.renderInto(index, pages[index]);
+      if (index === start && !first) first = rendering;
       this.rendering.set(index, rendering);
       await rendering;
       if (wanted.size <= KEEP_RENDERED) return;
