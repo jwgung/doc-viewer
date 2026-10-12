@@ -107,8 +107,9 @@ body {
   overflow-y: auto;
 }
 
+/* 쪽이 화면보다 짧으면(가로로 긴 슬라이드·두 쪽 등) 세로 가운데, 길면 위에서부터 스크롤(safe). */
 #doc[data-fit='width'] .flip-stage {
-  align-items: flex-start;
+  align-items: safe center;
   height: auto;
   min-height: 100%;
   padding: 8px 0;
