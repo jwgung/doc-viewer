@@ -93,6 +93,12 @@ Android의 `buildWebViewer` 작업은 `web/vendor/`도 입력으로 보므로 �
 |---|---|
 | pptx 메모 페이지의 글을 모두 이어 붙여, 쪽 번호·머리글·바닥글·날짜 자리표시자 글자(쪽 번호 '1' 등)가 메모 끝에 붙었다. 이 자리표시자 도형은 빼고 메모 글만 남긴다. | `pptx/parser.ts` `notesText` |
 
+### 패키지 진입점
+
+| 원인 | 고친 곳 |
+|---|---|
+| 엑셀 그림 중 EMF·WMF를 SVG로 바꾸려고 메타파일 변환기만 따로 불러온다. 패키지 진입점(`.`)은 렌더러 전체를 불러온다. 변환기만 내보내는 `./image` 진입점을 더한다. | `package.json` `exports` |
+
 ## 검증 방법
 
 - 업스트림 자체 테스트: 포크(`/home/capalace/Git/web-ppt-fork`)의 `packages/core/src`를 이 사본으로 맞춘 뒤 `node tooling/test-core.mjs`(1873항목). ppt 표본 3개의 렌더링 스냅숏은 글 상자 여백 변경으로 다시 만들었고, 전후 화면을 비교해 의도한 차이임을 확인했다.

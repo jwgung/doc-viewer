@@ -90,6 +90,16 @@ class NativeZip {
     });
     return found ? out : null;
   }
+
+  /** 압축을 푼 바이트(그림 등). 없으면 null */
+  async binary(name) {
+    const entry = this.entries.get(normalize(name));
+    if (!entry) return null;
+    const data = this.raw(entry);
+    if (entry.method === 0) return data.slice();
+    if (entry.method !== 8) throw new Error(`zip: method ${entry.method}`);
+    return new Uint8Array(await new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer());
+  }
 }
 
 class SheetJsZip {
@@ -113,9 +123,13 @@ class SheetJsZip {
   }
 
   async text(name) {
+    const content = await this.binary(name);
+    return content ? decoder().decode(content) : null;
+  }
+
+  async binary(name) {
     const entry = this.find(name);
     if (!entry?.content) return null;
-    const content = entry.content instanceof Uint8Array ? entry.content : Uint8Array.from(entry.content);
-    return decoder().decode(content);
+    return entry.content instanceof Uint8Array ? entry.content : Uint8Array.from(entry.content);
   }
 }
