@@ -4,7 +4,7 @@
 //   sheet { index }            → sheet { index, ...시트 내용 }
 //   rows { index(요청 번호), sheet, block } → rows { index, sheet, block: 행 묶음, styles }
 //   search { index(요청 번호), sheet, query(소문자) } → found { index, hits: [시트, 행, 열]을 이어 붙인 Int32Array }
-// 시트 내용 = { meta(배치 정보), blocks(처음 화면의 행 묶음), styles(새 서식 CSS), baseCss }
+// 시트 내용 = { meta(배치 정보·그림 자리), blocks(처음 화면의 행 묶음), styles(새 서식 CSS), baseCss, media(그림 바이트) }
 import { BLOCK_ROWS } from '../spreadsheet/sheet-store.js';
 import { openWorkbook } from '../spreadsheet/workbook.js';
 
@@ -81,7 +81,8 @@ function sheetPayload(model) {
   }
   // 행·열 기본 서식(빈 칸 채우기)도 미리 보낸다.
   Object.assign(styles, book.styles.take([...meta.rowStyles.value, ...meta.colStyles.value]));
-  return { payload: { meta, blocks, styles, baseCss: book.styles.baseCss() }, transfer };
+  // 그림 바이트는 옮기지 않고 복사한다(시트를 다시 보일 때 또 보낸다).
+  return { payload: { meta, blocks, styles, baseCss: book.styles.baseCss(), media: model.drawing?.media ?? [] }, transfer };
 }
 
 self.onmessage = async ({ data }) => {

@@ -335,6 +335,7 @@ export class SheetModel {
       freezeCols: g.freezeCols,
       showGrid: g.showGrid,
       blockRows: BLOCK_ROWS,
+      pictures: this.drawing?.pictures ?? [],
     };
   }
 

@@ -22,6 +22,7 @@
     ".": "./src/index.ts",
     "./worker": "./src/worker.ts",
     "./geometry": "./src/geometry/index.ts",
+    "./image": "./src/image/index.ts",
     "./package.json": "./package.json"
   },
   "dependencies": {

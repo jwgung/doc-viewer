@@ -272,7 +272,13 @@ export async function readXlsx(bytes) {
     load: async (index) => {
       const s = sheets[index];
       if (!s || s.kind === 'chart' || !s.path || !zip.has(s.path)) return SheetModel.placeholder(s?.name ?? '', s?.kind === 'sheet' ? 'sheet' : 'chart');
-      return readSheet(zip, s, context, styles, mdw, baseFont);
+      const model = await readSheet(zip, s, context, styles, mdw, baseFont);
+      try {
+        model.drawing = await readPictures(zip, s.path);
+      } catch (error) {
+        console.warn('[sheet] pictures skipped', error); // 그림을 못 읽어도 표는 보인다.
+      }
+      return model;
     },
   };
 }
@@ -524,4 +530,104 @@ function readRows(xml, tags, state, builder, context) {
 
 function isDelimiter(c) {
   return c === 32 || c === 62 || c === 47 || c === 9 || c === 10 || c === 13 || Number.isNaN(c);
+}
+
+// ---- 그림 ----------------------------------------------------------------
+// 시트에 딸린 그리기 파트(xl/drawings/drawingN.xml)에서 그림(pic)만 읽는다. 차트·도형·글상자는 아직 그리지 않는다.
+// 위치는 셀 기준(열·행 + EMU 오프셋)으로 넘기고, 화면이 그린 행 높이·열 너비로 픽셀 자리를 정한다.
+const EMU_PER_PX = 9525;
+const ANCHOR = /<(?:\w+:)?(twoCellAnchor|oneCellAnchor|absoluteAnchor)\b[^>]*>([\s\S]*?)<\/(?:\w+:)?\1>/g;
+const FALLBACK = /<(?:\w+:)?Fallback\b[\s\S]*?<\/(?:\w+:)?Fallback>/g;
+const IMAGE_TYPES = [
+  [[0x89, 0x50, 0x4e, 0x47], 'image/png'],
+  [[0xff, 0xd8, 0xff], 'image/jpeg'],
+  [[0x47, 0x49, 0x46, 0x38], 'image/gif'],
+  [[0x42, 0x4d], 'image/bmp'],
+  [[0x52, 0x49, 0x46, 0x46], 'image/webp'],
+];
+const MAX_PICTURES = 2000;
+
+function cellAnchor(xml) {
+  if (!xml) return null;
+  const n = (name) => Number(element(xml, name)?.body) || 0;
+  return [n('col'), n('colOff') / EMU_PER_PX, n('row'), n('rowOff') / EMU_PER_PX];
+}
+
+function xfrmOf(xml) {
+  const x = element(xml, 'xfrm');
+  if (!x) return null;
+  const off = emptyTag(x.body, 'off') ?? {};
+  const ext = emptyTag(x.body, 'ext') ?? {};
+  const chOff = emptyTag(x.body, 'chOff');
+  const chExt = emptyTag(x.body, 'chExt');
+  return {
+    x: Number(off.x) || 0, y: Number(off.y) || 0, cx: Number(ext.cx) || 0, cy: Number(ext.cy) || 0,
+    chX: Number(chOff?.x) || 0, chY: Number(chOff?.y) || 0, chCx: Number(chExt?.cx) || 0, chCy: Number(chExt?.cy) || 0,
+    rot: (Number(x.attrs.rot) || 0) / 60000, flipH: truthy(x.attrs.flipH), flipV: truthy(x.attrs.flipV),
+  };
+}
+
+/** { pictures: [{ from, to, pos, size, box, media, crop, rot, flipH, flipV }], media: [{ type, data } | { type, svg }] } 또는 null */
+async function readPictures(zip, sheetPath) {
+  const drawingPath = (await readRels(zip, sheetPath)).find((r) => /\/drawing$/.test(r.type))?.target;
+  if (!drawingPath) return null;
+  const xml = await zip.text(drawingPath);
+  if (!xml) return null;
+  const rels = new Map((await readRels(zip, drawingPath)).map((r) => [r.id, r.target]));
+  const pictures = [];
+  const mediaIndex = new Map();
+  for (const [, kind, raw] of xml.matchAll(ANCHOR)) {
+    const body = raw.indexOf('Fallback') >= 0 ? raw.replace(FALLBACK, '') : raw;
+    const from = kind === 'absoluteAnchor' ? null : cellAnchor(element(body, 'from')?.body);
+    const to = kind === 'twoCellAnchor' ? cellAnchor(element(body, 'to')?.body) : null;
+    const ext = kind === 'twoCellAnchor' ? null : emptyTag(body, 'ext');
+    const pos = kind === 'absoluteAnchor' ? emptyTag(body, 'pos') : null;
+    const size = ext ? [Number(ext.cx) / EMU_PER_PX || 0, Number(ext.cy) / EMU_PER_PX || 0] : null;
+    // 그룹 안 그림은 그룹의 자식 좌표계(chOff·chExt)로 앵커 상자 안 비율 자리를 구한다.
+    const group = /<(?:\w+:)?grpSp\b/.test(body) ? xfrmOf(element(body, 'grpSpPr')?.body ?? '') : null;
+    for (const pic of elements(body, 'pic')) {
+      if (pictures.length >= MAX_PICTURES) break;
+      const nv = emptyTag(pic.body, 'cNvPr');
+      if (nv && truthy(nv.hidden)) continue;
+      const blip = emptyTag(pic.body, 'blip');
+      const target = blip?.embed && rels.get(blip.embed);
+      if (!target) continue;
+      const xf = xfrmOf(element(pic.body, 'spPr')?.body ?? '');
+      let box = [0, 0, 1, 1];
+      if (group && xf && group.chCx > 0 && group.chCy > 0) {
+        const fx = (x) => (x - group.chX) / group.chCx;
+        const fy = (y) => (y - group.chY) / group.chCy;
+        box = [fx(xf.x), fy(xf.y), fx(xf.x + xf.cx), fy(xf.y + xf.cy)];
+      }
+      const src = emptyTag(pic.body, 'srcRect');
+      const crop = src ? ['l', 't', 'r', 'b'].map((k) => (Number(src[k]) || 0) / 100000) : null;
+      let media = mediaIndex.get(target);
+      if (media === undefined) {
+        media = mediaIndex.size;
+        mediaIndex.set(target, media);
+      }
+      pictures.push({
+        from, to, size,
+        pos: pos ? [Number(pos.x) / EMU_PER_PX || 0, Number(pos.y) / EMU_PER_PX || 0] : null,
+        box, media,
+        crop: crop?.some((v) => v !== 0) ? crop : null,
+        rot: xf?.rot ?? 0, flipH: xf?.flipH ?? false, flipV: xf?.flipV ?? false,
+      });
+    }
+  }
+  if (!pictures.length) return null;
+  // 그림 하나를 못 읽어도 나머지는 보인다.
+  const media = await Promise.all([...mediaIndex.keys()].map((path) => readMedia(zip, path).catch(() => null)));
+  return { pictures: pictures.filter((p) => media[p.media]), media };
+}
+
+/** 그림 바이트를 형식에 맞게 넘긴다. EMF·WMF는 WebView가 못 그려 SVG로 바꾼다(필요할 때만 변환기를 불러온다). */
+async function readMedia(zip, path) {
+  const data = await zip.binary(path);
+  if (!data) return null;
+  for (const [magic, type] of IMAGE_TYPES) if (magic.every((b, i) => data[i] === b)) return { type, data };
+  if (/\.svg$/i.test(path)) return { type: 'image/svg+xml', data };
+  const { metafileToSvg } = await import('@web-ppt/core/image');
+  const svg = metafileToSvg(data);
+  return svg ? { type: 'image/svg+xml', svg } : null;
 }

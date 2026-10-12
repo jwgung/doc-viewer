@@ -8,6 +8,7 @@
 // 각 띠 안에서 행 머리글과 고정 열은 sticky left라 가로 스크롤에도 제자리에 있다.
 // 셀 상자는 왼쪽·위로 1px 넓혀 양쪽 눈금선 자리까지 덮는다(엑셀처럼 채우기가 눈금선을 가린다).
 // 테두리는 서식별 ::after 층에 두께에 맞춰 눈금선 가운데로 그려, 이웃 셀이 같은 변에 준 테두리와 한 선으로 겹친다.
+// 그림은 영역마다 셀 위에 한 층(.sg-pics)을 두고, 셀을 다시 그려도 그 층은 버리지 않고 다시 붙인다.
 
 const HEAD_HEIGHT = 20;
 const OVERSCAN = 0.5; // 보이는 범위의 몇 배를 앞뒤로 더 그릴지
@@ -124,6 +125,7 @@ export class SheetGrid {
     this.grown = new Map();
     this.growth = new Map();
     this.customRows = new Set(payload.meta.customRows);
+    this.setMedia(payload.media);
     this.setBaseCss(payload.baseCss);
     this.addStyles(payload.styles);
     for (const block of payload.blocks) this.blocks.set(block.start / this.meta.blockRows, block);
@@ -132,6 +134,12 @@ export class SheetGrid {
     this.scroller.scrollTo(0, 0);
     this.render(true);
     return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+  }
+
+  /** 그림 바이트를 주소(blob URL)로 바꾼다. 앞 시트의 주소는 놓아준다. */
+  setMedia(media = []) {
+    for (const url of this.mediaUrls ?? []) if (url) URL.revokeObjectURL(url);
+    this.mediaUrls = media.map((m) => (m ? URL.createObjectURL(new Blob([m.svg ?? m.data], { type: m.type })) : null));
   }
 
   indexSparse() {
@@ -160,10 +168,49 @@ export class SheetGrid {
     const m = this.meta;
     const vw = this.scroller.clientWidth;
     const vh = this.scroller.clientHeight;
-    // 데이터가 적어도 화면을 채울 만큼 빈 칸을 그린다(엑셀처럼).
-    const nRows = Math.min(1_048_576, Math.max(m.rowCount, m.freezeRows + 1, Math.ceil(vh / Math.max(8, m.defaultRowHeight)) + 1));
-    const nCols = Math.min(MAX_COLS, Math.max(m.colCount, m.freezeCols + 1, Math.ceil(vw / Math.max(8, m.defaultColWidth)) + 1));
-    // 시트 좌표는 1부터 시작한다: 0은 A열 왼쪽·1행 위쪽 눈금선 자리라, 첫 칸의 앞쪽 테두리도 보인다.
+    // 데이터가 적어도 화면을 채울 만큼 빈 칸을 그린다(엑셀처럼). 그림이 놓인 자리까지도 그린다.
+    let nRows = Math.min(1_048_576, Math.max(m.rowCount, m.freezeRows + 1, Math.ceil(vh / Math.max(8, m.defaultRowHeight)) + 1));
+    let nCols = Math.min(MAX_COLS, Math.max(m.colCount, m.freezeCols + 1, Math.ceil(vw / Math.max(8, m.defaultColWidth)) + 1));
+    for (const p of m.pictures) {
+      const end = p.to ?? p.from;
+      if (!end) continue;
+      nRows = Math.min(1_048_576, Math.max(nRows, end[2] + 1));
+      nCols = Math.min(MAX_COLS, Math.max(nCols, end[0] + 1));
+    }
+    let rowTop;
+    let colLeft;
+    // 크기로 놓인 그림(oneCell·absolute)이 끝보다 길면 행·열을 더해 한 번 더 잰다.
+    for (let pass = 0; pass < 2; pass++) {
+      ({ rowTop, colLeft } = this.prefixes(nRows, nCols));
+      let right = 0;
+      let bottom = 0;
+      for (const p of m.pictures) {
+        const box = this.pictureRect(p, rowTop, colLeft, nRows, nCols);
+        right = Math.max(right, box.x + box.w);
+        bottom = Math.max(bottom, box.y + box.h);
+      }
+      const moreRows = bottom > rowTop[nRows] ? Math.ceil((bottom - rowTop[nRows]) / Math.max(8, m.defaultRowHeight)) + 1 : 0;
+      const moreCols = right > colLeft[nCols] ? Math.ceil((right - colLeft[nCols]) / Math.max(8, m.defaultColWidth)) + 1 : 0;
+      if (!moreRows && !moreCols) break;
+      nRows = Math.min(1_048_576, nRows + moreRows);
+      nCols = Math.min(MAX_COLS, nCols + moreCols);
+      if (pass === 1) ({ rowTop, colLeft } = this.prefixes(nRows, nCols));
+    }
+    const rowHead = Math.max(32, String(nRows).length * 8 + 12);
+    // 휴대폰에서 고정 영역이 화면 대부분을 차지하면 고정을 푼다.
+    let fr = Math.min(m.freezeRows, nRows - 1);
+    let fc = Math.min(m.freezeCols, nCols - 1);
+    if (rowTop[fr] > (vh - HEAD_HEIGHT) * 0.5) fr = 0;
+    if (colLeft[fc] > (vw - rowHead) * 0.6) fc = 0;
+    // 본문 영역은 고정 경계의 눈금선 자리(첫 본문 칸의 앞쪽 선)부터 시작한다. fw·fh는 고정 영역 크기다.
+    this.geo = { nRows, nCols, rowTop, colLeft, rowHead, fr, fc, fw: colLeft[fc] - 1, fh: rowTop[fr] - 1 };
+    this.build();
+    this.rendered = null;
+  }
+
+  /** 시트 좌표 누적합. 시트 좌표는 1부터 시작한다: 0은 A열 왼쪽·1행 위쪽 눈금선 자리라, 첫 칸의 앞쪽 테두리도 보인다. */
+  prefixes(nRows, nCols) {
+    const m = this.meta;
     const rowTop = new Float64Array(nRows + 1);
     const heights = new Float32Array(nRows).fill(m.defaultRowHeight);
     for (let i = 0; i < m.rowHeights.index.length; i++) if (m.rowHeights.index[i] < nRows) heights[m.rowHeights.index[i]] = m.rowHeights.value[i];
@@ -175,16 +222,82 @@ export class SheetGrid {
     for (let i = 0; i < m.colWidths.index.length; i++) if (m.colWidths.index[i] < nCols) widths[m.colWidths.index[i]] = m.colWidths.value[i];
     colLeft[0] = 1;
     for (let c = 0; c < nCols; c++) colLeft[c + 1] = colLeft[c] + widths[c];
-    const rowHead = Math.max(32, String(nRows).length * 8 + 12);
-    // 휴대폰에서 고정 영역이 화면 대부분을 차지하면 고정을 푼다.
-    let fr = Math.min(m.freezeRows, nRows - 1);
-    let fc = Math.min(m.freezeCols, nCols - 1);
-    if (rowTop[fr] > (vh - HEAD_HEIGHT) * 0.5) fr = 0;
-    if (colLeft[fc] > (vw - rowHead) * 0.6) fc = 0;
-    // 본문 영역은 고정 경계의 눈금선 자리(첫 본문 칸의 앞쪽 선)부터 시작한다. fw·fh는 고정 영역 크기다.
-    this.geo = { nRows, nCols, rowTop, colLeft, rowHead, fr, fc, fw: colLeft[fc] - 1, fh: rowTop[fr] - 1 };
-    this.build();
-    this.rendered = null;
+    return { rowTop, colLeft };
+  }
+
+  /** 그림의 시트 좌표 상자. 셀 앵커는 그 칸의 왼쪽·위에서 오프셋(px)만큼 떨어진 자리다. */
+  pictureRect(p, rowTop = this.geo.rowTop, colLeft = this.geo.colLeft, nRows = this.geo.nRows, nCols = this.geo.nCols) {
+    const at = (a) => [colLeft[Math.min(a[0], nCols)] + a[1], rowTop[Math.min(a[2], nRows)] + a[3]];
+    const [x0, y0] = p.from ? at(p.from) : [1 + (p.pos?.[0] ?? 0), 1 + (p.pos?.[1] ?? 0)];
+    const [x1, y1] = p.to ? at(p.to) : [x0 + (p.size?.[0] ?? 0), y0 + (p.size?.[1] ?? 0)];
+    const [f0, g0, f1, g1] = p.box;
+    const w = x1 - x0;
+    const h = y1 - y0;
+    return { x: x0 + f0 * w, y: y0 + g0 * h, w: Math.max(0, (f1 - f0) * w), h: Math.max(0, (g1 - g0) * h) };
+  }
+
+  /** 영역마다 그림 층을 만든다. 고정 경계에 걸친 그림은 양쪽 층에 하나씩 두고, 영역이 잘라 보인다. */
+  buildPictures() {
+    this.picLayers = new Map();
+    const pictures = this.meta.pictures;
+    if (!pictures.length) return;
+    const { fw, fh } = this.geo;
+    const areas = [
+      [this.cellsMain, fw, fh, 'main'],
+      [this.cellsLeft, 0, fh, 'left'],
+      [this.cellsTop, fw, 0, 'top'],
+      [this.cellsCorner, 0, 0, 'corner'],
+    ];
+    for (const [target, ox, oy, area] of areas) {
+      if (!target) continue;
+      const layer = div('sg-pics');
+      const items = [];
+      pictures.forEach((p, i) => {
+        const url = this.mediaUrls[p.media];
+        if (!url) return;
+        const el = div('sg-pic');
+        const img = document.createElement('img');
+        img.src = url;
+        img.alt = '';
+        img.loading = 'lazy';
+        img.decoding = 'async';
+        img.draggable = false;
+        el.appendChild(img);
+        if (p.rot || p.flipH || p.flipV) el.style.transform = `rotate(${p.rot}deg) scale(${p.flipH ? -1 : 1},${p.flipV ? -1 : 1})`;
+        layer.appendChild(el);
+        items.push({ el, img, p: pictures[i] });
+      });
+      target.appendChild(layer);
+      this.picLayers.set(target, { layer, items, ox, oy, area });
+    }
+    this.placePictures();
+  }
+
+  /** 행이 늘면 그림 자리도 다시 잡는다. 그 영역에 걸치지 않는 그림은 숨긴다. */
+  placePictures() {
+    const { rowTop, colLeft, fr, fc } = this.geo;
+    const fx = colLeft[fc];
+    const fy = rowTop[fr];
+    for (const { items, ox, oy, area } of this.picLayers?.values() ?? []) {
+      for (const { el, img, p } of items) {
+        const r = this.pictureRect(p);
+        const inX = area === 'main' || area === 'top' ? r.x + r.w > fx : r.x < fx;
+        const inY = area === 'main' || area === 'left' ? r.y + r.h > fy : r.y < fy;
+        el.hidden = !(inX && inY && r.w > 0 && r.h > 0);
+        if (el.hidden) continue;
+        el.style.left = `${r.x - ox}px`;
+        el.style.top = `${r.y - oy}px`;
+        el.style.width = `${r.w}px`;
+        el.style.height = `${r.h}px`;
+        if (p.crop) {
+          // srcRect: 원본에서 잘라 낸 비율(왼·위·오른·아래). 남은 부분이 상자를 채우게 원본을 키워 옮긴다.
+          const [l, t, rr, b] = p.crop;
+          const iw = r.w / Math.max(0.01, 1 - l - rr);
+          const ih = r.h / Math.max(0.01, 1 - t - b);
+          Object.assign(img.style, { width: `${iw}px`, height: `${ih}px`, left: `${-l * iw}px`, top: `${-t * ih}px` });
+        }
+      }
+    }
   }
 
   build() {
@@ -226,6 +339,7 @@ export class SheetGrid {
     this.cellsMain = slice(this.bandMain, 'sg-cells', totalW - fw);
     this.canvas = canvas;
     this.scroller.replaceChildren(canvas);
+    this.buildPictures();
   }
 
   /** 넘친 줄바꿈 칸에 맞춰 행을 늘리고, 화면 위쪽에서 늘어난 만큼 스크롤을 옮겨 보던 자리를 지킨다. */
@@ -256,6 +370,7 @@ export class SheetGrid {
     this.bandMain.style.height = `${rowTop[nRows] - g.fh}px`;
     this.canvas.style.height = `${HEAD_HEIGHT + rowTop[nRows]}px`;
     if (above) this.scroller.scrollTop += above;
+    this.placePictures();
     return true;
   }
 
@@ -486,6 +601,8 @@ export class SheetGrid {
     }
     for (const merge of merges) html += this.mergedCell(merge, ox, oy);
     target.innerHTML = html;
+    const pics = this.picLayers?.get(target);
+    if (pics) target.appendChild(pics.layer);
     this.fitText(target);
     this.measureWrap(target);
   }
