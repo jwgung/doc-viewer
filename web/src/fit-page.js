@@ -1,9 +1,9 @@
 // HTML로 그린 쪽(doc·docx)을 쪽 칸 폭에 맞춰 줄여 단다.
 // zoom으로 줄이면 작은 글자로 줄을 다시 나눠 쪽이 재 둔 크기보다 길어지고 끝이 잘린다(docx 130개 중 10개, 최대 444px).
 // 그래서 배치는 그대로 두고 그림만 줄이는 transform을 쓴다. 단 뒤에도 글꼴·그림이 늦게 자리 잡아 쪽 크기가 바뀌면
-// (문서에 담긴 글꼴은 나중에 적용된다) 칸을 다시 맞춘다.
+// (문서에 담긴 글꼴은 나중에 적용된다) 칸을 다시 맞춘다. 칸 폭이 바뀌어도(연속 스크롤 줄이기·화면 회전) 다시 맞춘다.
 
-const fitters = new WeakMap(); // 쪽 요소 → 지금 단 칸에 다시 맞추는 함수
+const fitters = new WeakMap(); // 쪽 요소·칸 → 지금 단 칸에 다시 맞추는 함수
 const resized = new ResizeObserver((entries) => {
   for (const { target } of entries) fitters.get(target)?.();
 });
@@ -23,14 +23,23 @@ export function placePage(page, index, el, sizes, viewer) {
     page.style.transform = `scale(${el.clientWidth / sizes[index].width})`;
   };
   fit();
-  fitters.set(page, () => {
+  let slotWidth = el.clientWidth;
+  const refit = () => {
     if (page.parentNode !== el) {
       // 칸에서 떼어 냈다(화면에서 멀어진 쪽). 더 지켜보지 않아 쪽 요소를 붙들지 않는다.
       resized.unobserve(page);
       fitters.delete(page);
-    } else if (page.offsetWidth !== sizes[index].width || page.offsetHeight !== sizes[index].height) {
+      if (fitters.get(el) === refit) {
+        resized.unobserve(el);
+        fitters.delete(el);
+      }
+    } else if (page.offsetWidth !== sizes[index].width || page.offsetHeight !== sizes[index].height || el.clientWidth !== slotWidth) {
+      slotWidth = el.clientWidth;
       fit();
     }
-  });
+  };
+  fitters.set(page, refit);
+  fitters.set(el, refit);
   resized.observe(page);
+  resized.observe(el);
 }
