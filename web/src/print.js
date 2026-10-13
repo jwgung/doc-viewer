@@ -18,8 +18,21 @@ export class TooManyPagesError extends Error {
 }
 
 /** @returns {Promise<{width: number, height: number} | null>} 첫 쪽 크기(앱이 용지 방향을 고르는 데 쓴다) */
-export async function preparePrint(viewer) {
+export async function preparePrint(viewer, printer = null) {
   finishPrint(null);
+  // 쪽 뷰어 없이 인쇄용 쪽을 직접 만드는 렌더러(엑셀)
+  if (printer) {
+    document.body.classList.add('printing');
+    const root = document.createElement('div');
+    root.className = 'print-root';
+    document.body.appendChild(root);
+    try {
+      return await printer(root, { limit: MAX_PRINT_PAGES, makeError: (limit) => new TooManyPagesError(limit) });
+    } catch (error) {
+      finishPrint(null);
+      throw error;
+    }
+  }
   await viewer?.doc.paginated;
   const limit = viewer?.doc.printLimit ?? MAX_PRINT_PAGES;
   if (viewer && viewer.doc.count > limit) throw new TooManyPagesError(limit);

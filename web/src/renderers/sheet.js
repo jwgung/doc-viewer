@@ -97,6 +97,12 @@ export async function render(bytes, container, ctx) {
   });
   wanted = opened.initial;
   highlight(opened.initial);
+  // 인쇄·PDF로 저장: 지금 보는 시트를 파일의 인쇄 설정대로 쪽으로 나눈다.
+  ctx.setPrinter(async (root, options) => {
+    const { buildSheetPrint } = await import('./sheet-print.js');
+    const sheetName = all.find((s) => s.index === current)?.name ?? '';
+    return buildSheetPrint(grid, root, { ...options, file: ctx.name, sheetName });
+  });
   await show(opened.initial, opened.sheet);
   tabs.querySelector('[aria-selected="true"]')?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
   ctx.markFirstPage();

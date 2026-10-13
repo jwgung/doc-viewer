@@ -83,7 +83,7 @@ function sheetPayload(model) {
   // 행·열 기본 서식(빈 칸 채우기)도 미리 보낸다.
   Object.assign(styles, book.styles.take([...meta.rowStyles.value, ...meta.colStyles.value]));
   // 그림 바이트는 옮기지 않고 복사한다(시트를 다시 보일 때 또 보낸다).
-  return { payload: { meta, blocks, styles, baseCss: book.styles.baseCss(), media: model.drawing?.media ?? [] }, transfer };
+  return { payload: { meta, blocks, styles, baseCss: book.styles.baseCss(), media: model.drawing?.media ?? [], background: model.background ?? null }, transfer };
 }
 
 self.onmessage = async ({ data }) => {

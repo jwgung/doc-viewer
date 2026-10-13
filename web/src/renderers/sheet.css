@@ -261,3 +261,32 @@
   width: 100%;
   height: 100%;
 }
+
+/* ---- 인쇄용 쪽(sheet-print.js) ------------------------------------------
+   용지 크기(96dpi px)로 그린 한 쪽. 화면 표의 칸 서식(.sheet-body .sg-cells .x번호)을 그대로 쓴다. */
+.sheet-body.sheet-print {
+  position: relative;
+  flex: none;
+  overflow: hidden;
+  color-scheme: light;
+  color: #000;
+  background: #fff;
+}
+
+.sheet-print-content {
+  position: absolute;
+  transform-origin: 0 0;
+}
+
+.sheet-print .sg-cells {
+  position: absolute;
+  overflow: hidden;
+}
+
+.sheet-print-hf {
+  position: absolute;
+  font: 11px Calibri, Carlito, 'Malgun Gothic', sans-serif;
+  line-height: 1.2;
+  white-space: pre;
+  color: #000;
+}

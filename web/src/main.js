@@ -34,6 +34,7 @@ const container = document.getElementById('doc');
 const status = document.getElementById('status');
 let fmt = null;
 let viewer = null;
+let printer = null;
 let opened = false;
 /** 쪽 있는 문서의 쪽별 글자(검색용). 렌더러가 ctx.setTextSource로 준다. */
 let textSource = null;
@@ -67,7 +68,7 @@ window.viewer = {
   preparePrint: async () => {
     const { preparePrint, TooManyPagesError, MAX_PRINT_PAGES } = await import('./print.js');
     try {
-      const size = await preparePrint(viewer);
+      const size = await preparePrint(viewer, printer);
       report('printReady', size ?? {});
     } catch (error) {
       report('printFailed', { tooManyPages: error instanceof TooManyPagesError, limit: error?.limit ?? MAX_PRINT_PAGES, message: String(error?.message ?? error) });
@@ -172,7 +173,7 @@ function flushPosition() {
   pendingPosition = null;
 }
 
-async function open({ fmt: format, src, mode = 'scroll', fit, page = 0, scroll = 0, notes = false }) {
+async function open({ fmt: format, src, name = '', mode = 'scroll', fit, page = 0, scroll = 0, notes = false }) {
   if (opened) return;
   opened = true;
   fmt = format;
@@ -209,6 +210,12 @@ async function open({ fmt: format, src, mode = 'scroll', fit, page = 0, scroll =
     setSearchProvider(provider) {
       searchProvider = provider;
     },
+    /** 쪽 뷰어 없이 인쇄용 쪽을 직접 만드는 렌더러(엑셀): printer(root, { limit, makeError }) → 첫 쪽 크기 */
+    setPrinter(fn) {
+      printer = fn;
+    },
+    /** 문서 이름(머리글·바닥글의 &F 등) */
+    name,
     /** 목차가 있는 렌더러가 항목을 돌려주는 함수를 준다. 앱은 이 알림을 받으면 '목차' 메뉴를 보인다. */
     setOutline(loader) {
       outlineLoader = loader;
@@ -278,6 +285,7 @@ async function open({ fmt: format, src, mode = 'scroll', fit, page = 0, scroll =
 async function showFallback(src) {
   // 실패한 렌더러가 남긴 쪽 뷰어 부품(쪽 번호·빠른 이동 손잡이·임시 그리기 영역)을 걷어 낸다.
   viewer = null;
+  printer = null;
   document.querySelectorAll('.page-indicator, .scrubber, .offscreen').forEach((el) => el.remove());
   const [{ extractFallback, renderFallback }, bytes] = await Promise.all([import('./fallback.js'), fetchDocument(src)]);
   const extracted = await extractFallback(bytes);
@@ -389,6 +397,7 @@ if (params.get('fmt')) {
   open({
     fmt: params.get('fmt'),
     src: params.get('src'),
+    name: params.get('name') ?? '',
     mode: params.get('mode') ?? 'scroll',
     fit: params.get('fit') ?? undefined,
     page: Number(params.get('page') ?? 0),
