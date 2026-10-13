@@ -45,8 +45,14 @@ export async function render(bytes, container, ctx) {
     const page = await pdf.getPage(index + 1);
     const base = page.getViewport({ scale: 1 });
     if (base.width !== sizes[index].width || base.height !== sizes[index].height) {
+      // 자리는 첫 쪽 크기로 잡아 두었다. 크기가 다른 쪽이면 자리를 고친다: 연속 스크롤은 그 칸만,
+      // 한 쪽씩·두 쪽씩은 칸 크기를 고정해 두었으므로 고친 크기로 다시 배치한다(이 칸에는 그리지 않는다).
       sizes[index] = { width: base.width, height: base.height };
-      if (el.style.aspectRatio) el.style.aspectRatio = `${base.width} / ${base.height}`;
+      if (viewer.mode === 'scroll') viewer.resizePage(index, sizes[index]);
+      else if (el.isConnected) {
+        viewer.renderFlip();
+        return;
+      }
     }
     const scale = el.clientWidth / base.width;
     const canvas = document.createElement('canvas');

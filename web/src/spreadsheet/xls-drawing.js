@@ -53,11 +53,10 @@ function rect(dv, rec) {
 
 /**
  * group: 전역 MSODRAWINGGROUP 바이트(없으면 null), drawing: 시트 MSODRAWING 바이트(이어 붙인 것).
- * objects: 시트의 OBJ 순서({ ot, chart }), chartXml(범위) → 차트 XML, chartSize(범위) → { w, h }(pt).
- * 차트 개체(ot=5)는 그 자리에 차트를 놓는다.
+ * objects: 시트의 OBJ 순서({ ot, chart }), chartXml(범위) → 차트 XML. 차트 개체(ot=5)는 그 자리에 차트를 놓는다.
  * { pictures, media }(xlsx와 같은 모양, 앵커는 frac) 또는 null
  */
-export async function readXlsPictures(group, drawing, { objects = [], chartXml = null, chartSize = null } = {}) {
+export async function readXlsPictures(group, drawing, { objects = [], chartXml = null } = {}) {
   let blips = [];
   if (group) {
     const gdv = new DataView(group.buffer, group.byteOffset, group.byteLength);
@@ -155,15 +154,8 @@ export async function readXlsPictures(group, drawing, { objects = [], chartXml =
         console.warn('[sheet] chart skipped', error);
       }
       if (!xml) return;
-      // 앵커 높이·너비가 0인 파일(위아래 행이 같고 오프셋 0)이 있다. 그때는 차트에 적힌 크기(pt)로 놓는다.
-      const [c1, x1, r1, y1] = anchor.from;
-      const [c2, x2, r2, y2] = anchor.to;
-      const flat = (r1 === r2 && y1 === y2) || (c1 === c2 && x1 === x2);
-      const size = flat && chartSize ? chartSize(chart) : null;
-      pictures.push({
-        from: anchor.from, to: size ? null : anchor.to, frac: true, size: size ? [(size.w * 96) / 72, (size.h * 96) / 72] : null, pos: null,
-        box, media: mediaList.length, crop: null, rot: 0, flipH: false, flipV: false,
-      });
+      // 앵커 높이나 너비가 0인 차트는 엑셀에서도 보이지 않는다(크기를 0으로 줄여 숨긴 것). 화면 쪽에서 크기 0이면 숨긴다.
+      pictures.push({ from: anchor.from, to: anchor.to, frac: true, size: null, pos: null, box, media: mediaList.length, crop: null, rot: 0, flipH: false, flipV: false });
       mediaList.push({ chart: xml });
       return;
     }
