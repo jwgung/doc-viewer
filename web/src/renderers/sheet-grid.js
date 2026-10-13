@@ -17,6 +17,7 @@ const MAX_INFLIGHT = 3;
 const MAX_SPILL_COLS = 64;
 const MAX_COLS = 16384;
 const MAX_ROW_HEIGHT = 545; // 엑셀 행 높이 상한(409pt)
+const GROW_LIMIT = 2.2; // 줄바꿈 칸에 맞춰 행을 늘리는 상한(저장된 높이의 배수)
 // 바이트가 아니라 XML로 오고 화면에서 그리는 항목(차트, 도형·글상자)
 const DRAWN = new Set(['chart', 'chartex', 'shapes']);
 // 도형은 선 굵기·화살촉이 상자 밖으로 나가므로 사방에 이만큼 더 그린다
@@ -131,6 +132,10 @@ export class SheetGrid {
     this.customRows = new Set(payload.meta.customRows);
     this.found = null; // 검색 결과 표시는 그 시트에만 있다
     this.setMedia(payload.media);
+    // 시트 배경 그림: 표 뒤에 바둑판처럼 깐다(엑셀 화면처럼. 인쇄에는 넣지 않는다).
+    if (this.backgroundUrl) URL.revokeObjectURL(this.backgroundUrl);
+    const bg = payload.background;
+    this.backgroundUrl = bg ? URL.createObjectURL(new Blob([bg.data], { type: bg.type })) : null;
     this.setBaseCss(payload.baseCss);
     this.addStyles(payload.styles);
     for (const block of payload.blocks) this.blocks.set(block.start / this.meta.blockRows, block);
@@ -180,6 +185,7 @@ export class SheetGrid {
       return map;
     };
     this.rowStyles = toMap(m.rowStyles);
+    this.storedHeights = toMap(m.rowHeights);
     this.colStyles = toMap(m.colStyles);
     // 병합: 행 묶음별로 걸치는 병합을 모아 둔다.
     this.merges = [];
@@ -373,6 +379,10 @@ export class SheetGrid {
     const canvas = div('sg-canvas');
     canvas.style.width = `${rowHead + totalW}px`;
     canvas.style.height = `${HEAD_HEIGHT + totalH}px`;
+    if (this.backgroundUrl) {
+      canvas.style.backgroundImage = `url("${this.backgroundUrl}")`;
+      canvas.style.backgroundPosition = `${rowHead + 1}px ${HEAD_HEIGHT + 1}px`;
+    }
     const band = (className, height, top) => {
       const el = div(`sg-band ${className}`);
       el.style.height = `${height}px`;
@@ -558,6 +568,20 @@ export class SheetGrid {
     }
   }
 
+  /** r0~r1행의 묶음을 모두 받아 둔다(인쇄처럼 화면 밖까지 그릴 때). */
+  async loadRows(r0, r1) {
+    const B = this.meta.blockRows;
+    const last = Math.ceil(this.meta.rowCount / B) - 1;
+    const sheet = this.sheet;
+    for (let b = Math.max(0, Math.floor(r0 / B)); b <= Math.min(last, Math.floor(r1 / B)); b++) {
+      if (this.blocks.has(b)) continue;
+      const reply = await this.fetchBlock(sheet, b);
+      if (sheet !== this.sheet || reply.error) return;
+      this.addStyles(reply.styles);
+      this.blocks.set(b, reply.block);
+    }
+  }
+
   evict() {
     if (this.blocks.size <= KEEP_BLOCKS) return;
     const B = this.meta.blockRows;
@@ -620,7 +644,7 @@ export class SheetGrid {
   }
 
   /** 한 영역(r0~r1행, c0~c1열)을 그린다. ox·oy는 그 영역 원점의 시트 좌표. */
-  paint(target, r0, r1, c0, c1, ox, oy) {
+  paint(target, r0, r1, c0, c1, ox, oy, { grid = this.meta.showGrid, measure = true } = {}) {
     const { rowTop, colLeft } = this.geo;
     const merges = this.mergesIn(r0, r1, c0, c1);
     const covered = new Set();
@@ -630,7 +654,7 @@ export class SheetGrid {
       }
     }
     let html = '';
-    if (this.meta.showGrid) html += this.gridLines(r0, r1, c0, c1, ox, oy);
+    if (grid) html += this.gridLines(r0, r1, c0, c1, ox, oy);
     const colStyles = this.colStyles.size ? this.colStylesIn(c0, c1) : null;
     for (let r = r0; r <= r1; r++) {
       const h = rowTop[r + 1] - rowTop[r];
@@ -670,7 +694,8 @@ export class SheetGrid {
     const pics = this.picLayers?.get(target);
     if (pics) target.appendChild(pics.layer);
     this.fitText(target);
-    this.measureWrap(target);
+    // 인쇄용으로 그릴 때는 행 높이를 재지 않는다(보이지 않는 층이라 잰 값이 틀리고, 화면 행 높이를 바꾼다).
+    if (measure) this.measureWrap(target);
   }
 
   colStylesIn(c0, c1) {
@@ -742,6 +767,9 @@ export class SheetGrid {
       if (!span) continue;
       const r = Number(cell.dataset.r);
       const need = Math.min(MAX_ROW_HEIGHT, Math.ceil(span.scrollHeight) + 1);
+      // 대체 글꼴이 넓어 한두 줄 넘치는 것만 늘린다. 저장된 높이의 두 배를 넘게 필요하면 글이 칸보다 훨씬 긴 것이라
+      // 엑셀처럼 저장된 높이에서 자른다(화면 밖 칸까지 그려 재는 인쇄·넓은 화면에서 행이 수백 px로 커지던 것).
+      if (need > GROW_LIMIT * (this.storedHeights.get(r) ?? this.meta.defaultRowHeight)) continue;
       if (need > rowTop[r + 1] - rowTop[r] && need > (this.growth.get(r) ?? 0)) this.growth.set(r, need);
     }
   }

@@ -273,6 +273,7 @@ export class SheetBuilder {
         freezeRows: this.freezeRows,
         freezeCols: this.freezeCols,
         showGrid: this.showGrid,
+        print: this.print ?? null,
         defaultRowHeight: this.defaultRowHeight,
         defaultColWidth: this.defaultColWidth,
       },
@@ -334,6 +335,7 @@ export class SheetModel {
       freezeRows: g.freezeRows,
       freezeCols: g.freezeCols,
       showGrid: g.showGrid,
+      print: g.print ?? null,
       blockRows: BLOCK_ROWS,
       pictures: this.drawing?.pictures ?? [],
     };

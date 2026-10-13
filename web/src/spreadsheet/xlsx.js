@@ -254,7 +254,8 @@ export async function readXlsx(bytes) {
   const mdw = maxDigitWidth(baseFont);
 
   const relById = new Map(rels.map((r) => [r.id, r]));
-  const sheets = elements(element(bookXml, 'sheets')?.body, 'sheet').map(({ attrs: a }) => {
+  const printNames = readPrintNames(bookXml);
+  const sheets = elements(element(bookXml, 'sheets')?.body, 'sheet').map(({ attrs: a }, index) => {
     const rel = relById.get(a.id);
     const type = rel?.type ?? '';
     return {
@@ -262,6 +263,7 @@ export async function readXlsx(bytes) {
       hidden: a.state === 'hidden' || a.state === 'veryHidden',
       kind: /chartsheet$/i.test(type) ? 'chart' : /macrosheet$/i.test(type) ? 'macro' : /dialogsheet$/i.test(type) ? 'dialog' : 'sheet',
       path: rel?.target ?? null,
+      printNames: printNames.get(index) ?? null,
     };
   });
   if (!sheets.length) return null;
@@ -379,7 +381,108 @@ async function readSheet(zip, sheet, context, styles, mdw, baseFont) {
     const [r1, c1, r2, c2] = decodeRange(a.ref);
     if (r1 >= 0 && c1 >= 0 && r2 >= r1 && c2 >= c1 && (r2 > r1 || c2 > c1)) builder.merges.push([r1, c1, r2, c2]);
   }
-  return builder.finish(sheet.name, context);
+  const rest = tail || buf;
+  builder.print = readPrint(rest, sheet.printNames, builder.fitToPage);
+  const model = builder.finish(sheet.name, context);
+  // 시트 배경 그림(<picture>)과 머리글·바닥글 그림(<legacyDrawingHF>, 인쇄에만 보인다)
+  const picture = emptyTag(rest, 'picture')?.id;
+  const legacyHF = emptyTag(rest, 'legacyDrawingHF')?.id;
+  if (picture || legacyHF) {
+    const sheetRels = new Map((await readRels(zip, sheet.path)).map((r) => [r.id, r.target]));
+    if (picture && sheetRels.get(picture)) model.background = await readMedia(zip, sheetRels.get(picture)).catch(() => null);
+    if (legacyHF && sheetRels.get(legacyHF) && model.geometry.print) {
+      model.geometry.print.images = await readHeaderImages(zip, sheetRels.get(legacyHF)).catch(() => null);
+    }
+  }
+  return model;
+}
+
+// ---- 인쇄 설정 ---------------------------------------------------------------
+/** 범위 글(시트!$A$1:$H$40, 시트!$1:$2, 시트!$A:$B)의 행·열. 줄·칸 전체는 해당 쪽을 null로 둔다. */
+function refRange(text) {
+  const ref = text.slice(text.lastIndexOf('!') + 1).replace(/\$/g, '').trim();
+  let m = /^([A-Za-z]{1,3})(\d+)(?::([A-Za-z]{1,3})(\d+))?$/.exec(ref);
+  if (m) {
+    const [r1, c1, r2, c2] = decodeRange(ref);
+    return { rows: [r1, r2], cols: [c1, c2] };
+  }
+  m = /^(\d+):(\d+)$/.exec(ref);
+  if (m) return { rows: [Number(m[1]) - 1, Number(m[2]) - 1], cols: null };
+  m = /^([A-Za-z]{1,3}):([A-Za-z]{1,3})$/.exec(ref);
+  if (m) {
+    const [, c1, , c2] = decodeRange(`${m[1]}1:${m[2]}1`);
+    return { rows: null, cols: [c1, c2] };
+  }
+  return null;
+}
+
+/** 통합 문서의 정의된 이름 중 인쇄 영역·인쇄 제목: 시트 번호 → { area: [r1,c1,r2,c2], titleRows, titleCols } */
+function readPrintNames(bookXml) {
+  const out = new Map();
+  for (const { attrs: a, body } of elements(element(bookXml, 'definedNames')?.body, 'definedName')) {
+    const sheet = Number(a.localSheetId);
+    if (!Number.isInteger(sheet) || (a.name !== '_xlnm.Print_Area' && a.name !== '_xlnm.Print_Titles')) continue;
+    const entry = out.get(sheet) ?? {};
+    // 여러 범위는 쉼표로 잇는다(시트 이름 안 쉼표는 따옴표 안이다)
+    const parts = unescapeXml(body).match(/(?:'[^']*(?:''[^']*)*'|[^,])+/g) ?? [];
+    for (const part of parts) {
+      const range = refRange(part);
+      if (!range) continue;
+      if (a.name === '_xlnm.Print_Area') {
+        entry.area ??= [range.rows?.[0] ?? 0, range.cols?.[0] ?? 0, range.rows?.[1] ?? 1_048_575, range.cols?.[1] ?? 16_383];
+      } else if (range.rows && !range.cols) entry.titleRows = range.rows;
+      else if (range.cols && !range.rows) entry.titleCols = range.cols;
+    }
+    out.set(sheet, entry);
+  }
+  return out;
+}
+
+/** 시트 XML 뒤쪽의 인쇄 설정(여백·용지 방향·배율·쪽 나누기·머리글·바닥글). 단위는 인치(여백), 배율은 1 = 100% */
+function readPrint(xml, names, fitToPage) {
+  const margins = emptyTag(xml, 'pageMargins') ?? {};
+  const setup = emptyTag(xml, 'pageSetup') ?? {};
+  const options = emptyTag(xml, 'printOptions') ?? {};
+  const hf = element(xml, 'headerFooter');
+  const breaks = (name) => elements(element(xml, name)?.body, 'brk').map((b) => Number(b.attrs.id)).filter((v) => v > 0);
+  const inch = (v, dflt) => (Number.isFinite(Number(v)) && v != null ? Number(v) : dflt);
+  const scale = Number(setup.scale);
+  return {
+    area: names?.area ?? null,
+    titleRows: names?.titleRows ?? null,
+    titleCols: names?.titleCols ?? null,
+    landscape: setup.orientation === 'landscape',
+    scale: scale >= 10 && scale <= 400 ? scale / 100 : 1,
+    fit: fitToPage ? { w: Number(setup.fitToWidth ?? 1) || 0, h: Number(setup.fitToHeight ?? 1) || 0 } : null,
+    margins: {
+      l: inch(margins.left, 0.7), r: inch(margins.right, 0.7), t: inch(margins.top, 0.75), b: inch(margins.bottom, 0.75),
+      header: inch(margins.header, 0.3), footer: inch(margins.footer, 0.3),
+    },
+    center: { h: truthy(options.horizontalCentered), v: truthy(options.verticalCentered) },
+    grid: truthy(options.gridLines),
+    rowBreaks: breaks('rowBreaks'),
+    colBreaks: breaks('colBreaks'),
+    header: hf ? unescapeXml(element(hf.body, 'oddHeader')?.body ?? '') : '',
+    footer: hf ? unescapeXml(element(hf.body, 'oddFooter')?.body ?? '') : '',
+  };
+}
+
+/** 머리글·바닥글 그림(VML): 자리(LH·CH·RH·LF·CF·RF) → { type, data, w, h(px) } */
+async function readHeaderImages(zip, vmlPath) {
+  const vml = await zip.text(vmlPath);
+  if (!vml) return null;
+  const rels = new Map((await readRels(zip, vmlPath)).map((r) => [r.id, r.target]));
+  const out = {};
+  for (const [, head, body] of vml.matchAll(/<v:shape\b([^>]*)>([\s\S]*?)<\/v:shape>/g)) {
+    const a = attrs(head);
+    const place = /^[LCR][HF]$/.test(a.id ?? '') ? a.id : null;
+    const relid = /o:relid="([^"]+)"/.exec(body)?.[1];
+    if (!place || !relid || !rels.get(relid)) continue;
+    const pt = (name) => Number(new RegExp(`${name}:\\s*([\\d.]+)pt`).exec(a.style ?? '')?.[1]) || 0;
+    const media = await readMedia(zip, rels.get(relid)).catch(() => null);
+    if (media) out[place] = { ...media, w: (pt('width') * 96) / 72, h: (pt('height') * 96) / 72 };
+  }
+  return out;
 }
 
 function readHead(head, builder, mdw) {
@@ -393,6 +496,7 @@ function readHead(head, builder, mdw) {
       builder.freezeRows = Math.max(0, Math.round(Number(pane.ySplit) || 0));
     }
   }
+  if (truthy(emptyTag(head, 'pageSetUpPr')?.fitToPage)) builder.fitToPage = true;
   const format = emptyTag(head, 'sheetFormatPr');
   if (format) {
     if (Number(format.defaultRowHeight) > 0) builder.defaultRowHeight = Math.round((Number(format.defaultRowHeight) * 4) / 3);

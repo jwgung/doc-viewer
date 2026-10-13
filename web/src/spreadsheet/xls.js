@@ -3,6 +3,7 @@
 // SheetJS CE는 코드페이지 표가 없어 BIFF5의 한국어(949)·일본어(932) 글자가 깨지므로 BIFF5도 여기서 읽는다.
 // 시트는 BOUNDSHEET의 위치로 바로 찾아가 필요한 시트만 읽는다.
 // BIFF4 이하, 암호화, CFB가 아닌 파일(HTML·XML로 된 .xls)은 null을 돌려 SheetJS 경로로 넘긴다.
+import { SSF } from 'xlsx';
 import { isCfb, readCfbStream } from './cfb.js';
 import { BLANK, BOOL, BookContext, ERR, NUM, STR, SheetBuilder, SheetModel } from './sheet-store.js';
 import {
@@ -17,6 +18,9 @@ const RT = {
   NUMBER: 0x0203, RK: 0x027e, MULRK: 0x00bd, LABELSST: 0x00fd, LABEL: 0x0204, RSTRING: 0x00d6, BOOLERR: 0x0205,
   FORMULA: 0x0006, STRING: 0x0207, BLANK: 0x0201, MULBLANK: 0x00be, MERGEDCELLS: 0x00e5, WINDOW2: 0x023e, PANE: 0x0041,
   MSODRAWINGGROUP: 0x00eb, MSODRAWING: 0x00ec, OBJ: 0x005d, TXO: 0x01b6, EXTERNSHEET: 0x0017, SUPBOOK: 0x01ae,
+  NAME: 0x0018, LEFTMARGIN: 0x0026, RIGHTMARGIN: 0x0027, TOPMARGIN: 0x0028, BOTTOMMARGIN: 0x0029, SETUP: 0x00a1,
+  HCENTER: 0x0083, VCENTER: 0x0084, PRINTGRIDLINES: 0x002b, HPAGEBREAKS: 0x001b, VPAGEBREAKS: 0x001a, HEADER: 0x0014,
+  FOOTER: 0x0015, WSBOOL: 0x0081, BKHIM: 0x00e9,
 };
 const ERRORS = { 0x00: '#NULL!', 0x07: '#DIV/0!', 0x0f: '#VALUE!', 0x17: '#REF!', 0x1d: '#NAME?', 0x24: '#NUM!', 0x2a: '#N/A', 0x2b: '#GETTING_DATA' };
 
@@ -147,6 +151,7 @@ export function readXls(bytes) {
   let active = 0;
   let ansi = ansiDecoder(1252);
   const drawingGroup = []; // MSODRAWINGGROUP(+CONTINUE) 조각: 그림 저장소
+  const printNames = new Map(); // 시트 번호(BOUNDSHEET 순서) → 인쇄 영역·인쇄 제목
   let externSheets = []; // EXTERNSHEET: 3차원 참조 번호(ixti) → { book: SUPBOOK 번호, tab: 시트 번호(BOUNDSHEET 순서) }
   let supbooks = 0;
   let selfBook = -1; // 이 통합 문서를 가리키는 SUPBOOK 번호(다른 통합 문서를 가리키는 참조는 읽지 않는다)
@@ -213,6 +218,9 @@ export function readXls(bytes) {
         break;
       case RT.WINDOW1:
         if (size >= 12) active = dv.getUint16(body + 10, true);
+        break;
+      case RT.NAME:
+        if (biff === 8) readPrintName(stream, dv, body, size, printNames);
         break;
       case RT.EXTERNSHEET:
         if (biff === 8) {
@@ -300,6 +308,14 @@ export function readXls(bytes) {
   // sheetModels: 이번에 읽는 시트의 차트들이 함께 쓰는 참조 시트(다 그리면 버린다). 지금 읽는 시트는 미리 넣어 둔다.
   const chartEnv = (sheetModels = new Map()) => ({
     palette,
+    font: (ifnt) => {
+      const f = font(ifnt);
+      return f ? { size: f.size, bold: f.bold, italic: f.italic, color: color(f.colorIndex)?.slice(1).toUpperCase() ?? null } : null;
+    },
+    numFmt: (ifmt) => {
+      const code = formats.get(ifmt) ?? SSF.get_table()[ifmt];
+      return code && code !== 'General' ? code : null;
+    },
     cells: ({ ixti, r1, c1, r2, c2 }) => {
       const ref = externSheets[ixti];
       if (!ref || (selfBook >= 0 && ref.book !== selfBook)) return null;
@@ -307,7 +323,7 @@ export function readXls(bytes) {
       if (!s || s.dt !== 0) return null;
       if (!sheetModels.has(s)) {
         const offset = offsetOf(s);
-        sheetModels.set(s, offset < 0 ? null : readSheet(stream, dv, { ...s, offset }, { biff, text, context, styles, mdw }));
+        sheetModels.set(s, offset < 0 ? null : readSheet(stream, dv, { ...s, offset, printNames: printNames.get(sheets.indexOf(s)) }, { biff, text, context, styles, mdw }));
       }
       const model = sheetModels.get(s);
       if (!model || (r2 - r1 + 1) * (c2 - c1 + 1) > 10000) return null;
@@ -373,7 +389,7 @@ export function readXls(bytes) {
       const offset = offsetOf(s);
       if (offset < 0) return SheetModel.placeholder(s.name, s.dt === 2 ? 'chart' : 'sheet');
       if (s.dt === 2) return biff === 8 ? readChartSheet(s.name, offset) : SheetModel.placeholder(s.name, 'chart');
-      const model = readSheet(stream, dv, { ...s, offset }, { biff, text, context, styles, mdw });
+      const model = readSheet(stream, dv, { ...s, offset, printNames: printNames.get(sheets.indexOf(s)) }, { biff, text, context, styles, mdw });
       const { drawingRanges: ranges, objects } = model;
       delete model.drawingRanges;
       delete model.objects;
@@ -515,6 +531,15 @@ function readSheet(stream, dv, sheet, { biff, text: readText, context, styles, m
   let pending = null; // 수식 결과 문자열을 기다리는 칸
   const drawing = []; // MSODRAWING(+CONTINUE) 조각: 도형 트리. 사이사이 OBJ·TXO 레코드는 빼고 잇는다.
   const objects = []; // OBJ 순서(도형 트리의 ClientData 순서와 같다): { ot, chart: [시작, 끝] }
+  // 인쇄 설정(엑셀 97 기본 여백: 좌우 0.75, 위아래 1, 머리글·바닥글 0.5인치)
+  const print = {
+    area: sheet.printNames?.area ?? null, titleRows: sheet.printNames?.titleRows ?? null, titleCols: sheet.printNames?.titleCols ?? null,
+    landscape: false, scale: 1, fit: null, margins: { l: 0.75, r: 0.75, t: 1, b: 1, header: 0.5, footer: 0.5 },
+    center: { h: false, v: false }, grid: false, rowBreaks: [], colBreaks: [], header: '', footer: '',
+  };
+  let fitToPage = false;
+  let fitSize = { w: 1, h: 1 };
+  let background = null;
   let chartStart = -1;
   let inDrawing = false;
   while (pos + 4 <= len) {
@@ -694,6 +719,56 @@ function readSheet(stream, dv, sheet, { biff, text: readText, context, styles, m
       case RT.DIMENSIONS:
         builder.totalRows = biff === 8 ? dv.getUint32(body + 4, true) : dv.getUint16(body + 2, true);
         break;
+      case RT.LEFTMARGIN:
+      case RT.RIGHTMARGIN:
+      case RT.TOPMARGIN:
+      case RT.BOTTOMMARGIN:
+        if (size >= 8) print.margins[{ [RT.LEFTMARGIN]: 'l', [RT.RIGHTMARGIN]: 'r', [RT.TOPMARGIN]: 't', [RT.BOTTOMMARGIN]: 'b' }[type]] = dv.getFloat64(body, true);
+        break;
+      case RT.SETUP: {
+        if (size < 34) break;
+        const grbit = dv.getUint16(body + 10, true);
+        if (grbit & 0x04) break; // fNoPls: 프린터 설정이 없다(기본값)
+        const scale = dv.getUint16(body + 2, true);
+        if (scale >= 10 && scale <= 400) print.scale = scale / 100;
+        fitSize = { w: dv.getUint16(body + 6, true), h: dv.getUint16(body + 8, true) };
+        if (!(grbit & 0x40)) print.landscape = !(grbit & 0x02);
+        print.margins.header = dv.getFloat64(body + 16, true);
+        print.margins.footer = dv.getFloat64(body + 24, true);
+        break;
+      }
+      case RT.HCENTER:
+        print.center.h = dv.getUint16(body, true) === 1;
+        break;
+      case RT.VCENTER:
+        print.center.v = dv.getUint16(body, true) === 1;
+        break;
+      case RT.PRINTGRIDLINES:
+        print.grid = dv.getUint16(body, true) === 1;
+        break;
+      case RT.WSBOOL:
+        fitToPage = Boolean(dv.getUint16(body, true) & 0x100);
+        break;
+      case RT.HPAGEBREAKS:
+      case RT.VPAGEBREAKS: {
+        const n = dv.getUint16(body, true);
+        const step = biff === 8 ? 6 : 2;
+        const list = type === RT.HPAGEBREAKS ? print.rowBreaks : print.colBreaks;
+        for (let i = 0; i < n && 2 + i * step + 2 <= size; i++) list.push(dv.getUint16(body + 2 + i * step, true));
+        break;
+      }
+      case RT.HEADER:
+      case RT.FOOTER:
+        if (size >= 3) print[type === RT.HEADER ? 'header' : 'footer'] = readText(body, body + size, biff === 8 ? 2 : 1);
+        break;
+      case RT.BKHIM: {
+        // 시트 배경 그림: 비트맵(cf 9)이면 BMP 파일 머리를 붙인다. 큰 그림은 CONTINUE로 이어진다.
+        if (size < 8 || dv.getUint16(body, true) !== 0x09) break;
+        const ranges = [[body + 8, body + size]];
+        pos = collectContinue(dv, pos, len, ranges);
+        background = bitmapToBmp(join(stream, ranges));
+        break;
+      }
       default:
         break;
     }
@@ -702,7 +777,58 @@ function readSheet(stream, dv, sheet, { biff, text: readText, context, styles, m
   const model = builder.finish(sheet.name, context);
   model.drawingRanges = drawing;
   model.objects = objects;
+  if (fitToPage) print.fit = fitSize;
+  model.geometry.print = print;
+  if (background) model.background = { type: 'image/bmp', data: background };
   return model;
+}
+
+/** BkHim 비트맵(BITMAPCOREHEADER + 픽셀)에 BMP 파일 머리(14바이트)를 붙인다. */
+function bitmapToBmp(dib) {
+  if (dib.length < 12) return null;
+  const out = new Uint8Array(14 + dib.length);
+  const dv = new DataView(out.buffer);
+  out[0] = 0x42;
+  out[1] = 0x4d;
+  dv.setUint32(2, out.length, true);
+  dv.setUint32(10, 14 + new DataView(dib.buffer, dib.byteOffset).getUint32(0, true), true);
+  out.set(dib, 14);
+  return out;
+}
+
+/**
+ * NAME 레코드 중 기본 이름 인쇄 영역(6)·인쇄 제목(7)을 읽는다. 수식의 3차원 영역 참조(ptgArea3d)만 본다.
+ * 인쇄 제목은 행 전체(열 0~255)면 반복할 행, 열 전체(행 0~65535)면 반복할 열이다.
+ */
+function readPrintName(stream, dv, at, size, out) {
+  if (size < 15) return;
+  const grbit = dv.getUint16(at, true);
+  if (!(grbit & 0x20)) return; // 기본 이름만
+  const cch = stream[at + 3];
+  const cce = dv.getUint16(at + 4, true);
+  const itab = dv.getUint16(at + 8, true);
+  const high = stream[at + 14] & 1;
+  const code = stream[at + 15];
+  if (!itab || (code !== 6 && code !== 7)) return;
+  let p = at + 15 + cch * (high ? 2 : 1);
+  const end = Math.min(at + size, p + cce);
+  const entry = out.get(itab - 1) ?? {};
+  while (p < end) {
+    const ptg = stream[p];
+    if (ptg === 0x3b || ptg === 0x5b || ptg === 0x7b) {
+      const r1 = dv.getUint16(p + 3, true);
+      const r2 = dv.getUint16(p + 5, true);
+      const c1 = dv.getUint16(p + 7, true) & 0xff;
+      const c2 = dv.getUint16(p + 9, true) & 0xff;
+      if (code === 6) entry.area ??= [r1, c1, r2, c2];
+      else if (c1 === 0 && c2 === 255) entry.titleRows = [r1, r2];
+      else if (r1 === 0 && r2 === 65535) entry.titleCols = [c1, c2];
+      p += 11;
+    } else if (ptg === 0x29 || ptg === 0x49 || ptg === 0x69) p += 3; // ptgMemFunc
+    else if (ptg === 0x10) p += 1; // ptgUnion
+    else break;
+  }
+  out.set(itab - 1, entry);
 }
 
 function join(stream, ranges) {

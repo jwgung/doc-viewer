@@ -10,7 +10,7 @@ const RT = {
   PIE: 0x1019, AREA: 0x101a, SCATTER: 0x101b, AXIS: 0x101d, VALUERANGE: 0x101f, AXISLINE: 0x1021, TEXT: 0x1025,
   OBJECTLINK: 0x1027, FRAME: 0x1032, BEGIN: 0x1033, END: 0x1034, PLOTAREA: 0x1035, CHART3D: 0x103a, RADAR: 0x103e,
   SURF: 0x103f, RADARAREA: 0x1040, AXISPARENT: 0x1041, SERTOCRT: 0x1045, BRAI: 0x1051, BOPPOP: 0x1061, SIINDEX: 0x1065,
-  SERPARENT: 0x104a, NUMBER: 0x0203, LABEL: 0x0204, BOF: 0x0809, EOF: 0x000a,
+  SERPARENT: 0x104a, DEFAULTTEXT: 0x1024, FONTX: 0x1026, IFMT: 0x104e, NUMBER: 0x0203, LABEL: 0x0204, BOF: 0x0809, EOF: 0x000a,
 };
 const MARKERS = ['none', 'square', 'diamond', 'triangle', 'x', 'star', 'dash', 'dash', 'circle', 'plus'];
 const LEGEND_POS = { 0: 'b', 1: 'tr', 2: 't', 3: 'r', 4: 'l' };
@@ -74,6 +74,7 @@ function parse(b, start, end) {
   let frame = null;
   let plotNext = false;
   let siIndex = 0;
+  let defaultId = null;
   const top = () => stack[stack.length - 1];
   for (let pos = start; pos + 4 <= end; ) {
     const type = dv.getUint16(pos, true);
@@ -96,10 +97,14 @@ function parse(b, start, end) {
       else if (closed === RT.CHARTFORMAT) group = null;
       else if (closed === RT.FRAME) frame = null;
       else if (closed === RT.TEXT && text) {
-        if (text.link === 1 && text.value) chart.title = text.value;
-        else if ((text.link === 2 || text.link === 3 || text.link === 7) && text.value) {
+        if (text.defaultId != null) {
+          if (text.font != null) (chart.defaultFonts ??= {})[text.defaultId] = text.font;
+        } else if (text.link === 1 && text.value) {
+          chart.title = text.value;
+          chart.titleFont = text.font;
+        } else if ((text.link === 2 || text.link === 3 || text.link === 7) && text.value) {
           chart.axisTitles ??= {};
-          chart.axisTitles[`${parent.iax}:${text.link}`] = text.value;
+          chart.axisTitles[`${parent.iax}:${text.link}`] = { value: text.value, font: text.font };
         }
         text = null;
       }
@@ -135,7 +140,18 @@ function parse(b, start, end) {
         break;
       }
       case RT.TEXT:
-        text = { link: 0, value: null, ref: null };
+        text = { link: 0, value: null, ref: null, font: null, defaultId };
+        defaultId = null;
+        break;
+      case RT.DEFAULTTEXT: // 뒤따르는 TEXT가 기본 글꼴(0·2: 차트 전체 글자, 3: 제목)
+        defaultId = dv.getUint16(at, true);
+        break;
+      case RT.FONTX: // 글꼴 번호: 바로 바깥 블록의 글자(제목·축 제목) 또는 축 눈금 글자
+        if (top() === RT.TEXT && text) text.font = dv.getUint16(at, true);
+        else if (top() === RT.AXIS && axis) axis.font = dv.getUint16(at, true);
+        break;
+      case RT.IFMT: // 축 눈금의 숫자 서식 번호
+        if (top() === RT.AXIS && axis) axis.ifmt = dv.getUint16(at, true);
         break;
       case RT.OBJECTLINK:
         if (text) text.link = dv.getUint16(at, true);
@@ -191,7 +207,7 @@ function parse(b, start, end) {
         parent = { iax: dv.getUint16(at, true) };
         break;
       case RT.AXIS:
-        axis = { iax: parent.iax, type: dv.getUint16(at, true), min: null, max: null, major: null, grid: null, gridNext: false, reversed: false, log: false };
+        axis = { iax: parent.iax, type: dv.getUint16(at, true), min: null, max: null, major: null, grid: null, gridNext: false, reversed: false, log: false, font: null, ifmt: null };
         chart.axes.push(axis);
         break;
       case RT.VALUERANGE:
@@ -269,7 +285,8 @@ function parse(b, start, end) {
 }
 
 /**
- * stream[start, end): 차트 하위 스트림(BOF~EOF). env: { palette(hex 64개), cells(ixti, r1, c1, r2, c2) → [{ num, text } | null] }
+ * stream[start, end): 차트 하위 스트림(BOF~EOF).
+ * env: { palette(hex 64개), cells(ixti, r1, c1, r2, c2) → [{ num, text } | null], font(번호) → { size, bold, italic, color } | null, numFmt(번호) → 서식 문자열 | null }
  * 그릴 것이 없으면 null
  */
 export function biffChartXml(stream, start, end, env) {
@@ -315,7 +332,24 @@ export function biffChartXml(stream, start, end, env) {
     for (let i = 0; i < n; i++) if (vals[i] != null && vals[i] !== '') pts += `<c:pt idx="${i}"><c:v>${esc(vals[i])}</c:v></c:pt>`;
     return `<c:strRef><c:f></c:f><c:strCache><c:ptCount val="${n}"/>${pts}</c:strCache></c:strRef>`;
   };
-  const rich = (t) => `<c:tx><c:rich><a:bodyPr/><a:p><a:r><a:t>${esc(t)}</a:t></a:r></a:p></c:rich></c:tx>`;
+  // 글꼴: 워크북 FONT 번호 → 글자 속성(엑셀은 차트 글자를 pt로 저장한다)
+  const runAttrs = (ifnt) => {
+    const f = ifnt == null ? null : env.font?.(ifnt);
+    if (!f) return null;
+    return `<a:defRPr sz="${Math.round(f.size * 100)}" b="${f.bold ? 1 : 0}" i="${f.italic ? 1 : 0}">${f.color ? `<a:solidFill><a:srgbClr val="${f.color}"/></a:solidFill>` : ''}</a:defRPr>`;
+  };
+  const pPr = (ifnt) => {
+    const r = runAttrs(ifnt);
+    return r ? `<a:pPr>${r}</a:pPr>` : '';
+  };
+  const txPr = (ifnt) => (runAttrs(ifnt) ? `<c:txPr><a:bodyPr/><a:lstStyle/><a:p>${pPr(ifnt)}<a:endParaRPr lang="en-US"/></a:p></c:txPr>` : '');
+  const rich = (t, ifnt = null) => `<c:tx><c:rich><a:bodyPr/><a:p>${pPr(ifnt)}<a:r><a:t>${esc(t)}</a:t></a:r></a:p></c:rich></c:tx>`;
+  const numFmtXml = (a) => {
+    const code = a?.ifmt ? env.numFmt?.(a.ifmt) : null;
+    return code ? `<c:numFmt formatCode="${esc(code)}" sourceLinked="0"/>` : '<c:numFmt formatCode="General" sourceLinked="1"/>';
+  };
+  const defaults = chart.defaultFonts ?? {};
+  const baseFont = defaults[2] ?? defaults[0] ?? null;
 
   let axId = 1;
   let plot = '';
@@ -392,12 +426,12 @@ export function biffChartXml(stream, start, end, env) {
       const horizontal = g.kind === 'bar' && g.horizontal;
       const scaling = (a) => `<c:scaling>${a?.log ? '<c:logBase val="10"/>' : ''}<c:orientation val="${a?.reversed ? 'maxMin' : 'minMax'}"/>${a?.max != null ? `<c:max val="${a.max}"/>` : ''}${a?.min != null ? `<c:min val="${a.min}"/>` : ''}</c:scaling>`;
       const grid = (a) => (a?.grid ? `<c:majorGridlines><c:spPr>${lnXml(a.grid, null)}</c:spPr></c:majorGridlines>` : '');
-      const title = (t) => (t ? `<c:title>${rich(t)}<c:overlay val="0"/></c:title>` : '');
+      const title = (t) => (t ? `<c:title>${rich(t.value, t.font ?? baseFont)}<c:overlay val="0"/></c:title>` : '');
       const catPos = horizontal ? (secondary ? 'r' : 'l') : secondary ? 't' : 'b';
       const valPos = horizontal ? (secondary ? 't' : 'b') : secondary ? 'r' : 'l';
       const catTag = xy ? 'valAx' : 'catAx';
-      axesXml += `<c:${catTag}><c:axId val="${axId}"/>${scaling(cat)}<c:delete val="${cat ? 0 : 1}"/><c:axPos val="${catPos}"/>${grid(cat)}${title(titleOf(3))}<c:numFmt formatCode="General" sourceLinked="1"/><c:majorTickMark val="out"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/><c:crossAx val="${axId + 1}"/><c:crosses val="autoZero"/>${xy ? '<c:crossBetween val="midCat"/>' : ''}</c:${catTag}>`;
-      axesXml += `<c:valAx><c:axId val="${axId + 1}"/>${scaling(val)}<c:delete val="${val ? 0 : 1}"/><c:axPos val="${valPos}"/>${grid(val)}${title(titleOf(2))}<c:numFmt formatCode="General" sourceLinked="1"/><c:majorTickMark val="out"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/><c:crossAx val="${axId}"/><c:crosses val="${secondary ? 'max' : 'autoZero'}"/><c:crossBetween val="${xy ? 'midCat' : 'between'}"/>${val?.major ? `<c:majorUnit val="${val.major}"/>` : ''}</c:valAx>`;
+      axesXml += `<c:${catTag}><c:axId val="${axId}"/>${scaling(cat)}<c:delete val="${cat ? 0 : 1}"/><c:axPos val="${catPos}"/>${grid(cat)}${title(titleOf(3))}${numFmtXml(cat)}<c:majorTickMark val="out"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/>${txPr(cat?.font ?? baseFont)}<c:crossAx val="${axId + 1}"/><c:crosses val="autoZero"/>${xy ? '<c:crossBetween val="midCat"/>' : ''}</c:${catTag}>`;
+      axesXml += `<c:valAx><c:axId val="${axId + 1}"/>${scaling(val)}<c:delete val="${val ? 0 : 1}"/><c:axPos val="${valPos}"/>${grid(val)}${title(titleOf(2))}${numFmtXml(val)}<c:majorTickMark val="out"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/>${txPr(val?.font ?? baseFont)}<c:crossAx val="${axId}"/><c:crosses val="${secondary ? 'max' : 'autoZero'}"/><c:crossBetween val="${xy ? 'midCat' : 'between'}"/>${val?.major ? `<c:majorUnit val="${val.major}"/>` : ''}</c:valAx>`;
       axId += 2;
     }
   });
@@ -411,12 +445,13 @@ export function biffChartXml(stream, start, end, env) {
   return (
     '<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">' +
     '<c:chart>' +
-    (chart.title ? `<c:title>${rich(chart.title)}<c:overlay val="0"/></c:title><c:autoTitleDeleted val="0"/>` : '<c:autoTitleDeleted val="1"/>') +
+    (chart.title ? `<c:title>${rich(chart.title, chart.titleFont ?? defaults[3] ?? baseFont)}<c:overlay val="0"/></c:title><c:autoTitleDeleted val="0"/>` : '<c:autoTitleDeleted val="1"/>') +
     `<c:plotArea><c:layout/>${plot}${axesXml}${frameSp(chart.plot, chart.plotLine)}</c:plotArea>` +
     (chart.legend ? `<c:legend><c:legendPos val="${chart.legend}"/><c:overlay val="0"/></c:legend>` : '') +
     '<c:plotVisOnly val="1"/></c:chart>' +
     // 차트 영역: 지정이 없으면 엑셀처럼 흰 바탕에 검은 테두리
     (frameSp(chart.area, chart.areaLine) || '<c:spPr><a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill><a:ln w="9525"><a:solidFill><a:srgbClr val="000000"/></a:solidFill></a:ln></c:spPr>') +
+    txPr(baseFont) +
     '</c:chartSpace>'
   );
 }
