@@ -20,8 +20,10 @@ const KEEP_RENDERED = 8;
 const SWIPE_MIN_PX = 50;
 const EDGE_TAP_RATIO = 0.3;
 const THUMB_PX = 44;
-// 연속 스크롤에서 줄일 수 있는 가장 작은 비율(한 줄에 두 쪽)
-const MIN_SHRINK = 0.5;
+// 처음 크기에서 줄일 수 있는 가장 작은 비율(연속 스크롤이면 한 줄에 네 쪽)
+const MIN_SHRINK = 0.25;
+// 줄였을 때 그려 둔 채 남길 쪽 수의 상한(한 화면에 스무 쪽 남짓 보인다)
+const KEEP_RENDERED_MAX = 64;
 // 높이가 너비의 이 배를 넘는 쪽은 용지 한 장이 아니라 쪽 나누기 없이 길게 이어진 문서(doc·docx)다.
 // 용지 맞춤으로 한 화면에 줄이면 읽을 수 없으므로 너비에 맞추고 세로로 스크롤한다.
 const LONG_PAGE_RATIO = 2;
@@ -207,7 +209,8 @@ export class PagedViewer {
   }
 
   /**
-   * 연속 스크롤의 쪽 칸을 줄인다. 손가락 사이(focusY) 아래의 쪽 자리가 그대로 있게 화면을 옮긴다.
+   * 쪽을 처음 크기보다 줄인다. 연속 스크롤은 쪽 칸을 줄이고 손가락 사이(focusY) 아래의 쪽 자리가 그대로 있게 화면을 옮긴다.
+   * 한 쪽씩·두 쪽씩은 오므리는 동안 무대를 transform으로 줄이고, 손을 떼면 그 크기로 다시 배치한다(renderFlip).
    * 줄인 동안에는 WebView 확대를 막아(touch-action) 벌리기를 이쪽에서 받아 처음 크기로 되돌린다.
    */
   setShrink(value, focusY = innerHeight / 2) {
@@ -220,6 +223,8 @@ export class PagedViewer {
     if (shrink < 1) this.container.dataset.shrunk = '';
     else delete this.container.dataset.shrunk;
     document.documentElement.style.touchAction = shrink < 1 ? 'pan-x pan-y' : '';
+    const stage = this.mode === 'scroll' ? null : this.container.querySelector('.flip-stage');
+    if (stage) stage.style.transform = `scale(${shrink / Number(stage.dataset.shrink ?? 1)})`;
     if (anchor) {
       const after = anchor.getBoundingClientRect();
       scrollBy(0, after.top + ((focusY - before.top) / before.height) * after.height - focusY);
@@ -324,7 +329,7 @@ export class PagedViewer {
         if (index === start && !first) first = rendering;
         await rendering;
         // 줄여서 한 화면에 쪽이 많이 보이면 그만큼 더 남겨 둔다(보이는 쪽을 지웠다 다시 그리지 않게).
-        if (wanted.size <= Math.ceil(KEEP_RENDERED / this.shrink ** 2)) return;
+        if (wanted.size <= Math.min(KEEP_RENDERED_MAX, Math.ceil(KEEP_RENDERED / this.shrink ** 2))) return;
         const farthest = [...wanted].sort((a, b) => Math.abs(b - index) - Math.abs(a - index))[0];
         wanted.delete(farthest);
         pages[farthest].replaceChildren();
@@ -373,6 +378,7 @@ export class PagedViewer {
     const indexes = [this.current, this.current + 1].slice(0, step).filter((i) => i < this.doc.count);
     const stage = document.createElement('div');
     stage.className = 'flip-stage';
+    stage.dataset.shrink = String(this.shrink);
     const gap = 8;
     const availWidth = (this.container.clientWidth - 16 - gap * (step - 1)) / step;
     const availHeight = this.availableHeight();
@@ -381,7 +387,7 @@ export class PagedViewer {
     this.container.dataset.fit = fitWidth ? 'width' : this.fit; // 긴 쪽이면 세로 스크롤을 연다(CSS)
     const slots = indexes.map((index, k) => {
       const { width, height } = sizes[k];
-      const scale = fitWidth ? availWidth / width : Math.min(availWidth / width, availHeight / height);
+      const scale = (fitWidth ? availWidth / width : Math.min(availWidth / width, availHeight / height)) * this.shrink;
       const el = document.createElement('div');
       el.className = 'page';
       el.style.width = `${Math.floor(width * scale)}px`;
@@ -455,7 +461,7 @@ export class PagedViewer {
   }
 
   /**
-   * 연속 스크롤의 줄이기. WebView 확대가 처음 크기(1)일 때 두 손가락을 오므리면 쪽 칸을 줄이고, 벌리면 되돌린다.
+   * 줄이기. WebView 확대가 처음 크기(1)일 때 두 손가락을 오므리면 쪽을 줄이고, 벌리면 되돌린다(모든 보기 방식).
    * WebView가 확대한 상태에서는 그쪽에 맡기고, 처음 크기로 돌아온 그 자리부터 이어서 줄인다.
    */
   bindShrink() {
@@ -466,7 +472,7 @@ export class PagedViewer {
     addEventListener(
       'touchstart',
       (e) => {
-        if (this.mode !== 'scroll' || e.touches.length !== 2) return;
+        if (e.touches.length !== 2) return;
         pinch = { from: distance(e.touches), shrink: this.shrink };
       },
       { passive: true },
@@ -494,7 +500,9 @@ export class PagedViewer {
         if (!pinch || e.touches.length >= 2) return;
         const moved = pinch.moved;
         pinch = null;
-        if (moved) requestAnimationFrame(() => this.redrawResized?.());
+        if (!moved) return;
+        if (this.mode === 'scroll') requestAnimationFrame(() => this.redrawResized?.());
+        else if (Number(this.container.querySelector('.flip-stage')?.dataset.shrink) !== this.shrink) this.renderFlip();
       },
       { passive: true },
     );
