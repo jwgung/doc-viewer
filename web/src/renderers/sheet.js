@@ -33,11 +33,13 @@ export async function render(bytes, container, ctx) {
   const all = opened.sheets.map((sheet, index) => ({ ...sheet, index }));
   const list = all.some((s) => !s.hidden) ? all.filter((s) => !s.hidden) : all;
   tabs.hidden = list.length < 2;
+  // current: 표에 보이는 시트, wanted: 마지막으로 고른 시트. 시트 내용과 차트 렌더러를 기다리는 동안 다른 탭을 누를 수 있어,
+  // 늦게 도착한 앞 시트가 나중에 고른 시트를 덮지 않게 그릴 때마다 wanted와 맞는지 본다.
   let current = -1;
   let wanted = -1;
-  const show = async (index, payload) => {
-    current = index;
+  const highlight = (index) =>
     tabs.querySelectorAll('button').forEach((button) => button.setAttribute('aria-selected', String(Number(button.dataset.index) === index)));
+  const show = async (index, payload) => {
     const meta = payload.meta;
     // 차트는 슬라이드 렌더러의 차트 코드로 그린다. 차트가 있는 시트를 처음 열 때만 불러온다.
     if (!grid.renderChart && payload.media?.some((m) => m?.type === 'chart')) {
@@ -47,6 +49,8 @@ export async function render(bytes, container, ctx) {
         console.warn('[sheet] chart renderer unavailable', error);
       }
     }
+    if (wanted !== index) return;
+    current = index;
     note.textContent =
       meta.kind !== 'sheet' && !meta.pictures.length
         ? t.chartSheet
@@ -57,8 +61,9 @@ export async function render(bytes, container, ctx) {
     scrubber.reset();
   };
   const select = async (index) => {
-    if (index === current) return;
     wanted = index;
+    highlight(index);
+    if (index === current) return;
     const reply = await request({ type: 'sheet', index }, 'sheet');
     if (wanted === index) await show(index, reply);
   };
@@ -85,6 +90,8 @@ export async function render(bytes, container, ctx) {
     },
     clear: () => grid.clearFound(),
   });
+  wanted = opened.initial;
+  highlight(opened.initial);
   await show(opened.initial, opened.sheet);
   tabs.querySelector('[aria-selected="true"]')?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
   ctx.markFirstPage();

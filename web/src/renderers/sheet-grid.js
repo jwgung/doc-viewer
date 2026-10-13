@@ -125,6 +125,7 @@ export class SheetGrid {
     this.grown = new Map();
     this.growth = new Map();
     this.customRows = new Set(payload.meta.customRows);
+    this.found = null; // 검색 결과 표시는 그 시트에만 있다
     this.setMedia(payload.media);
     this.setBaseCss(payload.baseCss);
     this.addStyles(payload.styles);
