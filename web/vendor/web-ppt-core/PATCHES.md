@@ -101,6 +101,7 @@ Android의 `buildWebViewer` 작업은 `web/vendor/`도 입력으로 보므로 �
 | 엑셀 그림 중 EMF·WMF를 SVG로 바꾸려고 메타파일 변환기만 따로 불러온다. 패키지 진입점(`.`)은 렌더러 전체를 불러온다. 변환기만 내보내는 `./image` 진입점을 더한다. | `package.json` `exports` |
 | xls 그림은 ppt와 같은 OfficeArt(Escher) 구조라 속성 표(`parseOpt`)·그림 저장소(`blipsFromStore`) 읽기를 함께 쓴다. `./escher` 진입점을 더한다. | `package.json` `exports` |
 | 엑셀 시트 차트는 pptx 차트와 같은 DrawingML이라 차트 해석·SVG 그리기를 함께 쓴다. chart XML·테마 XML을 받아 독립 SVG를 돌려주는 `chartToSvg`(시트에는 마스터가 없어 clrMap은 엑셀 기본값)와 `./chart` 진입점을 더한다. | 새 파일 `chart-svg.ts`, `package.json` `exports` |
+| 엑셀 그리기 파트의 도형(xdr:sp·cxnSp·grpSp)도 p:sp와 구조가 같아 슬라이드 도형 해석기를 쓴다. 마스터·자리표시자 없이 엑셀 기본값(글자 11pt, clrMap 기본)으로 읽는 `parseSheetShapes`와, 앵커 하나의 도형을 화면 크기에 맞춰 SVG로 그리는 `shapesToSvg`(선 굵기·화살촉용 여백 포함)를 더한다. | `pptx/parser.ts` `parseSheetShapes`, `chart-svg.ts` `shapesToSvg` |
 
 ### 차트
 

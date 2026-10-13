@@ -75,15 +75,16 @@ diff -ruN a/packages/core/src/chart/util.ts b/packages/core/src/chart/util.ts
 diff -ruN a/packages/core/src/chart-svg.ts b/packages/core/src/chart-svg.ts
 --- a/packages/core/src/chart-svg.ts
 +++ b/packages/core/src/chart-svg.ts
-@@ -0,0 +1,49 @@
+@@ -0,0 +1,79 @@
 +/**
 + * [doc-viewer] 엑셀 시트 차트: chart XML(xl/charts/chartN.xml) → 독립 SVG 문자열.
 + * xlsx 차트는 pptx 차트와 같은 DrawingML이라 슬라이드의 차트 해석(parseChart)과 SVG 그리기를 그대로 쓴다.
 + * 시트에는 슬라이드 마스터가 없으므로 색 이름 매핑(clrMap)은 엑셀 기본값(bg1→lt1, tx1→dk1 …)을 쓴다.
 + */
 +import { parseChart } from './chart';
++import { parseSheetShapes } from './pptx/parser';
 +import { renderSlideToSvg } from './render/svg';
-+import type { Presentation, Slide } from './types';
++import type { GroupElement, Presentation, Slide } from './types';
 +import { attr, kid, parseXml, walk } from './xml';
 +
 +const CLR_MAP: Record<string, string> = { bg1: 'lt1', tx1: 'dk1', bg2: 'lt2', tx2: 'dk2' };
@@ -123,6 +124,35 @@ diff -ruN a/packages/core/src/chart-svg.ts b/packages/core/src/chart-svg.ts
 +  if (!elements.length) return null;
 +  const pres: Presentation = { width: W, height: H, slides: [], source: 'pptx' };
 +  const slide: Slide = { background: { type: 'none' }, elements };
++  return renderSlideToSvg(pres, slide, { textMode: 'svg' });
++}
++
++/**
++ * [doc-viewer] 엑셀 그리기 파트의 도형(앵커 하나 안의 sp·cxnSp·grpSp) → 독립 SVG. 도형들을 감싸는 상자를
++ * w×h(화면 px)에 맞춰 늘린다(시트 렌더러가 앵커 자리를 열 너비·행 높이로 잡는다). 선 굵기·화살촉이 상자 밖으로
++ * 나가므로 사방에 pad만큼 여백을 둔다(SVG 크기는 w+2pad × h+2pad). 그릴 것이 없으면 null
++ */
++export function shapesToSvg(anchorXml: string, themeXml: string | null, w: number, h: number, pad = 0): string | null {
++  const W = Math.max(0, w);
++  const H = Math.max(0, h);
++  const root = parseXml(anchorXml);
++  if (!root) return null;
++  const children = parseSheetShapes(root, themeXml ? parseXml(themeXml) : null);
++  if (!children.length) return null;
++  const minX = Math.min(...children.map((c) => c.x));
++  const minY = Math.min(...children.map((c) => c.y));
++  const spanX = Math.max(...children.map((c) => c.x + c.w)) - minX;
++  const spanY = Math.max(...children.map((c) => c.y + c.h)) - minY;
++  // 가로선·세로선처럼 한쪽 크기가 0이면 그 방향은 늘리지 않고 가운데에 둔다.
++  const scaleX = spanX >= 1 ? W / spanX : 1;
++  const scaleY = spanY >= 1 ? H / spanY : 1;
++  const group: GroupElement = {
++    kind: 'group', x: pad, y: pad, w: Math.max(1, W), h: Math.max(1, H), rot: 0, flipH: false, flipV: false,
++    childX: spanX >= 1 ? minX : minX - W / 2, childY: spanY >= 1 ? minY : minY - H / 2, scaleX, scaleY,
++    children,
++  };
++  const pres: Presentation = { width: W + 2 * pad, height: H + 2 * pad, slides: [], source: 'pptx' };
++  const slide: Slide = { background: { type: 'none' }, elements: [group] };
 +  return renderSlideToSvg(pres, slide, { textMode: 'svg' });
 +}
 diff -ruN a/packages/core/src/image/emf.ts b/packages/core/src/image/emf.ts
@@ -2192,6 +2222,48 @@ diff -ruN a/packages/core/src/pptx/parser.ts b/packages/core/src/pptx/parser.ts
    const comments = parseSlideComments(pkg, slideRels, authors);
  
    return {
+@@ -1626,3 +1639,41 @@
+     animations: parseTiming(kid(slideRoot, 'timing'), slideW, slideH),
+   };
+ }
++
++// ---------------- [doc-viewer] 엑셀 그리기 파트 도형 ----------------
++
++/** 시트 도형에는 그림·차트·링크를 붙이지 않는다(그림은 시트 렌더러가 따로 그린다). */
++const SHEET_PKG = { xml: () => null, rels: () => ({}), mediaUrl: () => null } as unknown as Pkg;
++const SHEET_DEFAULT_COLORS: Record<string, string> = {
++  dk1: '000000', lt1: 'FFFFFF', dk2: '44546A', lt2: 'E7E6E6', accent1: '4472C4', accent2: 'ED7D31', accent3: 'A5A5A5',
++  accent4: 'FFC000', accent5: '5B9BD5', accent6: '70AD47', hlink: '0563C1', folHlink: '954F72',
++};
++
++/**
++ * [doc-viewer] 엑셀 그리기 파트(xl/drawings/drawingN.xml)의 도형(xdr:sp·cxnSp·grpSp)을 슬라이드 요소로 읽는다.
++ * 요소 이름만 보고 읽으므로 p:sp와 같은 해석기를 그대로 쓴다. container는 도형을 자식으로 가진 요소(앵커)이고,
++ * 좌표는 EMU를 px로 바꾼 그대로다. 시트에는 마스터·자리표시자가 없고, 글자 기본 크기는 엑셀처럼 11pt다.
++ */
++export function parseSheetShapes(container: Element, themeRoot: Element | null): SlideElement[] {
++  const theme = parseTheme(themeRoot);
++  theme.colors = { ...SHEET_DEFAULT_COLORS, ...theme.colors };
++  const ctx: ColorCtx = { theme: theme.colors, clrMap: { bg1: 'lt1', tx1: 'dk1', bg2: 'lt2', tx2: 'dk2' } };
++  const empty: LevelStyles = { lvls: [] };
++  const defaults = parseXml('<a:lstStyle xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:defPPr><a:defRPr sz="1100"/></a:defPPr></a:lstStyle>');
++  const env: Env = {
++    pkg: SHEET_PKG,
++    ctx,
++    theme,
++    rels: {},
++    partPath: '',
++    docDefaults: extractLstStyle(defaults, ctx, theme.fonts),
++    masterStyles: { title: empty, body: empty, other: empty },
++    layoutPh: [],
++    masterPh: [],
++    slideNum: 0,
++    tableStyles: null,
++    hiddenPh: new Set(),
++    slideIdMap: {},
++  };
++  return parseShapeTree(container, env, false);
++}
 diff -ruN a/packages/core/src/xml-lite.ts b/packages/core/src/xml-lite.ts
 --- a/packages/core/src/xml-lite.ts
 +++ b/packages/core/src/xml-lite.ts

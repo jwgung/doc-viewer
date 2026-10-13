@@ -4,8 +4,9 @@
  * 시트에는 슬라이드 마스터가 없으므로 색 이름 매핑(clrMap)은 엑셀 기본값(bg1→lt1, tx1→dk1 …)을 쓴다.
  */
 import { parseChart } from './chart';
+import { parseSheetShapes } from './pptx/parser';
 import { renderSlideToSvg } from './render/svg';
-import type { Presentation, Slide } from './types';
+import type { GroupElement, Presentation, Slide } from './types';
 import { attr, kid, parseXml, walk } from './xml';
 
 const CLR_MAP: Record<string, string> = { bg1: 'lt1', tx1: 'dk1', bg2: 'lt2', tx2: 'dk2' };
@@ -45,5 +46,34 @@ export function chartToSvg(chartXml: string, themeXml: string | null, w: number,
   if (!elements.length) return null;
   const pres: Presentation = { width: W, height: H, slides: [], source: 'pptx' };
   const slide: Slide = { background: { type: 'none' }, elements };
+  return renderSlideToSvg(pres, slide, { textMode: 'svg' });
+}
+
+/**
+ * [doc-viewer] 엑셀 그리기 파트의 도형(앵커 하나 안의 sp·cxnSp·grpSp) → 독립 SVG. 도형들을 감싸는 상자를
+ * w×h(화면 px)에 맞춰 늘린다(시트 렌더러가 앵커 자리를 열 너비·행 높이로 잡는다). 선 굵기·화살촉이 상자 밖으로
+ * 나가므로 사방에 pad만큼 여백을 둔다(SVG 크기는 w+2pad × h+2pad). 그릴 것이 없으면 null
+ */
+export function shapesToSvg(anchorXml: string, themeXml: string | null, w: number, h: number, pad = 0): string | null {
+  const W = Math.max(0, w);
+  const H = Math.max(0, h);
+  const root = parseXml(anchorXml);
+  if (!root) return null;
+  const children = parseSheetShapes(root, themeXml ? parseXml(themeXml) : null);
+  if (!children.length) return null;
+  const minX = Math.min(...children.map((c) => c.x));
+  const minY = Math.min(...children.map((c) => c.y));
+  const spanX = Math.max(...children.map((c) => c.x + c.w)) - minX;
+  const spanY = Math.max(...children.map((c) => c.y + c.h)) - minY;
+  // 가로선·세로선처럼 한쪽 크기가 0이면 그 방향은 늘리지 않고 가운데에 둔다.
+  const scaleX = spanX >= 1 ? W / spanX : 1;
+  const scaleY = spanY >= 1 ? H / spanY : 1;
+  const group: GroupElement = {
+    kind: 'group', x: pad, y: pad, w: Math.max(1, W), h: Math.max(1, H), rot: 0, flipH: false, flipV: false,
+    childX: spanX >= 1 ? minX : minX - W / 2, childY: spanY >= 1 ? minY : minY - H / 2, scaleX, scaleY,
+    children,
+  };
+  const pres: Presentation = { width: W + 2 * pad, height: H + 2 * pad, slides: [], source: 'pptx' };
+  const slide: Slide = { background: { type: 'none' }, elements: [group] };
   return renderSlideToSvg(pres, slide, { textMode: 'svg' });
 }
