@@ -1639,3 +1639,41 @@ function parseSlide(
     animations: parseTiming(kid(slideRoot, 'timing'), slideW, slideH),
   };
 }
+
+// ---------------- [doc-viewer] 엑셀 그리기 파트 도형 ----------------
+
+/** 시트 도형에는 그림·차트·링크를 붙이지 않는다(그림은 시트 렌더러가 따로 그린다). */
+const SHEET_PKG = { xml: () => null, rels: () => ({}), mediaUrl: () => null } as unknown as Pkg;
+const SHEET_DEFAULT_COLORS: Record<string, string> = {
+  dk1: '000000', lt1: 'FFFFFF', dk2: '44546A', lt2: 'E7E6E6', accent1: '4472C4', accent2: 'ED7D31', accent3: 'A5A5A5',
+  accent4: 'FFC000', accent5: '5B9BD5', accent6: '70AD47', hlink: '0563C1', folHlink: '954F72',
+};
+
+/**
+ * [doc-viewer] 엑셀 그리기 파트(xl/drawings/drawingN.xml)의 도형(xdr:sp·cxnSp·grpSp)을 슬라이드 요소로 읽는다.
+ * 요소 이름만 보고 읽으므로 p:sp와 같은 해석기를 그대로 쓴다. container는 도형을 자식으로 가진 요소(앵커)이고,
+ * 좌표는 EMU를 px로 바꾼 그대로다. 시트에는 마스터·자리표시자가 없고, 글자 기본 크기는 엑셀처럼 11pt다.
+ */
+export function parseSheetShapes(container: Element, themeRoot: Element | null): SlideElement[] {
+  const theme = parseTheme(themeRoot);
+  theme.colors = { ...SHEET_DEFAULT_COLORS, ...theme.colors };
+  const ctx: ColorCtx = { theme: theme.colors, clrMap: { bg1: 'lt1', tx1: 'dk1', bg2: 'lt2', tx2: 'dk2' } };
+  const empty: LevelStyles = { lvls: [] };
+  const defaults = parseXml('<a:lstStyle xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:defPPr><a:defRPr sz="1100"/></a:defPPr></a:lstStyle>');
+  const env: Env = {
+    pkg: SHEET_PKG,
+    ctx,
+    theme,
+    rels: {},
+    partPath: '',
+    docDefaults: extractLstStyle(defaults, ctx, theme.fonts),
+    masterStyles: { title: empty, body: empty, other: empty },
+    layoutPh: [],
+    masterPh: [],
+    slideNum: 0,
+    tableStyles: null,
+    hiddenPh: new Set(),
+    slideIdMap: {},
+  };
+  return parseShapeTree(container, env, false);
+}

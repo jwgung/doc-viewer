@@ -1,15 +1,98 @@
 // xls(BIFF8) 그림. ppt와 같은 OfficeArt(Escher) 구조다.
 // 전역 부분의 MSODRAWINGGROUP에 그림 저장소(BStore)가, 시트의 MSODRAWING에 도형 트리가 조각나 들어 있다.
 // 그림(pib 속성이 있는 도형)만 읽고, 위치는 셀 앵커(열·행 + 칸 너비·높이에 대한 비율)로 넘긴다.
-// 붙여 넣은 개체(OLE)도 엑셀처럼 미리보기 그림을 보인다. 차트·도형·글상자는 아직 그리지 않는다.
-import { blipsFromStore, parseOpt } from '@web-ppt/core/escher';
+// 붙여 넣은 개체(OLE)도 엑셀처럼 미리보기 그림을 보인다. 차트는 xls-chart.js가 옮겨 적은 XML로 넘긴다.
+// 도형·글상자는 OfficeArt 속성(모양·채우기·선·화살촉)과 TXO 글자를 xlsx 도형 XML(xdr:sp)로 옮겨 적어 같은 렌더러로 그린다.
+import { MSO_SHAPE, blipsFromStore, parseOpt } from '@web-ppt/core/escher';
 import { toMedia } from './media.js';
 
 const ET = {
   DGG: 0xf000, BSTORE: 0xf001, DG: 0xf002, SPGR_C: 0xf003, SP_C: 0xf004,
   SPGR: 0xf009, SP: 0xf00a, OPT: 0xf00b, CHILD_ANCHOR: 0xf00f, CLIENT_ANCHOR: 0xf010, CLIENT_DATA: 0xf011, TOPT: 0xf122,
 };
-const PROP = { rot: 0x0004, cropTop: 0x0100, cropBottom: 0x0101, cropLeft: 0x0102, cropRight: 0x0103, pib: 0x0104, groupBools: 0x03bf };
+const PROP = {
+  rot: 0x0004, cropTop: 0x0100, cropBottom: 0x0101, cropLeft: 0x0102, cropRight: 0x0103, pib: 0x0104, groupBools: 0x03bf,
+  fillColor: 0x0181, fillOpacity: 0x0182, fillBools: 0x01bf, lineColor: 0x01c0, lineWidth: 0x01cb, lineDashing: 0x01ce,
+  lineStartArrow: 0x01d0, lineEndArrow: 0x01d1, lineBools: 0x01ff,
+};
+// 도형으로 그리는 OBJ 종류: 선, 사각형, 타원, 호, 글상자, 다각형, 그리기 개체(자동 도형). 메모·양식 컨트롤은 그리지 않는다.
+const SHAPE_OBJECTS = new Set([0x01, 0x02, 0x03, 0x04, 0x06, 0x09, 0x1e]);
+const DASHES = ['solid', 'sysDash', 'sysDot', 'sysDashDot', 'sysDashDotDot', 'dot', 'dash', 'lgDash', 'dashDot', 'lgDashDot', 'lgDashDotDot'];
+const ARROWS = [null, 'triangle', 'stealth', 'diamond', 'oval', 'arrow'];
+const H_ALIGN = { 1: 'l', 2: 'ctr', 3: 'r', 4: 'just', 7: 'dist' };
+const V_ALIGN = { 1: 't', 2: 'ctr', 3: 'b', 4: 'ctr', 7: 'ctr' };
+const EMU = 9525;
+const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+
+/** OfficeArtCOLORREF → RRGGBB. 색상표 번호(엑셀은 fSchemeIndex로 적는다)·RGB를 읽고, 시스템 색은 fallback */
+function colorRef(value, palette, fallback) {
+  if (value === undefined) return fallback;
+  const flags = value >>> 24;
+  if (flags & 0x10) return fallback; // 시스템 색
+  if (flags & 0x09) {
+    const index = value & 0xff;
+    if (index === 0x40) return '000000'; // 기본 글자색
+    if (index === 0x41) return 'FFFFFF'; // 기본 바탕색
+    return (palette[index] ?? fallback).replace('#', '').toUpperCase();
+  }
+  return [value & 0xff, (value >> 8) & 0xff, (value >> 16) & 0xff].map((v) => v.toString(16).padStart(2, '0')).join('').toUpperCase();
+}
+
+/** 불리언 묶음 속성의 한 비트: 정해 둔 값이면 true/false, 아니면 dflt (위 16비트가 '정했음' 표시) */
+const bool = (value, bit, dflt) => (value !== undefined && value & (bit << 16) ? Boolean(value & bit) : dflt);
+
+/** xls 도형 하나 → xlsx 도형 XML(<anchor><xdr:sp>…). 크기는 화면 px(앵커를 열 너비·행 높이로 잰 값) */
+function shapeXml(spType, flags, props, obj, size, env) {
+  // 자유형(0)처럼 모양 표가 없는 도형은 글자가 있을 때만 사각형 글상자로 보인다.
+  const prst = MSO_SHAPE[spType] ?? (obj?.text?.text ? 'rect' : null);
+  if (!prst) return null;
+  const line = prst === 'line' || prst.endsWith('Connector1') || /Connector[2-5]$/.test(prst);
+  const rot = fixedDeg(props.get(PROP.rot) ?? 0);
+  const xfrm = `<a:xfrm${rot ? ` rot="${Math.round(rot * 60000)}"` : ''}${flags & SP_FLAG.FLIPH ? ' flipH="1"' : ''}${flags & SP_FLAG.FLIPV ? ' flipV="1"' : ''}>`
+    + `<a:off x="0" y="0"/><a:ext cx="${Math.round(size.w * EMU)}" cy="${Math.round(size.h * EMU)}"/></a:xfrm>`;
+  const filled = !line && bool(props.get(PROP.fillBools), 0x10, true);
+  const opacity = props.get(PROP.fillOpacity);
+  const fill = filled
+    ? `<a:solidFill><a:srgbClr val="${colorRef(props.get(PROP.fillColor), env.palette, 'FFFFFF')}">${opacity !== undefined && opacity < 65536 ? `<a:alpha val="${Math.round((opacity / 65536) * 100000)}"/>` : ''}</a:srgbClr></a:solidFill>`
+    : '<a:noFill/>';
+  const stroked = bool(props.get(PROP.lineBools), 0x08, true);
+  let ln = '<a:ln><a:noFill/></a:ln>';
+  if (stroked) {
+    const head = ARROWS[props.get(PROP.lineStartArrow) ?? 0];
+    const tail = ARROWS[props.get(PROP.lineEndArrow) ?? 0];
+    const dash = DASHES[props.get(PROP.lineDashing) ?? 0] ?? 'solid';
+    ln = `<a:ln w="${props.get(PROP.lineWidth) ?? EMU}"><a:solidFill><a:srgbClr val="${colorRef(props.get(PROP.lineColor), env.palette, '000000')}"/></a:solidFill>`
+      + `${dash !== 'solid' ? `<a:prstDash val="${dash}"/>` : ''}${head ? `<a:headEnd type="${head}"/>` : ''}${tail ? `<a:tailEnd type="${tail}"/>` : ''}</a:ln>`;
+  }
+  let text = '';
+  if (obj?.text?.text) {
+    const { runs, h, v } = obj.text;
+    const value = obj.text.text;
+    // 서식 묶음을 글자 위치로 나눠 run을 만들고, 줄바꿈마다 문단을 나눈다.
+    const marks = runs.length ? runs : [{ at: 0, font: 0 }];
+    const pieces = marks.map((r, i) => ({ text: value.slice(r.at, marks[i + 1]?.at ?? value.length), font: env.font(r.font) }));
+    if (marks[0].at > 0) pieces.unshift({ text: value.slice(0, marks[0].at), font: env.font(0) });
+    const rPr = (f) => {
+      if (!f) return '<a:rPr lang="ko-KR"/>';
+      return `<a:rPr lang="ko-KR" sz="${Math.round(f.size * 100)}"${f.bold ? ' b="1"' : ''}${f.italic ? ' i="1"' : ''}${f.underline ? ' u="sng"' : ''}>`
+        + `${f.color ? `<a:solidFill><a:srgbClr val="${f.color.replace('#', '').toUpperCase()}"/></a:solidFill>` : ''}<a:latin typeface="${esc(f.name)}"/><a:ea typeface="${esc(f.name)}"/></a:rPr>`;
+    };
+    const paras = [[]];
+    for (const piece of pieces) {
+      piece.text.split('\n').forEach((part, i) => {
+        if (i > 0) paras.push([]);
+        if (part) paras[paras.length - 1].push(`<a:r>${rPr(piece.font)}<a:t>${esc(part)}</a:t></a:r>`);
+      });
+    }
+    const algn = H_ALIGN[h] ?? 'l';
+    text = `<xdr:txBody><a:bodyPr wrap="square" anchor="${V_ALIGN[v] ?? 't'}" lIns="91440" tIns="45720" rIns="91440" bIns="45720"/><a:lstStyle/>`
+      + paras.map((runsXml) => `<a:p><a:pPr algn="${algn}"/>${runsXml.join('') || `<a:endParaRPr lang="ko-KR"/>`}</a:p>`).join('')
+      + '</xdr:txBody>';
+  }
+  return `<anchor><xdr:sp><xdr:nvSpPr><xdr:cNvPr id="1" name=""/><xdr:cNvSpPr/></xdr:nvSpPr><xdr:spPr>${xfrm}<a:prstGeom prst="${prst}"><a:avLst/></a:prstGeom>${fill}${ln}</xdr:spPr>${text}</xdr:sp></anchor>`;
+}
+
+const fixedDeg = (v) => (v | 0) / 65536;
 const SP_FLAG = { GROUP: 0x1, PATRIARCH: 0x4, DELETED: 0x8, FLIPH: 0x40, FLIPV: 0x80 };
 const MAX_PICTURES = 2000;
 
@@ -56,7 +139,7 @@ function rect(dv, rec) {
  * objects: 시트의 OBJ 순서({ ot, chart }), chartXml(범위) → 차트 XML. 차트 개체(ot=5)는 그 자리에 차트를 놓는다.
  * { pictures, media }(xlsx와 같은 모양, 앵커는 frac) 또는 null
  */
-export async function readXlsPictures(group, drawing, { objects = [], chartXml = null } = {}) {
+export async function readXlsPictures(group, drawing, { objects = [], chartXml = null, shapes = null } = {}) {
   let blips = [];
   if (group) {
     const gdv = new DataView(group.buffer, group.byteOffset, group.byteLength);
@@ -132,7 +215,9 @@ export async function readXlsPictures(group, drawing, { objects = [], chartXml =
     const obj = objects[objectAt.get(sp.start)];
     const chart = obj?.chart && chartXml ? obj.chart : null;
     const pib = props.get(PROP.pib);
-    if ((!chart && (!pib || !blips[pib - 1])) || isHidden(sp)) return;
+    const picture = Boolean(pib && blips[pib - 1]);
+    const drawn = !chart && !picture && shapes && SHAPE_OBJECTS.has(obj?.ot);
+    if ((!chart && !picture && !drawn) || isHidden(sp)) return;
     let anchor;
     let box = [0, 0, 1, 1];
     if (ctx) {
@@ -145,6 +230,21 @@ export async function readXlsPictures(group, drawing, { objects = [], chartXml =
       const client = find(dv, sp, ET.CLIENT_ANCHOR);
       anchor = client && sheetAnchor(dv, client);
       if (!anchor) return;
+    }
+    if (drawn) {
+      // 크기(px): 그룹 안이면 그룹 앵커 상자에 대한 비율만큼
+      const whole = shapes.boxPx(anchor.from, anchor.to);
+      const size = { w: whole.w * (box[2] - box[0]), h: whole.h * (box[3] - box[1]) };
+      let xml = null;
+      try {
+        xml = shapeXml(dv.getUint16(spRec.start - 8, true) >> 4, flags, props, obj, size, shapes);
+      } catch (error) {
+        console.warn('[sheet] shape skipped', error);
+      }
+      if (!xml) return;
+      pictures.push({ from: anchor.from, to: anchor.to, frac: true, size: null, pos: null, box, media: mediaList.length, crop: null, rot: 0, flipH: false, flipV: false, shapes: true });
+      mediaList.push({ shapes: xml });
+      return;
     }
     if (chart) {
       let xml = null;
@@ -186,8 +286,9 @@ export async function readXlsPictures(group, drawing, { objects = [], chartXml =
   if (!pictures.length) return null;
   // 그림 하나를 못 읽어도 나머지는 보인다. 바이트는 저장소 전체가 아닌 그 그림만 복사해 넘긴다.
   const media = await Promise.all(
-    mediaList.map(({ blip, chart }) => {
+    mediaList.map(({ blip, chart, shapes: shapeXmlText }) => {
       if (chart) return { type: 'chart', xml: chart, theme: null };
+      if (shapeXmlText) return { type: 'shapes', xml: shapeXmlText, theme: null };
       return blip.mime === 'image/tiff' ? null : toMedia(blip.data.slice()).catch(() => null);
     }),
   );

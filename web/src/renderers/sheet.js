@@ -41,16 +41,21 @@ export async function render(bytes, container, ctx) {
     tabs.querySelectorAll('button').forEach((button) => button.setAttribute('aria-selected', String(Number(button.dataset.index) === index)));
   const show = async (index, payload) => {
     const meta = payload.meta;
-    // 차트는 슬라이드 렌더러의 차트 코드로 그린다. 차트가 있는 시트를 처음 열 때만 불러온다.
-    if (!grid.renderChart && payload.media?.some((m) => m?.type === 'chart')) {
+    // 차트·도형은 슬라이드 렌더러의 차트·도형 코드로 그린다. 그런 시트를 처음 열 때만 불러온다.
+    if (!grid.renderChart && payload.media?.some((m) => m?.type === 'chart' || m?.type === 'shapes')) {
       try {
-        grid.renderChart = (await import('@web-ppt/core/chart')).chartToSvg;
+        const drawing = await import('@web-ppt/core/chart');
+        grid.renderChart = drawing.chartToSvg;
+        grid.renderShapes = drawing.shapesToSvg;
       } catch (error) {
         console.warn('[sheet] chart renderer unavailable', error);
       }
     }
     if (wanted !== index) return;
     current = index;
+    if (!grid.renderChartEx && payload.media?.some((m) => m?.type === 'chartex')) {
+      grid.renderChartEx = (await import('../spreadsheet/chartex.js')).chartExToSvg;
+    }
     note.textContent =
       meta.kind !== 'sheet' && !meta.pictures.length
         ? t.chartSheet

@@ -16,7 +16,7 @@ const RT = {
   DIMENSIONS: 0x0200, DEFAULTROWHEIGHT: 0x0225, DEFCOLWIDTH: 0x0055, COLINFO: 0x007d, ROW: 0x0208,
   NUMBER: 0x0203, RK: 0x027e, MULRK: 0x00bd, LABELSST: 0x00fd, LABEL: 0x0204, RSTRING: 0x00d6, BOOLERR: 0x0205,
   FORMULA: 0x0006, STRING: 0x0207, BLANK: 0x0201, MULBLANK: 0x00be, MERGEDCELLS: 0x00e5, WINDOW2: 0x023e, PANE: 0x0041,
-  MSODRAWINGGROUP: 0x00eb, MSODRAWING: 0x00ec, OBJ: 0x005d, EXTERNSHEET: 0x0017, SUPBOOK: 0x01ae,
+  MSODRAWINGGROUP: 0x00eb, MSODRAWING: 0x00ec, OBJ: 0x005d, TXO: 0x01b6, EXTERNSHEET: 0x0017, SUPBOOK: 0x01ae,
 };
 const ERRORS = { 0x00: '#NULL!', 0x07: '#DIV/0!', 0x0f: '#VALUE!', 0x17: '#REF!', 0x1d: '#NAME?', 0x24: '#NUM!', 0x2a: '#N/A', 0x2b: '#GETTING_DATA' };
 
@@ -316,6 +316,25 @@ export function readXls(bytes) {
       return out;
     },
   });
+  // 도형 그리기에 필요한 것: 색상표, 글꼴(TXO 서식 묶음의 번호), 앵커 상자의 px 크기(이 시트의 열 너비·행 높이로 잰다).
+  const shapeEnv = (model) => {
+    const g = model.geometry;
+    const colW = (c) => g.colWidths.get(c) ?? g.defaultColWidth;
+    const rowH = (r) => g.rowHeights.get(r) ?? g.defaultRowHeight;
+    const span = (size, a, fa, b, fb) => {
+      let total = 0;
+      for (let i = a; i < b && i - a < 20000; i++) total += size(i);
+      return total - fa * size(a) + fb * size(b);
+    };
+    return {
+      palette,
+      font: (ifnt) => {
+        const f = font(ifnt);
+        return f && { name: f.name, size: f.size, bold: f.bold, italic: f.italic, underline: f.underline, color: color(f.colorIndex) };
+      },
+      boxPx: (from, to) => ({ w: Math.max(0, span(colW, from[0], from[1], to[0], to[1])), h: Math.max(0, span(rowH, from[2], from[3], to[2], to[3])) }),
+    };
+  };
   // 차트 시트: 표 없이 차트 하나. 차트에 적힌 크기(pt)로 왼쪽 위에 놓는다.
   const readChartSheet = (name, offset) => {
     const end = substreamEnd(dv, offset, len);
@@ -365,6 +384,7 @@ export function readXls(bytes) {
         .then(([{ readXlsPictures }, charts]) =>
           readXlsPictures(drawingGroup.length ? join(stream, drawingGroup) : null, join(stream, ranges), {
             objects,
+            shapes: shapeEnv(model),
             chartXml: charts && ((range) => charts.biffChartXml(stream, range[0], range[1], env)),
           }))
         .catch((error) => console.warn('[sheet] pictures skipped', error)) // 그림을 못 읽어도 표는 보인다.
@@ -529,6 +549,14 @@ function readSheet(stream, dv, sheet, { biff, text: readText, context, styles, m
       if (size >= 6 && dv.getUint16(body, true) === 0x15) objects.push({ ot: dv.getUint16(body + 4, true), chart: null });
       continue;
     }
+    // 글상자·도형의 글자(TXO): 바로 앞 OBJ의 것. 글자와 서식 묶음은 뒤따르는 CONTINUE에 있다.
+    if (type === RT.TXO) {
+      const ranges = [];
+      pos = collectContinue(dv, pos, len, ranges);
+      const owner = objects[objects.length - 1];
+      if (biff === 8 && owner && size >= 14) owner.text = readTxo(stream, dv, body, ranges);
+      continue;
+    }
     switch (type) {
       case RT.NUMBER:
         builder.add(dv.getUint16(body, true), dv.getUint16(body + 2, true), NUM, dv.getFloat64(body + 6, true), dv.getUint16(body + 4, true));
@@ -685,6 +713,31 @@ function join(stream, ranges) {
     k += b - a;
   }
   return out;
+}
+
+/**
+ * TXO 글자: { text, runs: [{ at, font(ifnt) }], h(1 왼 2 가운데 3 오른 4 양쪽), v(1 위 2 가운데 3 아래) }.
+ * 첫 CONTINUE부터 글자 수만큼 글자(조각마다 앞 1바이트가 2바이트 글자 여부), 그 뒤 CONTINUE에 서식 묶음(8바이트씩)이 온다.
+ */
+function readTxo(stream, dv, at, ranges) {
+  const grbit = dv.getUint16(at, true);
+  const cch = dv.getUint16(at + 10, true);
+  const cbRuns = dv.getUint16(at + 12, true);
+  let text = '';
+  let k = 0;
+  for (; k < ranges.length && text.length < cch; k++) {
+    const [a, b] = ranges[k];
+    if (b <= a) continue;
+    const high = stream[a] & 1;
+    const n = Math.min(cch - text.length, Math.floor((b - a - 1) / (high ? 2 : 1)));
+    text += high ? new TextDecoder('utf-16le').decode(stream.subarray(a + 1, a + 1 + n * 2)) : latin1(stream, a + 1, n);
+  }
+  const runs = [];
+  for (; k < ranges.length && runs.length * 8 < cbRuns; k++) {
+    const [a, b] = ranges[k];
+    for (let p = a; p + 8 <= b; p += 8) runs.push({ at: dv.getUint16(p, true), font: dv.getUint16(p + 2, true) });
+  }
+  return { text: text.replace(/\r\n?/g, '\n'), runs: runs.filter((r) => r.at < text.length), h: (grbit >> 1) & 7, v: (grbit >> 4) & 7 };
 }
 
 function collectContinue(dv, pos, len, ranges) {

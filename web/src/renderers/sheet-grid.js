@@ -17,6 +17,10 @@ const MAX_INFLIGHT = 3;
 const MAX_SPILL_COLS = 64;
 const MAX_COLS = 16384;
 const MAX_ROW_HEIGHT = 545; // 엑셀 행 높이 상한(409pt)
+// 바이트가 아니라 XML로 오고 화면에서 그리는 항목(차트, 도형·글상자)
+const DRAWN = new Set(['chart', 'chartex', 'shapes']);
+// 도형은 선 굵기·화살촉이 상자 밖으로 나가므로 사방에 이만큼 더 그린다
+const SHAPE_PAD = 6;
 // 셀 종류(워커와 같음)
 const BLANK = 0;
 const NUM = 1;
@@ -139,24 +143,27 @@ export class SheetGrid {
 
   /**
    * 그림 바이트를 주소(blob URL)로 바꾼다. 앞 시트의 주소는 놓아준다.
-   * 차트는 놓일 크기를 알아야 그리므로 여기서는 XML만 들고 있다가 buildPictures에서 그린다(chartUrl).
+   * 차트·도형은 놓일 크기를 알아야 그리므로 여기서는 XML만 들고 있다가 화면 가까이 오면 그린다(chartUrl).
    */
   setMedia(media = []) {
     for (const url of this.mediaUrls ?? []) if (url) URL.revokeObjectURL(url);
     for (const url of this.chartUrls?.values() ?? []) if (url) URL.revokeObjectURL(url);
     this.media = media;
     this.chartUrls = new Map();
-    this.mediaUrls = media.map((m) => (m && m.type !== 'chart' ? URL.createObjectURL(new Blob([m.svg ?? m.data], { type: m.type })) : null));
+    this.mediaUrls = media.map((m) => (m && !DRAWN.has(m.type) ? URL.createObjectURL(new Blob([m.svg ?? m.data], { type: m.type })) : null));
   }
 
-  /** 차트 하나를 처음 놓인 크기로 SVG로 그려 주소를 만든다(그림마다 한 번). 그리기 함수가 없거나 실패하면 null */
+  /** 차트·도형 하나를 처음 놓인 크기로 SVG로 그려 주소를 만든다(그림마다 한 번). 그리기 함수가 없거나 실패하면 null */
   chartUrl(i, p) {
     if (this.chartUrls.has(i)) return this.chartUrls.get(i);
     let url = null;
     const m = this.media[p.media];
     const r = this.pictureRect(p);
     try {
-      const svg = this.renderChart && r.w > 0 && r.h > 0 ? this.renderChart(m.xml, m.theme, r.w, r.h) : null;
+      let svg = null;
+      if (m.type === 'shapes') svg = this.renderShapes?.(m.xml, m.theme, r.w, r.h, SHAPE_PAD) ?? null;
+      else if (m.type === 'chartex') svg = r.w > 0 && r.h > 0 ? this.renderChartEx?.(m.xml, m.theme, r.w, r.h) ?? null : null;
+      else if (this.renderChart && r.w > 0 && r.h > 0) svg = this.renderChart(m.xml, m.theme, r.w, r.h);
       if (svg) url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
     } catch (error) {
       console.warn('[sheet] chart skipped', error);
@@ -274,7 +281,7 @@ export class SheetGrid {
     const pictures = this.meta.pictures;
     if (!pictures.length) return;
     // 차트는 화면 가까이 올 때 그린다(그리기가 무거워 시트를 열 때 모두 그리면 첫 화면이 늦다).
-    const charts = pictures.some((p) => this.media[p.media]?.type === 'chart');
+    const charts = pictures.some((p) => DRAWN.has(this.media[p.media]?.type));
     if (charts) {
       this.picObserver = new IntersectionObserver(
         (entries) => {
@@ -302,7 +309,7 @@ export class SheetGrid {
       const layer = div('sg-pics');
       const items = [];
       pictures.forEach((p, i) => {
-        const chart = this.media[p.media]?.type === 'chart';
+        const chart = DRAWN.has(this.media[p.media]?.type);
         const url = chart ? null : this.mediaUrls[p.media];
         if (!chart && !url) return;
         const el = div('sg-pic');
@@ -335,9 +342,12 @@ export class SheetGrid {
       const oy = area === 'main' || area === 'left' ? fh : 0;
       for (const { el, img, p } of items) {
         const r = this.pictureRect(p);
+        // 도형은 선(높이나 너비 0)일 수 있고, 사방 여백까지 그린다. 그림·차트는 크기를 거의 0으로 줄였으면 숨긴 것이다.
+        const sized = p.shapes ? r.w >= 1 || r.h >= 1 : r.w >= 2 && r.h >= 2;
+        if (p.shapes) Object.assign(r, { x: r.x - SHAPE_PAD, y: r.y - SHAPE_PAD, w: r.w + 2 * SHAPE_PAD, h: r.h + 2 * SHAPE_PAD });
         const inX = area === 'main' || area === 'top' ? r.x + r.w > fx : r.x < fx;
         const inY = area === 'main' || area === 'left' ? r.y + r.h > fy : r.y < fy;
-        el.hidden = !(inX && inY && r.w >= 2 && r.h >= 2); // 크기를 거의 0으로 줄인 것은 엑셀에서도 숨긴 것이다
+        el.hidden = !(inX && inY && sized);
         if (el.hidden) continue;
         if (el.chart && !img.getAttribute('src')) this.picObserver?.observe(el); // 아직 안 그린 차트
         el.style.left = `${r.x - ox}px`;

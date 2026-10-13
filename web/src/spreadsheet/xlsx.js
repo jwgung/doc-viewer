@@ -548,8 +548,8 @@ function isDelimiter(c) {
 }
 
 // ---- 그림 ----------------------------------------------------------------
-// 시트에 딸린 그리기 파트(xl/drawings/drawingN.xml)에서 그림(pic)과 차트(graphicFrame → chartN.xml)를 읽는다.
-// 차트는 XML째 넘기고 화면이 자리 크기에 맞춰 SVG로 그린다(web-ppt 차트 렌더러). 도형·글상자는 아직 그리지 않는다.
+// 시트에 딸린 그리기 파트(xl/drawings/drawingN.xml)에서 그림(pic), 차트(graphicFrame → chartN.xml), 도형·글상자(sp·cxnSp)를
+// 읽는다. 차트와 도형은 XML째 넘기고 화면이 자리 크기에 맞춰 SVG로 그린다(web-ppt 차트·도형 렌더러).
 // 위치는 셀 기준(열·행 + EMU 오프셋)으로 넘기고, 화면이 그린 행 높이·열 너비로 픽셀 자리를 정한다.
 const EMU_PER_PX = 9525;
 const ITEM = /<(?:\w+:)?(pic|graphicFrame)\b[^>]*>([\s\S]*?)<\/(?:\w+:)?\1>/g;
@@ -613,6 +613,18 @@ async function readDrawing(zip, sheetPath, themeXml, sheetByName) {
     // 그룹 안 항목은 그룹의 자식 좌표계(chOff·chExt)로 앵커 상자 안 비율 자리를 구한다.
     // 그룹 안의 그룹은 안쪽 좌표계부터 바깥 그룹의 자식 좌표계로 차례로 옮긴다.
     const groups = /<(?:\w+:)?grpSp\b/.test(body) ? groupRanges(body) : [];
+    // 도형·글상자·선(sp·cxnSp, 그룹 안 것 포함): 앵커 하나를 통째로 넘겨 화면에서 SVG로 그린다(슬라이드 도형 렌더러).
+    // 그림과 차트는 아래에서 따로 그리므로 뺀다.
+    if (/<(?:\w+:)?(?:sp|cxnSp)\b/.test(body) && pictures.length < MAX_PICTURES) {
+      const key = `#shapes${mediaIndex.size}`;
+      const entry = { index: mediaIndex.size, shapes: `<anchor>${body.replace(ITEM, '')}</anchor>` };
+      mediaIndex.set(key, entry);
+      pictures.push({
+        from, to, size,
+        pos: pos ? [Number(pos.x) / EMU_PER_PX || 0, Number(pos.y) / EMU_PER_PX || 0] : null,
+        box: [0, 0, 1, 1], media: entry.index, crop: null, rot: 0, flipH: false, flipV: false, shapes: true,
+      });
+    }
     for (const match of body.matchAll(ITEM)) {
       const [, tag, item] = match;
       if (pictures.length >= MAX_PICTURES) break;
@@ -620,14 +632,16 @@ async function readDrawing(zip, sheetPath, themeXml, sheetByName) {
       if (nv && truthy(nv.hidden)) continue;
       let target;
       let chart = false;
+      let chartEx = false;
       if (tag === 'pic') {
         const blip = emptyTag(item, 'blip');
         target = blip?.embed && rels.get(blip.embed)?.target;
       } else {
         const ref = emptyTag(item, 'chart');
         const rel = ref?.id && rels.get(ref.id);
-        // chartEx(새 차트 종류: 폭포·트리맵 등)는 다른 형식이라 아직 그리지 않는다.
-        target = rel && /\/chart$/.test(rel.type) ? rel.target : null;
+        // chartEx(엑셀 2016 이후 새 차트: 폭포·트리맵 등)는 다른 형식이라 chartex.js가 따로 그린다.
+        chartEx = Boolean(rel && /chartEx$/i.test(rel.type));
+        target = rel && (chartEx || /\/chart$/.test(rel.type)) ? rel.target : null;
         chart = true;
       }
       if (!target) continue;
@@ -654,7 +668,7 @@ async function readDrawing(zip, sheetPath, themeXml, sheetByName) {
       const crop = src ? ['l', 't', 'r', 'b'].map((k) => (Number(src[k]) || 0) / 100000) : null;
       let entry = mediaIndex.get(target);
       if (!entry) {
-        entry = { index: mediaIndex.size, chart };
+        entry = { index: mediaIndex.size, chart, chartEx };
         mediaIndex.set(target, entry);
       }
       pictures.push({
@@ -669,8 +683,11 @@ async function readDrawing(zip, sheetPath, themeXml, sheetByName) {
   if (!pictures.length) return null;
   // 하나를 못 읽어도 나머지는 보인다.
   const media = await Promise.all(
-    [...mediaIndex].map(([path, { chart }]) =>
-      (chart ? readChart(zip, path, themeXml, sheetByName) : readMedia(zip, path)).catch(() => null)),
+    [...mediaIndex].map(([path, { chart, chartEx, shapes }]) => {
+      if (shapes) return { type: 'shapes', xml: shapes, theme: themeXml };
+      if (chartEx) return zip.text(path).then((text) => (text ? { type: 'chartex', xml: text, theme: themeXml } : null)).catch(() => null);
+      return (chart ? readChart(zip, path, themeXml, sheetByName) : readMedia(zip, path)).catch(() => null);
+    }),
   );
   return { pictures: pictures.filter((p) => media[p.media]), media };
 }
