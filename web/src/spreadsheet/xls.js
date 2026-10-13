@@ -16,7 +16,7 @@ const RT = {
   DIMENSIONS: 0x0200, DEFAULTROWHEIGHT: 0x0225, DEFCOLWIDTH: 0x0055, COLINFO: 0x007d, ROW: 0x0208,
   NUMBER: 0x0203, RK: 0x027e, MULRK: 0x00bd, LABELSST: 0x00fd, LABEL: 0x0204, RSTRING: 0x00d6, BOOLERR: 0x0205,
   FORMULA: 0x0006, STRING: 0x0207, BLANK: 0x0201, MULBLANK: 0x00be, MERGEDCELLS: 0x00e5, WINDOW2: 0x023e, PANE: 0x0041,
-  MSODRAWINGGROUP: 0x00eb, MSODRAWING: 0x00ec,
+  MSODRAWINGGROUP: 0x00eb, MSODRAWING: 0x00ec, OBJ: 0x005d, EXTERNSHEET: 0x0017,
 };
 const ERRORS = { 0x00: '#NULL!', 0x07: '#DIV/0!', 0x0f: '#VALUE!', 0x17: '#REF!', 0x1d: '#NAME?', 0x24: '#NUM!', 0x2a: '#N/A', 0x2b: '#GETTING_DATA' };
 
@@ -147,6 +147,7 @@ export function readXls(bytes) {
   let active = 0;
   let ansi = ansiDecoder(1252);
   const drawingGroup = []; // MSODRAWINGGROUP(+CONTINUE) 조각: 그림 저장소
+  let externSheets = []; // EXTERNSHEET: 3차원 참조 번호(ixti) → 시트 번호(BOUNDSHEET 순서)
   // 글자 수(1·2바이트) 뒤에 오는 문자열. BIFF8은 유니코드 문자열, BIFF5는 코드페이지 8비트 문자열이다.
   const text = (start, end, cchBytes) => {
     if (biff === 8) return new Segments(stream, [[start, end]]).string(cchBytes);
@@ -210,6 +211,12 @@ export function readXls(bytes) {
         break;
       case RT.WINDOW1:
         if (size >= 12) active = dv.getUint16(body + 10, true);
+        break;
+      case RT.EXTERNSHEET:
+        if (biff === 8) {
+          const count = Math.min(dv.getUint16(body, true), (size - 2) / 6);
+          externSheets = Array.from({ length: count }, (_, i) => dv.getUint16(body + 2 + i * 6 + 2, true));
+        }
         break;
       case RT.MSODRAWINGGROUP:
         if (biff !== 8) break;
@@ -283,6 +290,42 @@ export function readXls(bytes) {
   const mdw = maxDigitWidth(baseFont);
 
   const list = sheets.filter((s) => s.dt !== 6); // VB 모듈 시트는 엑셀도 보여주지 않는다
+  // 차트가 가리키는 칸 값(차트에 값 캐시가 없을 때). 3차원 참조 번호 → 시트 → 범위 값. 읽은 시트는 이 문서 동안 들고 있는다.
+  const sheetModels = new Map();
+  const chartEnv = () => ({
+    palette,
+    cells: ({ ixti, r1, c1, r2, c2 }) => {
+      const s = sheets[externSheets[ixti]];
+      if (!s || s.dt !== 0) return null;
+      if (!sheetModels.has(s)) {
+        const offset = offsetOf(s);
+        sheetModels.set(s, offset < 0 ? null : readSheet(stream, dv, { ...s, offset }, { biff, text, context, styles, mdw }));
+      }
+      const model = sheetModels.get(s);
+      if (!model || (r2 - r1 + 1) * (c2 - c1 + 1) > 10000) return null;
+      const out = [];
+      for (let r = r1; r <= r2; r++) for (let c = c1; c <= c2; c++) out.push(model.cellValue(r, c));
+      return out;
+    },
+  });
+  // 차트 시트: 표 없이 차트 하나. 차트에 적힌 크기(pt)로 왼쪽 위에 놓는다.
+  const readChartSheet = (name, offset) => {
+    const end = substreamEnd(dv, offset, len);
+    return import('./xls-chart.js').then(({ biffChartXml, biffChartSize }) => {
+      const model = SheetModel.placeholder(name, 'chart');
+      model.geometry.showGrid = false;
+      const xml = biffChartXml(stream, offset, end, chartEnv());
+      const { w, h } = biffChartSize(stream, offset, end);
+      if (xml) {
+        const px = (pt, fallback) => (pt > 0 ? (pt * 96) / 72 : fallback);
+        model.drawing = {
+          pictures: [{ from: null, to: null, pos: [8, 8], size: [px(w, 720), px(h, 480)], box: [0, 0, 1, 1], media: 0, crop: null, rot: 0, flipH: false, flipV: false }],
+          media: [{ type: 'chart', xml, theme: null }],
+        };
+      }
+      return model;
+    });
+  };
   if (!list.length) return null;
   const activeSheet = sheets[active] && sheets[active].dt !== 6 ? list.indexOf(sheets[active]) : 0;
   // BOUNDSHEET 위치가 BOF를 가리키지 않는 손상 파일은 전역 부분 뒤의 하위 스트림을 순서대로 짝짓는다.
@@ -299,16 +342,23 @@ export function readXls(bytes) {
     styles,
     load: (index) => {
       const s = list[index];
-      if (!s || s.dt === 2) return SheetModel.placeholder(s?.name ?? '', 'chart');
+      if (!s) return SheetModel.placeholder('', 'sheet');
       const offset = offsetOf(s);
-      if (offset < 0) return SheetModel.placeholder(s.name, 'sheet');
+      if (offset < 0) return SheetModel.placeholder(s.name, s.dt === 2 ? 'chart' : 'sheet');
+      if (s.dt === 2) return biff === 8 ? readChartSheet(s.name, offset) : SheetModel.placeholder(s.name, 'chart');
       const model = readSheet(stream, dv, { ...s, offset }, { biff, text, context, styles, mdw });
-      const ranges = model.drawingRanges;
+      const { drawingRanges: ranges, objects } = model;
       delete model.drawingRanges;
-      if (!ranges.length || !drawingGroup.length) return model;
-      // 그림 읽기(OfficeArt)는 그림이 있는 시트에서만 불러온다.
-      return import('./xls-drawing.js')
-        .then(({ readXlsPictures }) => readXlsPictures(join(stream, drawingGroup), join(stream, ranges)))
+      delete model.objects;
+      if (!ranges.length) return model;
+      // 그림·차트 읽기(OfficeArt, 차트 레코드)는 그것이 있는 시트에서만 불러온다.
+      return Promise.all([import('./xls-drawing.js'), objects.some((o) => o.chart) ? import('./xls-chart.js') : null])
+        .then(([{ readXlsPictures }, charts]) =>
+          readXlsPictures(drawingGroup.length ? join(stream, drawingGroup) : null, join(stream, ranges), {
+            objects,
+            chartXml: charts && ((range) => charts.biffChartXml(stream, range[0], range[1], chartEnv())),
+            chartSize: charts && ((range) => charts.biffChartSize(stream, range[0], range[1])),
+          }))
         .catch((error) => console.warn('[sheet] pictures skipped', error)) // 그림을 못 읽어도 표는 보인다.
         .then((drawing) => {
           model.drawing = drawing ?? null;
@@ -316,6 +366,18 @@ export function readXls(bytes) {
         });
     },
   };
+}
+
+/** from의 BOF로 시작한 하위 스트림이 끝나는 위치(짝 EOF 뒤) */
+function substreamEnd(dv, from, len) {
+  let depth = 0;
+  for (let pos = from; pos + 4 <= len; ) {
+    const type = dv.getUint16(pos, true);
+    pos += 4 + dv.getUint16(pos + 2, true);
+    if (type === RT.BOF) depth++;
+    else if (type === RT.EOF && --depth <= 0) return pos;
+  }
+  return len;
 }
 
 /** 전역 부분 뒤에 이어지는 최상위 BOF(시트 시작) 위치들 */
@@ -424,6 +486,8 @@ function readSheet(stream, dv, sheet, { biff, text: readText, context, styles, m
   let frozen = false;
   let pending = null; // 수식 결과 문자열을 기다리는 칸
   const drawing = []; // MSODRAWING(+CONTINUE) 조각: 도형 트리. 사이사이 OBJ·TXO 레코드는 빼고 잇는다.
+  const objects = []; // OBJ 순서(도형 트리의 ClientData 순서와 같다): { ot, chart: [시작, 끝] }
+  let chartStart = -1;
   let inDrawing = false;
   while (pos + 4 <= len) {
     const type = dv.getUint16(pos, true);
@@ -432,11 +496,18 @@ function readSheet(stream, dv, sheet, { biff, text: readText, context, styles, m
     pos = body + size;
     if (pos > len) break;
     if (type === RT.BOF) {
+      // 시트 안 차트: 차트 개체(OBJ ot=5) 바로 뒤에 차트 하위 스트림이 온다.
+      if (depth === 1 && size >= 4 && dv.getUint16(body + 2, true) === 0x20) chartStart = body - 4;
       depth++;
       continue;
     }
     if (type === RT.EOF) {
       if (--depth <= 0) break;
+      if (depth === 1 && chartStart >= 0) {
+        const owner = objects.findLast((o) => o.ot === 5);
+        if (owner && !owner.chart) owner.chart = [chartStart, pos];
+        chartStart = -1;
+      }
       continue;
     }
     if (depth !== 1) continue; // 시트 안에 든 차트 등
@@ -446,6 +517,10 @@ function readSheet(stream, dv, sheet, { biff, text: readText, context, styles, m
       continue;
     }
     inDrawing = false;
+    if (type === RT.OBJ) {
+      if (size >= 6 && dv.getUint16(body, true) === 0x15) objects.push({ ot: dv.getUint16(body + 4, true), chart: null });
+      continue;
+    }
     switch (type) {
       case RT.NUMBER:
         builder.add(dv.getUint16(body, true), dv.getUint16(body + 2, true), NUM, dv.getFloat64(body + 6, true), dv.getUint16(body + 4, true));
@@ -590,6 +665,7 @@ function readSheet(stream, dv, sheet, { biff, text: readText, context, styles, m
   }
   const model = builder.finish(sheet.name, context);
   model.drawingRanges = drawing;
+  model.objects = objects;
   return model;
 }
 

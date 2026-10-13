@@ -1,3 +1,31 @@
+diff -ruN a/packages/core/src/chart/frame.ts b/packages/core/src/chart/frame.ts
+--- a/packages/core/src/chart/frame.ts
++++ b/packages/core/src/chart/frame.ts
+@@ -525,9 +525,15 @@
+     const boxH = g.hWrap ? wrapH(size) : lineH(size);
+     hLblSpace = boxH + gap;
+     const top = hAxis.side === 't' ? rect.y - gap - boxH : rect.y + rect.h + gap;
++    // [doc-viewer] 줄을 바꿀 수 없는 긴 이름표(날짜 등)가 칸보다 넓으면 엑셀 자동 간격처럼 몇 개씩 건너뛴다(원본은 겹쳐 그렸다).
++    let skip = 1;
++    if (!hAxis.scale && !g.hWrap && g.hBand > 0) {
++      const widest = maxLabelW(hAxis);
++      if (widest > g.hBand * 1.02) skip = Math.ceil((widest + size * 0.6) / g.hBand);
++    }
+     for (let i = 0; i < hAxis.labels.length; i++) {
+       const label = hAxis.labels[i];
+-      if (!label) continue;
++      if (!label || i % skip) continue;
+       const boxW = g.hWrap ? Math.max(g.hBand * 0.98, size * 2) : labelBoxW(label, size);
+       const el = textEl(g.hPos(i) - boxW / 2, top, boxW, boxH, label, {
+         size,
+@@ -713,5 +719,7 @@
+ /** 类目标签总宽超过带宽时启用换行 */
+ export function needWrap(view: AxisView, band: number): boolean {
+   if (!showTicks(view) || view.scale) return false;
++  // [doc-viewer] 띄어 쓴 곳이 없는 이름표는 줄을 바꿔도 칸에 안 들어가므로 건너뛰기(renderAxes)로 맞춘다.
++  if (!view.labels.some((l) => l && /\s/.test(l.trim()))) return false;
+   return maxLabelW(view) > band * 1.02;
+ }
 diff -ruN a/packages/core/src/chart/model.ts b/packages/core/src/chart/model.ts
 --- a/packages/core/src/chart/model.ts
 +++ b/packages/core/src/chart/model.ts
