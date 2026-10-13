@@ -92,6 +92,7 @@ window.viewer = {
       search.close();
       return true;
     }
+    flushPosition(); // 곧 닫힌다: 묶어 두었던 읽던 위치를 바로 알린다.
     return false;
   },
 };
@@ -151,9 +152,18 @@ async function fetchDocument(url) {
 
 /** 읽던 위치를 앱에 알린다. 스크롤 중 너무 자주 쓰지 않게 묶어서 보낸다. */
 let positionTimer = null;
+let pendingPosition = null;
 function reportPosition(position) {
   clearTimeout(positionTimer);
-  positionTimer = setTimeout(() => report('position', position), 500);
+  pendingPosition = position;
+  positionTimer = setTimeout(flushPosition, 500);
+}
+
+/** 기다리던 위치 알림을 바로 보낸다(문서를 닫기 직전). */
+function flushPosition() {
+  clearTimeout(positionTimer);
+  if (pendingPosition) report('position', pendingPosition);
+  pendingPosition = null;
 }
 
 async function open({ fmt: format, src, mode = 'scroll', fit, page = 0, scroll = 0, notes = false }) {
