@@ -81,6 +81,7 @@ export class PagedViewer {
   render() {
     this.observer?.disconnect();
     this.slots = null;
+    this.rendering.clear(); // 예전 배치의 약속을 남기면 새 배치에서 '이미 그렸다'고 잘못 알린다
     this.container.replaceChildren();
     this.container.dataset.mode = this.mode;
     this.container.dataset.fit = this.fit;
@@ -238,6 +239,8 @@ export class PagedViewer {
   /** 뒤에서 쪽을 나누는 문서의 쪽이 늘었거나 다 셌다. 연속 스크롤이면 새 쪽 자리를 붙이고, 쪽 번호·손잡이를 고친다. */
   grow() {
     if (this.slots) this.addSlots();
+    // 두 쪽씩 보기에서 짝 쪽이 아직 나뉘지 않아 한 쪽만 그렸으면, 짝 쪽이 생긴 지금 다시 그린다.
+    else if (this.mode === 'spread' && this.current + 1 < this.doc.count && !this.pageElement(this.current + 1)) this.renderFlip();
     if (!this.placeThumb) this.buildScrubber();
     this.showIndicator();
     if (!this.isScrubbing?.()) this.placeThumb?.(this.current);
@@ -294,19 +297,25 @@ export class PagedViewer {
         }
       }
     };
-    const show = async (index) => {
-      if (wanted.has(index)) return;
+    // 그리기를 기다리는 동안에도 약속을 바로 걸어 둔다: 검색·목차 이동은 goTo 직후 whenRendered로 그 쪽을 기다린다.
+    const show = (index) => {
+      if (wanted.has(index)) return this.rendering.get(index);
       wanted.add(index);
-      if (index !== start && first) await first.catch(() => {});
-      if (!wanted.has(index)) return;
-      const rendering = draw(index);
-      if (index === start && !first) first = rendering;
-      await rendering;
-      // 줄여서 한 화면에 쪽이 많이 보이면 그만큼 더 남겨 둔다(보이는 쪽을 지웠다 다시 그리지 않게).
-      if (wanted.size <= Math.ceil(KEEP_RENDERED / this.shrink ** 2)) return;
-      const farthest = [...wanted].sort((a, b) => Math.abs(b - index) - Math.abs(a - index))[0];
-      wanted.delete(farthest);
-      pages[farthest].replaceChildren();
+      const task = (async () => {
+        if (index !== start && first) await first.catch(() => {});
+        // 그 사이 다른 배치로 바뀌었거나(보기 방식 전환) 이 쪽을 지웠으면 그리지 않는다.
+        if (!wanted.has(index) || this.slots !== pages) return;
+        const rendering = draw(index);
+        if (index === start && !first) first = rendering;
+        await rendering;
+        // 줄여서 한 화면에 쪽이 많이 보이면 그만큼 더 남겨 둔다(보이는 쪽을 지웠다 다시 그리지 않게).
+        if (wanted.size <= Math.ceil(KEEP_RENDERED / this.shrink ** 2)) return;
+        const farthest = [...wanted].sort((a, b) => Math.abs(b - index) - Math.abs(a - index))[0];
+        wanted.delete(farthest);
+        pages[farthest].replaceChildren();
+      })();
+      this.rendering.set(index, task);
+      return task;
     };
     this.showPage = show;
     this.observer = new IntersectionObserver(

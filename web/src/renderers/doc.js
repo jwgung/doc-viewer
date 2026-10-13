@@ -30,7 +30,8 @@ export async function render(bytes, container, ctx) {
     for (let index = sizes.length; index < pager.pages.length; index++) sizes.push(pager.pages[index].size);
   };
   // 첫 쪽(이어보기면 그 쪽까지)만 먼저 나눈다. 나머지는 첫 쪽을 보인 뒤 쉬는 틈에 나눈다.
-  await pager.fill((ctx.startPage ?? 0) + 1);
+  // 두 쪽씩 보기면 첫 화면에 짝 쪽까지 나눠 둔다.
+  await pager.fill((ctx.startPage ?? 0) + (ctx.mode === 'spread' ? 2 : 1));
   sync();
 
   /** 보관한 쪽을 요소로 되살린다. 전체 쪽 수 필드는 다 센 뒤에만 채운다. */

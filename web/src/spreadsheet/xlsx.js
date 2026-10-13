@@ -681,7 +681,9 @@ async function fillChartCache(xml, sheetByName) {
     }
     const cache = kind === 'numRef' ? 'numCache' : 'strCache';
     const head = kind === 'numRef' ? `<${prefix}formatCode>General</${prefix}formatCode>` : '';
-    replacements.push([m.index, all.length, all.replace(`</${prefix}f>`, `</${prefix}f><${prefix}${cache}>${head}<${prefix}ptCount val="${count}"/>${pts}</${prefix}${cache}>`)]);
+    // 바꿀 글은 함수로 넘긴다: 칸 글자에 든 $', $& 같은 것이 치환 패턴으로 해석되지 않게.
+    const filled = `</${prefix}f><${prefix}${cache}>${head}<${prefix}ptCount val="${count}"/>${pts}</${prefix}${cache}>`;
+    replacements.push([m.index, all.length, all.replace(`</${prefix}f>`, () => filled)]);
   }
   let out = xml;
   for (const [at, length, text] of replacements.reverse()) out = out.slice(0, at) + text + out.slice(at + length);
