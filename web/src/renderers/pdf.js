@@ -29,6 +29,7 @@ export async function render(bytes, container, ctx) {
     data: bytes,
     cMapUrl: './cmaps/',
     cMapPacked: true,
+    wasmUrl: './pdf-wasm/', // JPEG 2000·JBIG2 그림 디코더
     isEvalSupported: false,
     enableXfa: false,
     // 내장하지 않은 표준 글꼴은 기기 글꼴로 대신한다(표준 글꼴 파일 820KB를 넣지 않는다).
@@ -59,7 +60,13 @@ export async function render(bytes, container, ctx) {
     const pixels = page.getViewport({ scale: scale * devicePixelRatio });
     canvas.width = Math.floor(pixels.width);
     canvas.height = Math.floor(pixels.height);
-    await page.render({ canvasContext: canvas.getContext('2d'), viewport: pixels }).promise;
+    try {
+      await page.render({ canvasContext: canvas.getContext('2d'), viewport: pixels }).promise;
+    } catch (error) {
+      // 그리다 만 쪽(글자 하나·그림 하나 오류)은 거기까지 그린 그림을 보여 준다. 첫 쪽에서 나면 문서 전체가 열리지 않았다.
+      if (error?.name === 'RenderingCancelledException') throw error;
+      console.warn(`PDF ${index + 1}쪽을 끝까지 그리지 못함:`, error);
+    }
     // 글자 위치에 투명한 텍스트를 겹쳐 길게 눌러 선택·복사할 수 있게 한다.
     const textLayer = document.createElement('div');
     textLayer.className = 'textLayer';
@@ -72,7 +79,9 @@ export async function render(bytes, container, ctx) {
       textContentSource: page.streamTextContent(),
       container: textLayer,
       viewport: page.getViewport({ scale }),
-    }).render();
+    })
+      .render()
+      .catch((error) => console.warn(`PDF ${index + 1}쪽 글자 층을 만들지 못함:`, error));
     page.cleanup();
   };
 

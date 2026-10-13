@@ -9,6 +9,8 @@ const collected = new Map(); // 패키지 디렉터리 → { name, version, lice
 const LICENSE_FILE = /^(licen[cs]e|copying|notice)(\.(md|txt|markdown))?$/i;
 // 자기 dist 안에 다른 패키지를 합쳐 넣은 경우. 빌드 모듈 목록에는 안 나오므로 따로 고지한다.
 const INLINED = { jszip: ['pako'], '@web-ppt/core': ['fflate'] };
+// 패키지 안의 다른 라이선스 파일을 함께 고지해야 하는 것(pdf.js가 싣는 그림 디코더 wasm: OpenJPEG, PDFium JBIG2)
+const EXTRA_FILES = { 'pdfjs-dist': ['wasm/LICENSE_OPENJPEG', 'wasm/LICENSE_PDFJS_OPENJPEG', 'wasm/LICENSE_JBIG2', 'wasm/LICENSE_PDFJS_JBIG2'] };
 
 function packageDirOf(id) {
   const path = id.replace(/^\0/, '').split('?')[0];
@@ -25,7 +27,7 @@ function collect(id) {
   if (!dir || collected.has(dir)) return;
   const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
   const files = readdirSync(dir).filter((f) => LICENSE_FILE.test(f)).sort();
-  const text = files.map((f) => readFileSync(join(dir, f), 'utf8').trim()).join('\n\n');
+  const text = [...files, ...(EXTRA_FILES[pkg.name] ?? [])].map((f) => readFileSync(join(dir, f), 'utf8').trim()).join('\n\n');
   collected.set(dir, { name: pkg.name, version: pkg.version, license: pkg.license ?? '(no license information)', text });
   for (const inner of INLINED[pkg.name] ?? []) collect(installedDir(dir, inner) + '/');
 }

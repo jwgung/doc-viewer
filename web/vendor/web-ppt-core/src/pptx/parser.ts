@@ -5,6 +5,7 @@ import type {
   TableElement, TableRow, TextBody, UnsupportedElement,
 } from '../types';
 import { METAFILE_EXT, metafileDataUrl } from '../metafile';
+import { tiffToPng } from '../image/tiff';
 import { embeddedFontToSfnt } from '../font/eot';
 import { attr, boolAttr, emu, kid, kids, numAttr, parseXml, walk } from '../xml';
 import { getChartParser } from '../chart/hook';
@@ -93,6 +94,11 @@ class Pkg {
 
   /** 把一段字节挂成可引用的地址：defer 下发令牌，否则建 blob URL */
   private store(key: string, data: Uint8Array, mime: string): string {
+    // [doc-viewer] 브라우저가 못 그리는 TIFF는 PNG로 바꿔 둔다(못 풀면 원래대로 두어 빈칸)
+    if (mime === 'image/tiff') {
+      const png = tiffToPng(data);
+      if (png) [data, mime] = [png, 'image/png'];
+    }
     if (this.assetMode === 'defer') {
       let token = this.deferredIndex.get(key);
       if (token === undefined) {
@@ -966,8 +972,12 @@ function parseGraphicFrame(frame: Element, env: Env): SlideElement | SlideElemen
   // graphicData 的 URI 是 .../presentationml/2006/ole，不含 oleObject —— 原先的
   // includes('oleObject') 从来没匹配上，OLE 一直落到「不支持的对象」分支
   if (uri.endsWith('/ole') || uri.includes('oleObject')) {
-    const oleObj = kid(data, 'oleObj');
-    if (oleObj) {
+    // [doc-viewer] Office 2010+는 oleObj를 mc:AlternateContent로 감싼다: Choice(VML 필요)에는 spid만, Fallback에는
+    // 미리보기 p:pic이 있다. 감싼 것을 못 찾아 미리보기 대신 'OLE 개체' 자리 표시만 그렸다.
+    const alt = kid(data, 'AlternateContent');
+    const candidates = [kid(data, 'oleObj'), kid(kid(alt, 'Fallback'), 'oleObj'), kid(kid(alt, 'Choice'), 'oleObj')]
+      .filter((el): el is Element => Boolean(el));
+    for (const oleObj of candidates) {
       // Office 2010+ 把预览图直接写成 p:oleObj 的 p:pic 子元素，
       // 走它能连裁剪 / 效果一起拿到；旧式的 VML 快照是后备路径
       const pic = kid(oleObj, 'pic');
@@ -978,6 +988,8 @@ function parseGraphicFrame(frame: Element, env: Env): SlideElement | SlideElemen
           return { ...img, ...base(xf), name: name ?? img.name, id: frameId };
         }
       }
+    }
+    for (const oleObj of candidates) {
       const src = olePreview(oleObj, env);
       if (src) return { kind: 'image', ...base(xf), src, crop: null, name, id: frameId };
     }
@@ -1591,9 +1603,10 @@ function parseSlide(
   });
 
   const elements: SlideElement[] = [];
-  const showMaster = boolAttr(slideRoot, 'showMasterSp', true) && boolAttr(layoutRoot, 'showMasterSp', true);
-  if (showMaster && masterPath) {
-    elements.push(...parseShapeTree(masterTree, envFor(masterPath, false), true));
+  // [doc-viewer] 슬라이드의 showMasterSp=0은 레이아웃·마스터 도형을 모두 숨기고, 레이아웃의 showMasterSp=0은
+  // 마스터 도형만 숨긴다(레이아웃 자신의 그림·도형은 그린다). 둘을 묶어 제목 슬라이드 레이아웃의 배경 그림이 빠졌다.
+  if (boolAttr(slideRoot, 'showMasterSp', true) && masterPath) {
+    if (boolAttr(layoutRoot, 'showMasterSp', true)) elements.push(...parseShapeTree(masterTree, envFor(masterPath, false), true));
     elements.push(...parseShapeTree(layoutTree, envFor(layoutPath, false), true));
   }
   elements.push(...parseShapeTree(slideTree, envFor(slidePath, true), false));

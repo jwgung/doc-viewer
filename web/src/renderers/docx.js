@@ -15,6 +15,13 @@ const OPTIONS = {
   renderFootnotes: true,
   renderEndnotes: true,
   useBase64URL: true,
+  // 브라우저가 못 그리는 TIFF 그림은 PNG로 바꾼다(변환기는 TIFF가 있을 때만 불러온다).
+  convertImage: async (blob, path) => {
+    if (!/\.tiff?$/i.test(path)) return null;
+    const { tiffToPng } = await import('@web-ppt/core/image');
+    const png = tiffToPng(new Uint8Array(await blob.arrayBuffer()));
+    return png ? new Blob([png], { type: 'image/png' }) : null;
+  },
 };
 
 export async function render(bytes, container, ctx) {

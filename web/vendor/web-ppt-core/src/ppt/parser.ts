@@ -3,6 +3,7 @@ import type {
   Slide, SlideElement, TableCell, TableElement, TableRow, TextBody, TextRun, Transition,
 } from '../types';
 import { metafileDataUrl } from '../metafile';
+import { tiffToPng } from '../image/tiff';
 import { presetGeom } from '../geometry';
 import { AutoNum, collectAutoNums, formatAutoNum } from './autonum';
 import { Cfb } from './cfb';
@@ -1820,6 +1821,9 @@ export function parsePpt(bytes: Uint8Array, password?: string): Presentation {
       if (b.mime === 'image/emf' || b.mime === 'image/wmf' || b.mime === 'image/pict') {
         return metafileDataUrl(b.data);
       }
+      // [doc-viewer] 브라우저가 못 그리는 TIFF는 PNG로 바꾼다
+      const png = b.mime === 'image/tiff' ? tiffToPng(b.data) : null;
+      if (png) return URL.createObjectURL(new Blob([png], { type: 'image/png' }));
       return URL.createObjectURL(new Blob([b.data.slice().buffer], { type: b.mime }));
     } catch {
       return null;
