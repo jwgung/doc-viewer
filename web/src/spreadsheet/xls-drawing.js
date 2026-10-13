@@ -7,7 +7,7 @@ import { toMedia } from './media.js';
 
 const ET = {
   DGG: 0xf000, BSTORE: 0xf001, DG: 0xf002, SPGR_C: 0xf003, SP_C: 0xf004,
-  SPGR: 0xf009, SP: 0xf00a, OPT: 0xf00b, CHILD_ANCHOR: 0xf00f, CLIENT_ANCHOR: 0xf010, TOPT: 0xf122,
+  SPGR: 0xf009, SP: 0xf00a, OPT: 0xf00b, CHILD_ANCHOR: 0xf00f, CLIENT_ANCHOR: 0xf010, CLIENT_DATA: 0xf011, TOPT: 0xf122,
 };
 const PROP = { rot: 0x0004, cropTop: 0x0100, cropBottom: 0x0101, cropLeft: 0x0102, cropRight: 0x0103, pib: 0x0104, groupBools: 0x03bf };
 const SP_FLAG = { GROUP: 0x1, PATRIARCH: 0x4, DELETED: 0x8, FLIPH: 0x40, FLIPV: 0x80 };
@@ -52,20 +52,34 @@ function rect(dv, rec) {
 }
 
 /**
- * group: 전역 MSODRAWINGGROUP 바이트, drawing: 시트 MSODRAWING 바이트(이어 붙인 것).
+ * group: 전역 MSODRAWINGGROUP 바이트(없으면 null), drawing: 시트 MSODRAWING 바이트(이어 붙인 것).
+ * objects: 시트의 OBJ 순서({ ot, chart }), chartXml(범위) → 차트 XML, chartSize(범위) → { w, h }(pt).
+ * 차트 개체(ot=5)는 그 자리에 차트를 놓는다.
  * { pictures, media }(xlsx와 같은 모양, 앵커는 frac) 또는 null
  */
-export async function readXlsPictures(group, drawing) {
-  const gdv = new DataView(group.buffer, group.byteOffset, group.byteLength);
-  const dgg = [...records(gdv, 0, group.length)].find((r) => r.type === ET.DGG);
-  const bstore = dgg && find(gdv, dgg, ET.BSTORE);
-  if (!bstore) return null;
-  const blips = blipsFromStore(group, bstore, null) ?? [];
+export async function readXlsPictures(group, drawing, { objects = [], chartXml = null, chartSize = null } = {}) {
+  let blips = [];
+  if (group) {
+    const gdv = new DataView(group.buffer, group.byteOffset, group.byteLength);
+    const dgg = [...records(gdv, 0, group.length)].find((r) => r.type === ET.DGG);
+    const bstore = dgg && find(gdv, dgg, ET.BSTORE);
+    if (bstore) blips = blipsFromStore(group, bstore, null) ?? [];
+  }
 
   const dv = new DataView(drawing.buffer, drawing.byteOffset, drawing.byteLength);
   const pictures = [];
   const mediaOf = new Map(); // BStore 번호 → media 번호
-  const blipList = [];
+  const mediaList = []; // { blip } | { chart: XML }
+
+  // 도형마다 따라오는 OBJ 레코드는 도형 트리에서 ClientData를 가진 도형 순서(앞쪽 우선)와 같다.
+  const objectAt = new Map(); // SpContainer 위치 → OBJ 번호
+  const number = (container) => {
+    for (const rec of records(dv, container.start, container.start + container.len)) {
+      if (rec.type === ET.SP_C) {
+        if (find(dv, rec, ET.CLIENT_DATA)) objectAt.set(rec.start, objectAt.size);
+      } else if (rec.type === ET.SPGR_C) number(rec);
+    }
+  };
 
   // 그룹 컨테이너의 첫 도형은 그룹 자신(좌표계 Spgr·앵커)이다. 맨 위(patriarch)는 앵커가 없고 자식이 각자 셀 앵커를 가진다.
   // 그룹 안 도형은 자식 좌표를 맨 위 그룹 앵커 상자 안의 비율(box)로 바꾼다.
@@ -113,12 +127,13 @@ export async function readXlsPictures(group, drawing) {
     const flags = dv.getUint32(spRec.start + 4, true);
     if (flags & (SP_FLAG.DELETED | SP_FLAG.PATRIARCH | SP_FLAG.GROUP)) return;
     const optRec = find(dv, sp, ET.OPT);
-    if (!optRec) return;
-    const props = parseOpt(dv, optRec).simple;
+    const props = optRec ? parseOpt(dv, optRec).simple : new Map();
     const tertiary = find(dv, sp, ET.TOPT);
     if (tertiary) for (const [k, v] of parseOpt(dv, tertiary).simple) if (!props.has(k)) props.set(k, v);
+    const obj = objects[objectAt.get(sp.start)];
+    const chart = obj?.chart && chartXml ? obj.chart : null;
     const pib = props.get(PROP.pib);
-    if (!pib || !blips[pib - 1] || isHidden(sp)) return;
+    if ((!chart && (!pib || !blips[pib - 1])) || isHidden(sp)) return;
     let anchor;
     let box = [0, 0, 1, 1];
     if (ctx) {
@@ -132,11 +147,31 @@ export async function readXlsPictures(group, drawing) {
       anchor = client && sheetAnchor(dv, client);
       if (!anchor) return;
     }
+    if (chart) {
+      let xml = null;
+      try {
+        xml = chartXml(chart);
+      } catch (error) {
+        console.warn('[sheet] chart skipped', error);
+      }
+      if (!xml) return;
+      // 앵커 높이·너비가 0인 파일(위아래 행이 같고 오프셋 0)이 있다. 그때는 차트에 적힌 크기(pt)로 놓는다.
+      const [c1, x1, r1, y1] = anchor.from;
+      const [c2, x2, r2, y2] = anchor.to;
+      const flat = (r1 === r2 && y1 === y2) || (c1 === c2 && x1 === x2);
+      const size = flat && chartSize ? chartSize(chart) : null;
+      pictures.push({
+        from: anchor.from, to: size ? null : anchor.to, frac: true, size: size ? [(size.w * 96) / 72, (size.h * 96) / 72] : null, pos: null,
+        box, media: mediaList.length, crop: null, rot: 0, flipH: false, flipV: false,
+      });
+      mediaList.push({ chart: xml });
+      return;
+    }
     let media = mediaOf.get(pib);
     if (media === undefined) {
-      media = blipList.length;
+      media = mediaList.length;
       mediaOf.set(pib, media);
-      blipList.push(blips[pib - 1]);
+      mediaList.push({ blip: blips[pib - 1] });
     }
     const crop = [PROP.cropLeft, PROP.cropTop, PROP.cropRight, PROP.cropBottom].map((id) => fixed(props.get(id) ?? 0));
     pictures.push({
@@ -150,11 +185,20 @@ export async function readXlsPictures(group, drawing) {
 
   for (const dg of records(dv, 0, drawing.length)) {
     if (dg.type !== ET.DG) continue;
-    for (const rec of records(dv, dg.start, dg.start + dg.len)) if (rec.type === ET.SPGR_C) walk(rec, null, true);
+    for (const rec of records(dv, dg.start, dg.start + dg.len)) {
+      if (rec.type !== ET.SPGR_C) continue;
+      number(rec);
+      walk(rec, null, true);
+    }
   }
   if (!pictures.length) return null;
   // 그림 하나를 못 읽어도 나머지는 보인다. 바이트는 저장소 전체가 아닌 그 그림만 복사해 넘긴다.
-  const media = await Promise.all(blipList.map((b) => (b.mime === 'image/tiff' ? null : toMedia(b.data.slice()).catch(() => null))));
+  const media = await Promise.all(
+    mediaList.map(({ blip, chart }) => {
+      if (chart) return { type: 'chart', xml: chart, theme: null };
+      return blip.mime === 'image/tiff' ? null : toMedia(blip.data.slice()).catch(() => null);
+    }),
+  );
   return { pictures: pictures.filter((p) => media[p.media]), media };
 }
 
