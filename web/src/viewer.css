@@ -12,7 +12,9 @@
   --page-shadow: 0 1px 3px rgb(0 0 0 / 20%);
   /* 쪽 번호는 흰 종이 위에 겹치므로 다크 모드에서도 어두운 바탕에 흰 글자로 둔다. */
   --indicator-bg: rgb(0 0 0 / 55%);
-  --scrub-thumb: rgb(0 0 0 / 35%);
+  /* 빠른 이동 손잡이: 흰 종이와 회색·검은 여백 어디에 겹쳐도 보이게 진한 바탕에 반대색 테두리를 둔다. */
+  --scrub-thumb: rgb(60 60 67 / 80%);
+  --scrub-edge: rgb(255 255 255 / 90%);
   --error: #b00020;
 }
 
@@ -29,7 +31,8 @@
     --accent: #8ab4f8;
     --on-accent: #0f1a2e;
     --page-shadow: 0 1px 4px rgb(0 0 0 / 60%);
-    --scrub-thumb: rgb(255 255 255 / 35%);
+    --scrub-thumb: rgb(225 225 232 / 90%);
+    --scrub-edge: rgb(0 0 0 / 70%);
     --error: #ff8a80;
   }
 }
@@ -361,16 +364,19 @@ body.reading .scrubber {
 
 .scrubber-thumb {
   position: absolute;
-  right: 4px;
-  width: 6px;
+  right: 3px;
+  box-sizing: border-box;
+  width: 9px;
   height: 44px;
   background: var(--scrub-thumb);
-  border-radius: 3px;
+  border: 1px solid var(--scrub-edge);
+  border-radius: 5px;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 30%);
   transition: width 0.15s, background 0.15s;
 }
 
 .scrubber.active .scrubber-thumb {
-  width: 10px;
+  width: 12px;
   background: var(--accent);
 }
 
