@@ -268,53 +268,78 @@ export class SheetGrid {
 
   /** 영역마다 그림 층을 만든다. 고정 경계에 걸친 그림은 양쪽 층에 하나씩 두고, 영역이 잘라 보인다. */
   buildPictures() {
+    this.picObserver?.disconnect();
+    this.picObserver = null;
     this.picLayers = new Map();
     const pictures = this.meta.pictures;
     if (!pictures.length) return;
-    const { fw, fh } = this.geo;
+    // 차트는 화면 가까이 올 때 그린다(그리기가 무거워 시트를 열 때 모두 그리면 첫 화면이 늦다).
+    const charts = pictures.some((p) => this.media[p.media]?.type === 'chart');
+    if (charts) {
+      this.picObserver = new IntersectionObserver(
+        (entries) => {
+          for (const entry of entries) {
+            if (!entry.isIntersecting) continue;
+            const img = entry.target.firstElementChild;
+            const { index, p } = entry.target.chart;
+            const url = this.chartUrl(index, p);
+            if (url) img.src = url;
+            else entry.target.hidden = true;
+            this.picObserver.unobserve(entry.target);
+          }
+        },
+        { root: this.scroller, rootMargin: '50%' },
+      );
+    }
     const areas = [
-      [this.cellsMain, fw, fh, 'main'],
-      [this.cellsLeft, 0, fh, 'left'],
-      [this.cellsTop, fw, 0, 'top'],
-      [this.cellsCorner, 0, 0, 'corner'],
+      [this.cellsMain, 'main'],
+      [this.cellsLeft, 'left'],
+      [this.cellsTop, 'top'],
+      [this.cellsCorner, 'corner'],
     ];
-    for (const [target, ox, oy, area] of areas) {
+    for (const [target, area] of areas) {
       if (!target) continue;
       const layer = div('sg-pics');
       const items = [];
       pictures.forEach((p, i) => {
-        const url = this.media[p.media]?.type === 'chart' ? this.chartUrl(i, p) : this.mediaUrls[p.media];
-        if (!url) return;
+        const chart = this.media[p.media]?.type === 'chart';
+        const url = chart ? null : this.mediaUrls[p.media];
+        if (!chart && !url) return;
         const el = div('sg-pic');
         const img = document.createElement('img');
-        img.src = url;
+        if (url) img.src = url;
         img.alt = '';
         img.loading = 'lazy';
         img.decoding = 'async';
         img.draggable = false;
         el.appendChild(img);
         if (p.rot || p.flipH || p.flipV) el.style.transform = `rotate(${p.rot}deg) scale(${p.flipH ? -1 : 1},${p.flipV ? -1 : 1})`;
+        if (chart) el.chart = { index: i, p };
         layer.appendChild(el);
-        items.push({ el, img, p: pictures[i] });
+        items.push({ el, img, p });
       });
       target.appendChild(layer);
-      this.picLayers.set(target, { layer, items, ox, oy, area });
+      this.picLayers.set(target, { layer, items, area });
     }
     this.placePictures();
   }
 
   /** 행이 늘면 그림 자리도 다시 잡는다. 그 영역에 걸치지 않는 그림은 숨긴다. */
   placePictures() {
-    const { rowTop, colLeft, fr, fc } = this.geo;
+    const { rowTop, colLeft, fr, fc, fw, fh } = this.geo;
     const fx = colLeft[fc];
     const fy = rowTop[fr];
-    for (const { items, ox, oy, area } of this.picLayers?.values() ?? []) {
+    for (const { items, area } of this.picLayers?.values() ?? []) {
+      // 영역 원점은 그때그때의 고정 영역 크기로 잡는다(고정 행이 줄바꿈으로 높아지면 fh가 바뀐다).
+      const ox = area === 'main' || area === 'top' ? fw : 0;
+      const oy = area === 'main' || area === 'left' ? fh : 0;
       for (const { el, img, p } of items) {
         const r = this.pictureRect(p);
         const inX = area === 'main' || area === 'top' ? r.x + r.w > fx : r.x < fx;
         const inY = area === 'main' || area === 'left' ? r.y + r.h > fy : r.y < fy;
-        el.hidden = !(inX && inY && r.w > 0 && r.h > 0);
+        el.hidden = !(inX && inY && r.w >= 2 && r.h >= 2); // 크기를 거의 0으로 줄인 것은 엑셀에서도 숨긴 것이다
         if (el.hidden) continue;
+        if (el.chart && !img.getAttribute('src')) this.picObserver?.observe(el); // 아직 안 그린 차트
         el.style.left = `${r.x - ox}px`;
         el.style.top = `${r.y - oy}px`;
         el.style.width = `${r.w}px`;
@@ -329,6 +354,7 @@ export class SheetGrid {
       }
     }
   }
+
 
   build() {
     const { nRows, nCols, rowTop, colLeft, rowHead, fr, fc, fw, fh } = this.geo;

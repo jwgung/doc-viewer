@@ -271,18 +271,24 @@ export async function readXlsx(bytes) {
     sheets: sheets.map(({ name, hidden, kind }) => ({ name, hidden, kind })),
     active: activeTab < sheets.length ? activeTab : 0,
     styles,
-    load: async (index) => {
+    load: async (index, { drawing = true } = {}) => {
       const s = sheets[index];
       if (!s || !s.path || !zip.has(s.path) || (s.kind !== 'sheet' && s.kind !== 'chart')) return SheetModel.placeholder(s?.name ?? '', s?.kind === 'sheet' ? 'sheet' : 'chart');
       // 차트 시트는 표가 없고 그리기 파트에 차트 하나가 있다.
       const model = s.kind === 'chart' ? SheetModel.placeholder(s.name, 'chart') : await readSheet(zip, s, context, styles, mdw, baseFont);
       if (s.kind === 'chart') model.geometry.showGrid = false;
+      if (!drawing) return model;
       try {
+        // 차트가 다른 시트 값을 가리키면 그 시트를 따로 읽는다(같은 시트면 방금 읽은 것). 이 시트의 차트들이 같은 시트를
+        // 가리키면 한 번만 읽고, 다 채우면 버린다.
+        const referenced = new Map();
         model.drawing = await readDrawing(zip, s.path, themeXml, (name) => {
-          // 차트가 다른 시트 값을 가리키면 그 시트를 따로 읽는다(같은 시트면 방금 읽은 것).
           if (name === s.name && s.kind === 'sheet') return model;
-          const ref = sheets.find((x) => x.name === name && x.kind === 'sheet' && x.path && zip.has(x.path));
-          return ref ? readSheet(zip, ref, context, styles, mdw, baseFont) : null;
+          if (!referenced.has(name)) {
+            const ref = sheets.find((x) => x.name === name && x.kind === 'sheet' && x.path && zip.has(x.path));
+            referenced.set(name, ref ? readSheet(zip, ref, context, styles, mdw, baseFont).catch(() => null) : null);
+          }
+          return referenced.get(name);
         });
       } catch (error) {
         console.warn('[sheet] pictures skipped', error); // 그림을 못 읽어도 표는 보인다.
@@ -571,6 +577,20 @@ function xfrmOf(xml) {
   };
 }
 
+/** 앵커 안 그룹(grpSp)들의 범위와 좌표계. 바깥 그룹이 앞에 온다. */
+function groupRanges(body) {
+  const out = [];
+  const stack = [];
+  for (const m of body.matchAll(/<(\/?)(?:\w+:)?grpSp\b[^>]*>/g)) {
+    if (!m[1]) stack.push(m.index);
+    else if (stack.length) {
+      const start = stack.pop();
+      out.push({ start, end: m.index, xf: xfrmOf(element(body.slice(start, m.index), 'grpSpPr')?.body ?? '') });
+    }
+  }
+  return out.sort((a, b) => a.start - b.start);
+}
+
 /**
  * { pictures: [{ from, to, pos, size, box, media, crop, rot, flipH, flipV }], media } 또는 null.
  * media 항목: { type, data } | { type, svg }(그림) | { type: 'chart', xml, theme }(차트)
@@ -591,8 +611,10 @@ async function readDrawing(zip, sheetPath, themeXml, sheetByName) {
     const pos = kind === 'absoluteAnchor' ? emptyTag(body, 'pos') : null;
     const size = ext ? [Number(ext.cx) / EMU_PER_PX || 0, Number(ext.cy) / EMU_PER_PX || 0] : null;
     // 그룹 안 항목은 그룹의 자식 좌표계(chOff·chExt)로 앵커 상자 안 비율 자리를 구한다.
-    const group = /<(?:\w+:)?grpSp\b/.test(body) ? xfrmOf(element(body, 'grpSpPr')?.body ?? '') : null;
-    for (const [, tag, item] of body.matchAll(ITEM)) {
+    // 그룹 안의 그룹은 안쪽 좌표계부터 바깥 그룹의 자식 좌표계로 차례로 옮긴다.
+    const groups = /<(?:\w+:)?grpSp\b/.test(body) ? groupRanges(body) : [];
+    for (const match of body.matchAll(ITEM)) {
+      const [, tag, item] = match;
       if (pictures.length >= MAX_PICTURES) break;
       const nv = emptyTag(item, 'cNvPr');
       if (nv && truthy(nv.hidden)) continue;
@@ -611,10 +633,22 @@ async function readDrawing(zip, sheetPath, themeXml, sheetByName) {
       if (!target) continue;
       const xf = xfrmOf(tag === 'pic' ? element(item, 'spPr')?.body ?? '' : item);
       let box = [0, 0, 1, 1];
+      const chain = groups.filter((g) => g.start < match.index && match.index < g.end);
+      const group = chain[0]?.xf;
       if (group && xf && group.chCx > 0 && group.chCy > 0) {
-        const fx = (x) => (x - group.chX) / group.chCx;
-        const fy = (y) => (y - group.chY) / group.chCy;
-        box = [fx(xf.x), fy(xf.y), fx(xf.x + xf.cx), fy(xf.y + xf.cy)];
+        let { x, y, cx, cy } = xf;
+        for (const { xf: g } of chain.slice(1).reverse()) {
+          if (!g || !(g.chCx > 0) || !(g.chCy > 0)) continue;
+          const sx = g.cx / g.chCx;
+          const sy = g.cy / g.chCy;
+          x = g.x + (x - g.chX) * sx;
+          y = g.y + (y - g.chY) * sy;
+          cx *= sx;
+          cy *= sy;
+        }
+        const fx = (v) => (v - group.chX) / group.chCx;
+        const fy = (v) => (v - group.chY) / group.chCy;
+        box = [fx(x), fy(y), fx(x + cx), fy(y + cy)];
       }
       const src = tag === 'pic' && emptyTag(item, 'srcRect');
       const crop = src ? ['l', 't', 'r', 'b'].map((k) => (Number(src[k]) || 0) / 100000) : null;
@@ -654,7 +688,7 @@ const MAX_CACHE_POINTS = 10000;
 /** 캐시 없는 참조를 시트 값으로 채운다. 한 범위(시트!A1:B2)만 읽고, 여러 범위·이름 정의는 그대로 둔다. */
 async function fillChartCache(xml, sheetByName) {
   if (!sheetByName || !/<(?:\w+:)?(?:numRef|strRef)>\s*<(?:\w+:)?f>[^<]*<\/(?:\w+:)?f>\s*<\/(?:\w+:)?(?:numRef|strRef)>/.test(xml)) return xml;
-  const sheetsRead = new Map();
+  const sheetsRead = new Map(); // 이 차트 안에서 같은 시트를 한 번만 기다린다(읽기 자체는 sheetByName이 나눠 쓴다)
   const escape = (t) => t.replace(/[&<>]/g, (c) => (c === '&' ? '&amp;' : c === '<' ? '&lt;' : '&gt;'));
   const replacements = [];
   for (const m of xml.matchAll(BARE_REF)) {

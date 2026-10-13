@@ -35,11 +35,12 @@ function loadSheet(index) {
  */
 async function search(current, query) {
   const hits = [];
-  const order = [current, ...book.sheets.map((_, i) => i).filter((i) => i !== current && !book.sheets[i].hidden)];
+  // 차트 시트는 찾을 글자가 없다. 다른 시트는 그림·차트 없이 셀만 읽는다(검색할 때마다 그림을 풀고 차트를 바꾸지 않게).
+  const order = [current, ...book.sheets.map((_, i) => i).filter((i) => i !== current && !book.sheets[i].hidden && book.sheets[i].kind === 'sheet')];
   for (const sheet of order) {
     let model;
     try {
-      model = sheet === current ? await loadSheet(sheet) : await book.load(sheet);
+      model = sheet === current ? await loadSheet(sheet) : await book.load(sheet, { drawing: false });
     } catch {
       continue;
     }

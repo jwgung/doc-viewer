@@ -10,7 +10,7 @@ const RT = {
   PIE: 0x1019, AREA: 0x101a, SCATTER: 0x101b, AXIS: 0x101d, VALUERANGE: 0x101f, AXISLINE: 0x1021, TEXT: 0x1025,
   OBJECTLINK: 0x1027, FRAME: 0x1032, BEGIN: 0x1033, END: 0x1034, PLOTAREA: 0x1035, CHART3D: 0x103a, RADAR: 0x103e,
   SURF: 0x103f, RADARAREA: 0x1040, AXISPARENT: 0x1041, SERTOCRT: 0x1045, BRAI: 0x1051, BOPPOP: 0x1061, SIINDEX: 0x1065,
-  NUMBER: 0x0203, LABEL: 0x0204, BOF: 0x0809, EOF: 0x000a,
+  SERPARENT: 0x104a, NUMBER: 0x0203, LABEL: 0x0204, BOF: 0x0809, EOF: 0x000a,
 };
 const MARKERS = ['none', 'square', 'diamond', 'triangle', 'x', 'star', 'dash', 'dash', 'circle', 'plus'];
 const LEGEND_POS = { 0: 'b', 1: 'tr', 2: 't', 3: 'r', 4: 'l' };
@@ -145,6 +145,9 @@ function parse(b, start, end) {
         break;
       case RT.SERTOCRT:
         if (series) series.group = dv.getUint16(at, true);
+        break;
+      case RT.SERPARENT: // 추세선·오차 막대도 SERIES로 저장되고 SERTOCRT 대신 SERPARENT를 가진다. 데이터 계열이 아니다.
+        if (series) series.derived = true;
         break;
       case RT.AREAFORMAT: {
         const area = areaOf(dv, b, at);
@@ -319,7 +322,7 @@ export function biffChartXml(stream, start, end, env) {
   let axesXml = '';
   groups.forEach((g, gi) => {
     if (!g.kind) return;
-    const members = chart.series.filter((s) => (s.group ?? 0) === gi || (gi === 0 && s.group >= groups.length));
+    const members = chart.series.filter((s) => !s.derived && ((s.group ?? 0) === gi || (gi === 0 && s.group >= groups.length)));
     if (!members.length) return;
     const pie = g.kind === 'pie';
     const lineLike = g.kind === 'line' || g.kind === 'scatter' || (g.kind === 'radar' && !g.filled);

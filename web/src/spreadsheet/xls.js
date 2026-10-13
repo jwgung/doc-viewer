@@ -16,7 +16,7 @@ const RT = {
   DIMENSIONS: 0x0200, DEFAULTROWHEIGHT: 0x0225, DEFCOLWIDTH: 0x0055, COLINFO: 0x007d, ROW: 0x0208,
   NUMBER: 0x0203, RK: 0x027e, MULRK: 0x00bd, LABELSST: 0x00fd, LABEL: 0x0204, RSTRING: 0x00d6, BOOLERR: 0x0205,
   FORMULA: 0x0006, STRING: 0x0207, BLANK: 0x0201, MULBLANK: 0x00be, MERGEDCELLS: 0x00e5, WINDOW2: 0x023e, PANE: 0x0041,
-  MSODRAWINGGROUP: 0x00eb, MSODRAWING: 0x00ec, OBJ: 0x005d, EXTERNSHEET: 0x0017,
+  MSODRAWINGGROUP: 0x00eb, MSODRAWING: 0x00ec, OBJ: 0x005d, EXTERNSHEET: 0x0017, SUPBOOK: 0x01ae,
 };
 const ERRORS = { 0x00: '#NULL!', 0x07: '#DIV/0!', 0x0f: '#VALUE!', 0x17: '#REF!', 0x1d: '#NAME?', 0x24: '#NUM!', 0x2a: '#N/A', 0x2b: '#GETTING_DATA' };
 
@@ -147,7 +147,9 @@ export function readXls(bytes) {
   let active = 0;
   let ansi = ansiDecoder(1252);
   const drawingGroup = []; // MSODRAWINGGROUP(+CONTINUE) 조각: 그림 저장소
-  let externSheets = []; // EXTERNSHEET: 3차원 참조 번호(ixti) → 시트 번호(BOUNDSHEET 순서)
+  let externSheets = []; // EXTERNSHEET: 3차원 참조 번호(ixti) → { book: SUPBOOK 번호, tab: 시트 번호(BOUNDSHEET 순서) }
+  let supbooks = 0;
+  let selfBook = -1; // 이 통합 문서를 가리키는 SUPBOOK 번호(다른 통합 문서를 가리키는 참조는 읽지 않는다)
   // 글자 수(1·2바이트) 뒤에 오는 문자열. BIFF8은 유니코드 문자열, BIFF5는 코드페이지 8비트 문자열이다.
   const text = (start, end, cchBytes) => {
     if (biff === 8) return new Segments(stream, [[start, end]]).string(cchBytes);
@@ -215,8 +217,12 @@ export function readXls(bytes) {
       case RT.EXTERNSHEET:
         if (biff === 8) {
           const count = Math.min(dv.getUint16(body, true), (size - 2) / 6);
-          externSheets = Array.from({ length: count }, (_, i) => dv.getUint16(body + 2 + i * 6 + 2, true));
+          externSheets = Array.from({ length: count }, (_, i) => ({ book: dv.getUint16(body + 2 + i * 6, true), tab: dv.getUint16(body + 2 + i * 6 + 2, true) }));
         }
+        break;
+      case RT.SUPBOOK:
+        if (size >= 4 && dv.getUint16(body + 2, true) === 0x0401) selfBook = supbooks;
+        supbooks++;
         break;
       case RT.MSODRAWINGGROUP:
         if (biff !== 8) break;
@@ -291,11 +297,13 @@ export function readXls(bytes) {
 
   const list = sheets.filter((s) => s.dt !== 6); // VB 모듈 시트는 엑셀도 보여주지 않는다
   // 차트가 가리키는 칸 값(차트에 값 캐시가 없을 때). 3차원 참조 번호 → 시트 → 범위 값. 읽은 시트는 이 문서 동안 들고 있는다.
-  const sheetModels = new Map();
-  const chartEnv = () => ({
+  // sheetModels: 이번에 읽는 시트의 차트들이 함께 쓰는 참조 시트(다 그리면 버린다). 지금 읽는 시트는 미리 넣어 둔다.
+  const chartEnv = (sheetModels = new Map()) => ({
     palette,
     cells: ({ ixti, r1, c1, r2, c2 }) => {
-      const s = sheets[externSheets[ixti]];
+      const ref = externSheets[ixti];
+      if (!ref || (selfBook >= 0 && ref.book !== selfBook)) return null;
+      const s = sheets[ref.tab];
       if (!s || s.dt !== 0) return null;
       if (!sheetModels.has(s)) {
         const offset = offsetOf(s);
@@ -340,7 +348,7 @@ export function readXls(bytes) {
     sheets: list.map((s) => ({ name: s.name, hidden: s.hidden, kind: s.dt === 2 ? 'chart' : s.dt === 1 ? 'macro' : 'sheet' })),
     active: Math.max(0, activeSheet),
     styles,
-    load: (index) => {
+    load: (index, { drawing = true } = {}) => {
       const s = list[index];
       if (!s) return SheetModel.placeholder('', 'sheet');
       const offset = offsetOf(s);
@@ -350,14 +358,14 @@ export function readXls(bytes) {
       const { drawingRanges: ranges, objects } = model;
       delete model.drawingRanges;
       delete model.objects;
-      if (!ranges.length) return model;
+      if (!ranges.length || !drawing) return model;
       // 그림·차트 읽기(OfficeArt, 차트 레코드)는 그것이 있는 시트에서만 불러온다.
+      const env = chartEnv(new Map([[s, model]]));
       return Promise.all([import('./xls-drawing.js'), objects.some((o) => o.chart) ? import('./xls-chart.js') : null])
         .then(([{ readXlsPictures }, charts]) =>
           readXlsPictures(drawingGroup.length ? join(stream, drawingGroup) : null, join(stream, ranges), {
             objects,
-            chartXml: charts && ((range) => charts.biffChartXml(stream, range[0], range[1], chartEnv())),
-            chartSize: charts && ((range) => charts.biffChartSize(stream, range[0], range[1])),
+            chartXml: charts && ((range) => charts.biffChartXml(stream, range[0], range[1], env)),
           }))
         .catch((error) => console.warn('[sheet] pictures skipped', error)) // 그림을 못 읽어도 표는 보인다.
         .then((drawing) => {

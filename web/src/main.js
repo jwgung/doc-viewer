@@ -112,10 +112,16 @@ function setNotes(visible) {
     notesPanel.remove();
     notesPanel = null;
   }
+  measureNotes();
+}
+
+/** 노트 칸 높이(화면 높이의 30%, 최대 240px)를 다시 재어 쪽 배치에 알린다. 화면을 돌리면 높이가 바뀐다. */
+function measureNotes() {
   const height = notesPanel?.offsetHeight ?? 0;
   document.documentElement.style.setProperty('--notes-height', `${height}px`);
-  viewer.setBottomInset(height);
+  viewer?.setBottomInset(height);
 }
+addEventListener('resize', () => notesPanel && measureNotes());
 
 /** 지금 보는 쪽(두 쪽씩이면 두 쪽)의 노트를 칸에 채운다. */
 function showNotes() {

@@ -72,8 +72,20 @@ export class PagedViewer {
     this.indicator.addEventListener('click', () => this.askPage());
     document.body.appendChild(this.indicator);
     this.buildScrubber();
-    // 화면 크기가 바뀌면(회전 등) 쪽 크기를 다시 맞춘다. 연속 스크롤·화면 가득은 CSS 비율로 따라간다.
-    addEventListener('resize', debounce(() => (this.mode !== 'scroll' || this.fit === 'page') && this.render(), 200));
+    // 화면 크기가 바뀌면(회전 등) 쪽 크기를 다시 맞춘다. 연속 스크롤·화면 가득은 칸 크기를 CSS 비율이 따라가므로,
+    // 폭이 달라진 쪽만 그 폭으로 다시 그린다(PDF 그림 해상도·글자 층 위치가 그린 폭에 묶여 있다).
+    // 검색 중 높이만 바뀐 것(키보드가 열리고 닫힘)은 무시한다: 다시 그리면 검색 강조와 스크롤 위치를 잃는다.
+    let lastWidth = innerWidth;
+    addEventListener(
+      'resize',
+      debounce(() => {
+        const widthChanged = innerWidth !== lastWidth;
+        lastWidth = innerWidth;
+        if (!widthChanged && document.body.classList.contains('searching')) return;
+        if (this.mode !== 'scroll' || this.fit === 'page') this.render();
+        else this.redrawResized?.();
+      }, 200),
+    );
     this.bindGestures();
   }
 
@@ -149,7 +161,7 @@ export class PagedViewer {
 
     const pageAt = (y) => {
       const rect = track.getBoundingClientRect();
-      const ratio = Math.min(1, Math.max(0, (y - rect.top - THUMB_PX / 2) / (rect.height - THUMB_PX)));
+      const ratio = Math.min(1, Math.max(0, (y - rect.top - THUMB_PX / 2) / Math.max(1, rect.height - THUMB_PX)));
       return Math.round(ratio * (this.doc.count - 1));
     };
     let dragging = false;
@@ -277,9 +289,11 @@ export class PagedViewer {
     let first = null;
     // 쪽은 그릴 때의 칸 폭에 맞춰 그린다(PDF 그림 해상도, 글자 층 위치, docx 줄임 비율). 그린 폭을 적어 두고
     // 줄이기가 끝나면 폭이 달라진 쪽을 다시 그린다.
+    // 같은 쪽을 다시 그리면 앞 그리기가 끝난 뒤에 시작한다: 늦게 끝난 옛 그리기가 새 폭의 결과를 덮지 않게.
     const draw = (index) => {
       const el = pages[index];
-      const rendering = this.doc.renderInto(index, el);
+      const rendering = (el.drawing ?? Promise.resolve()).catch(() => {}).then(() => this.doc.renderInto(index, el));
+      el.drawing = rendering;
       el.dataset.drawnWidth = String(el.clientWidth);
       this.rendering.set(index, rendering);
       return rendering;
@@ -288,7 +302,8 @@ export class PagedViewer {
     this.redrawResized = () => {
       for (const index of wanted) {
         const el = pages[index];
-        if (Math.abs(el.clientWidth - Number(el.dataset.drawnWidth)) <= 2) continue;
+        // 아직 그리기 전(앞 쪽을 기다리는 중)이면 그때의 폭으로 그려지므로 건너뛴다.
+        if (!el.dataset.drawnWidth || Math.abs(el.clientWidth - Number(el.dataset.drawnWidth)) <= 2) continue;
         const rect = el.getBoundingClientRect();
         if (rect.bottom > -innerHeight && rect.top < innerHeight * 2) draw(index);
         else {

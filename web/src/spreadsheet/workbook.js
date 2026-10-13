@@ -22,9 +22,9 @@ function withFallback(book, bytes, fmt) {
   const load = book.load;
   return {
     ...book,
-    load: async (index) => {
+    load: async (index, options) => {
       try {
-        return await load(index);
+        return await load(index, options);
       } catch (error) {
         console.warn('[sheet] sheet reader failed, using SheetJS', error);
         fallback ??= readWithSheetJs(bytes, fmt);
