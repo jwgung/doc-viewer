@@ -2,7 +2,7 @@
 // (WebView 준비와 파일 준비를 겹쳐 여는 시간을 줄인다. 검증 도구는 viewer.html?fmt=&src=로 바로 연다.)
 // 형식에 맞는 렌더러만 불러와 그리고, 측정값·읽던 위치·화면 탭은 앱이 주입한 AndroidViewer 통로로 넘긴다.
 // 앱은 window.viewer.setMode('scroll' | 'page' | 'spread'), applyFit('width' | 'page'), setChrome(보임 여부),
-// setNotes(발표자 노트 보임 여부)를 부른다.
+// setNotes(발표자 노트 보임 여부), resetShrink()를 부른다.
 import { PagedViewer } from './paged-viewer.js';
 import { openSheet } from './sheet.js';
 import { t } from './strings.js';
@@ -52,6 +52,8 @@ window.viewer = {
   open: (options) => open(options),
   setMode: (next) => viewer?.setMode(next),
   applyFit: (next) => viewer?.applyFit(next),
+  /** 오므려 줄인 쪽을 처음 크기로(앱의 '원래 크기' 버튼). WebView 확대는 앱이 되돌린다. */
+  resetShrink: () => viewer?.resetShrink?.(),
   /** 읽기 모드: 앱이 상단바를 숨기면 쪽 번호·빠른 이동 손잡이도 숨긴다. */
   setChrome: (visible) => document.body.classList.toggle('reading', !visible),
   /** 발표자 노트 칸을 켜고 끈다(앱의 '더 보기' → 발표자 노트). 노트가 없는 문서면 아무것도 하지 않는다. */
@@ -367,7 +369,7 @@ function bindChromeToggle() {
       // 같은 탭을 쪽 뷰어가 쪽 넘기기로 썼는지는 모든 처리기가 끝난 뒤에 확인한다.
       setTimeout(() => {
         if (getSelection()?.toString()) return;
-        if (performance.now() - PagedViewer.lastFlipAt < 100) return;
+        if (PagedViewer.flippedBy === e) return;
         report('toggleChrome');
       }, 0);
     },
@@ -392,6 +394,7 @@ bindChromeToggle();
 // 시트·검색 막대가 입력칸을 열면 앱에 알려 키보드를 띄운다. 웹에서 초점을 줘도 사용자 탭이 아니면
 // Android가 키보드를 띄우지 않고, 웹뷰가 아직 초점이 없으면 focus 이벤트조차 오지 않아 직접 알린다.
 addEventListener('viewerinputopen', () => report('inputFocused'));
+addEventListener('viewershrink', (e) => report('shrink', { value: e.detail }));
 const params = new URLSearchParams(location.search);
 if (params.get('fmt')) {
   open({

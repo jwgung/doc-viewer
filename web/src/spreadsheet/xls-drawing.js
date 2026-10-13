@@ -289,7 +289,7 @@ export async function readXlsPictures(group, drawing, { objects = [], chartXml =
     mediaList.map(({ blip, chart, shapes: shapeXmlText }) => {
       if (chart) return { type: 'chart', xml: chart, theme: null };
       if (shapeXmlText) return { type: 'shapes', xml: shapeXmlText, theme: null };
-      return blip.mime === 'image/tiff' ? null : toMedia(blip.data.slice()).catch(() => null);
+      return toMedia(blip.data.slice()).catch(() => null);
     }),
   );
   return { pictures: pictures.filter((p) => media[p.media]), media };

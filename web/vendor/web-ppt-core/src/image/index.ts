@@ -9,9 +9,10 @@ import { emfToSvg, isEmf } from './emf';
 import type { MetafileOptions } from './emf';
 import { isWmf, wmfToSvg } from './wmf';
 import { isPict, pictToSvg } from './pict';
+import { isTiff, tiffToPng } from './tiff';
 
 export type { MetafileOptions };
-export { emfToSvg, wmfToSvg, pictToSvg, isEmf, isWmf, isPict };
+export { emfToSvg, wmfToSvg, pictToSvg, isEmf, isWmf, isPict, isTiff, tiffToPng };
 
 /** 按魔数识别图元文件类型 */
 export function detectMetafile(bytes: Uint8Array): 'emf' | 'wmf' | 'pict' | null {

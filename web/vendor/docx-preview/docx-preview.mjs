@@ -7,7 +7,8 @@
 /*
  * 변경 고지(Apache License 2.0 4(b)): 이 파일은 doc-viewer가 docx-preview 0.4.1의 ESM 빌드를 고친 것이다.
  * 파일 끝의 "쪽 단위 지연 렌더링" 블록(openLazyAsync)과 export 줄을 더했다. 원본 코드는 표의 머리글 행 표시
- * (renderTableRow의 data-repeat, "doc-viewer:" 주석) 한 곳만 고쳤다.
+ * (renderTableRow의 data-repeat)와 그림 변환 선택지(convertImage: 브라우저가 못 그리는 TIFF 등) 두 곳을 고쳤다
+ * ("doc-viewer:" 주석).
  * 원본 소스맵 참조 주석은 소스맵을 함께 두지 않아 지웠다.
  */
 import JSZip from 'jszip';
@@ -1204,11 +1205,17 @@ class WordDocument {
     }
     async loadDocumentImage(id, part) {
         const path = this.getPathById(part ?? this.documentPart, id);
-        return path ? this.blobToURL(await this._package.load(path, "blob"), path) : null;
+        return path ? this.loadImage(path) : null;
     }
     async loadNumberingImage(id) {
         const path = this.getPathById(this.numberingPart, id);
-        return path ? this.blobToURL(await this._package.load(path, "blob"), path) : null;
+        return path ? this.loadImage(path) : null;
+    }
+    // doc-viewer: 브라우저가 못 그리는 그림(TIFF 등)은 options.convertImage(blob, path)가 바꾼 것을 쓴다(null이면 원래대로).
+    async loadImage(path) {
+        const blob = await this._package.load(path, "blob");
+        const converted = blob && this._options.convertImage ? await this._options.convertImage(blob, path).catch(() => null) : null;
+        return converted ? this.blobToURL(converted) : this.blobToURL(blob, path);
     }
     async loadFont(id, key) {
         const path = this.getPathById(this.fontTablePart, id);

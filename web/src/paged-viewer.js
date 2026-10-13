@@ -51,8 +51,11 @@ function mostVisible(pages) {
 }
 
 export class PagedViewer {
-  /** 마지막으로 탭·스와이프로 쪽을 넘긴 시각. 같은 탭을 읽기 모드 전환으로 다시 쓰지 않게 한다. */
-  static lastFlipAt = 0;
+  /**
+   * 마지막으로 쪽을 넘긴 터치(touchend 이벤트). 같은 탭을 읽기 모드 전환으로 다시 쓰지 않게 한다.
+   * 시각으로 비교하면 쪽을 다시 그리는 동안(PPTX 등 0.1초 넘게) 시간이 지나 넘기기 탭이 상단바까지 바꿨다.
+   */
+  static flippedBy = null;
 
   constructor(container, doc, { mode = 'scroll', fit, onPageChange } = {}) {
     this.container = container;
@@ -225,10 +228,19 @@ export class PagedViewer {
     document.documentElement.style.touchAction = shrink < 1 ? 'pan-x pan-y' : '';
     const stage = this.mode === 'scroll' ? null : this.container.querySelector('.flip-stage');
     if (stage) stage.style.transform = `scale(${shrink / Number(stage.dataset.shrink ?? 1)})`;
+    dispatchEvent(new CustomEvent('viewershrink', { detail: shrink })); // 앱의 '원래 크기' 버튼을 보이거나 숨긴다
     if (anchor) {
       const after = anchor.getBoundingClientRect();
       scrollBy(0, after.top + ((focusY - before.top) / before.height) * after.height - focusY);
     }
+  }
+
+  /** 줄인 쪽을 처음 크기로 되돌린다(앱의 '원래 크기' 버튼). */
+  resetShrink() {
+    if (this.shrink === 1) return;
+    this.setShrink(1);
+    if (this.mode === 'scroll') this.redrawResized?.();
+    else this.renderFlip();
   }
 
   /** 화면 높이 y에 걸친 쪽 칸(없으면 가장 가까운 쪽) */
@@ -420,12 +432,10 @@ export class PagedViewer {
   }
 
   next() {
-    PagedViewer.lastFlipAt = performance.now();
     this.goTo(this.current + (this.mode === 'spread' ? 2 : 1));
   }
 
   prev() {
-    PagedViewer.lastFlipAt = performance.now();
     this.goTo(this.current - (this.mode === 'spread' ? 2 : 1));
   }
 
@@ -447,7 +457,8 @@ export class PagedViewer {
       (e) => {
         const touch = e.changedTouches[0];
         if (!start || !touch || e.touches.length > 0) return;
-        this.handleGesture(touch.clientX - start.x, touch.clientY - start.y, performance.now() - start.t, touch.clientX);
+        const flipped = this.handleGesture(touch.clientX - start.x, touch.clientY - start.y, performance.now() - start.t, touch.clientX);
+        if (flipped) PagedViewer.flippedBy = e;
         start = null;
       },
       { passive: true },
@@ -508,18 +519,24 @@ export class PagedViewer {
     );
   }
 
+  /** 스와이프·가장자리 탭으로 쪽을 넘긴다. 넘기기로 썼으면 true */
   handleGesture(dx, dy, ms, x) {
-    if (this.mode === 'scroll') return;
+    if (this.mode === 'scroll') return false;
     // 확대한 상태에서는 손가락 이동을 화면 이동으로 남겨 둔다.
-    if ((visualViewport?.scale ?? 1) > 1.05) return;
-    if (getSelection()?.toString()) return;
+    if ((visualViewport?.scale ?? 1) > 1.05) return false;
+    if (getSelection()?.toString()) return false;
     if (Math.abs(dx) > SWIPE_MIN_PX && Math.abs(dx) > Math.abs(dy) * 1.5) {
       dx < 0 ? this.next() : this.prev();
-    } else if (ms < 600 && Math.hypot(dx, dy) < 10) {
+      return true;
+    }
+    if (ms < 600 && Math.hypot(dx, dy) < 10) {
       const ratio = x / innerWidth;
       if (ratio < EDGE_TAP_RATIO) this.prev();
       else if (ratio > 1 - EDGE_TAP_RATIO) this.next();
+      else return false;
+      return true;
     }
+    return false;
   }
 
   changed(index) {
