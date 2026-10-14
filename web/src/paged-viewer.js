@@ -17,6 +17,10 @@ import { openSheet } from './sheet.js';
 import { t } from './strings.js';
 
 const KEEP_RENDERED = 8;
+// 연속 스크롤에서 동시에 그리는 쪽 수. 빨리 넘기면 지나가는 쪽마다 그리기가 쌓여, 멈춘 자리의 쪽이 늦게 떴다.
+const MAX_DRAWING = 2;
+// 스크롤이 이만큼(ms) 멈춰야 무거운 덧그리기(글자 층)를 시작한다(넘기는 동안 화면이 끊기지 않게).
+const SETTLE_MS = 250;
 const SWIPE_MIN_PX = 50;
 const EDGE_TAP_RATIO = 0.3;
 // 쪽을 넘길 때 새 쪽이 밀려 들어오는 시간(ms)
@@ -94,11 +98,27 @@ export class PagedViewer {
       }, 200),
     );
     this.bindGestures();
+    this.lastScroll = 0;
+    // 쪽 넘기기 화면(#doc)의 스크롤도 받으려고 capture로 듣는다.
+    addEventListener('scroll', () => (this.lastScroll = performance.now()), { passive: true, capture: true });
+  }
+
+  /** 스크롤이 SETTLE_MS 동안 멈출 때까지 기다린다. 렌더러는 글자 층처럼 보는 데 급하지 않은 일을 이 뒤로 미룬다. */
+  settled() {
+    return new Promise((resolve) => {
+      const check = () => {
+        const wait = this.lastScroll + SETTLE_MS - performance.now();
+        if (wait <= 0) resolve();
+        else setTimeout(check, wait);
+      };
+      check();
+    });
   }
 
   /** 첫 쪽이 그려지면 resolve한다. */
   render() {
     this.observer?.disconnect();
+    this.dropWaiting?.();
     this.slots = null;
     this.rendering.clear(); // 예전 배치의 약속을 남기면 새 배치에서 '이미 그렸다'고 잘못 알린다
     this.container.replaceChildren();
@@ -332,6 +352,35 @@ export class PagedViewer {
         }
       }
     };
+    // 그리기 차례: 한 번에 MAX_DRAWING쪽만 그리고, 자리가 나면 기다리는 쪽 가운데 화면 가운데에 가장 가까운 쪽을 준다.
+    // 그 사이 화면에서 멀어진 쪽(빨리 넘겨 지나간 쪽)은 그리지 않는다. 다시 다가오면 관찰자가 다시 부른다.
+    let drawing = 0;
+    const waiting = new Map(); // 쪽 번호 → 차례를 알리는 함수(그릴지 여부)
+    const near = (rect) => rect.bottom >= -innerHeight && rect.top <= innerHeight * 2;
+    const pump = () => {
+      while (drawing < MAX_DRAWING && waiting.size) {
+        let best = -1;
+        let bestDistance = Infinity;
+        for (const index of waiting.keys()) {
+          const rect = pages[index].getBoundingClientRect();
+          const distance = Math.abs((rect.top + rect.bottom) / 2 - innerHeight / 2);
+          if (distance < bestDistance) [best, bestDistance] = [index, distance];
+        }
+        const go = near(pages[best].getBoundingClientRect());
+        if (go) drawing++;
+        waiting.get(best)(go);
+        waiting.delete(best);
+      }
+    };
+    const turn = (index) =>
+      new Promise((resolve) => {
+        waiting.set(index, resolve);
+        pump();
+      });
+    this.dropWaiting = () => {
+      for (const resolve of waiting.values()) resolve(false);
+      waiting.clear();
+    };
     // 그리기를 기다리는 동안에도 약속을 바로 걸어 둔다: 검색·목차 이동은 goTo 직후 whenRendered로 그 쪽을 기다린다.
     const show = (index) => {
       if (wanted.has(index)) return this.rendering.get(index);
@@ -340,9 +389,18 @@ export class PagedViewer {
         if (index !== start && first) await first.catch(() => {});
         // 그 사이 다른 배치로 바뀌었거나(보기 방식 전환) 이 쪽을 지웠으면 그리지 않는다.
         if (!wanted.has(index) || this.slots !== pages) return;
+        if (!(await turn(index))) {
+          wanted.delete(index);
+          return;
+        }
         const rendering = draw(index);
         if (index === start && !first) first = rendering;
-        await rendering;
+        try {
+          await rendering;
+        } finally {
+          drawing--;
+          pump();
+        }
         // 줄여서 한 화면에 쪽이 많이 보이면 그만큼 더 남겨 둔다(보이는 쪽을 지웠다 다시 그리지 않게).
         if (wanted.size <= Math.min(KEEP_RENDERED_MAX, Math.ceil(KEEP_RENDERED / this.shrink ** 2))) return;
         const farthest = [...wanted].sort((a, b) => Math.abs(b - index) - Math.abs(a - index))[0];

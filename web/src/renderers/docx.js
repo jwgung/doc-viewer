@@ -75,7 +75,7 @@ export async function render(bytes, container, ctx) {
     sync();
     viewer.grow();
     if (pager.done) opened.dispose?.(); // 쪽 HTML을 다 만들었으니 원본 쪽 정보는 버린다(holder의 스타일은 남긴다)
-  });
+  }, () => viewer.settled()); // 스크롤하는 동안은 쉰다
   addEventListener('pagehide', () => opened.dispose?.(), { once: true });
   return { pages: sizes.length, extra: { docxByPage: opened.byPage } };
 }

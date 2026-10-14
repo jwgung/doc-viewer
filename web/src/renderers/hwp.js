@@ -79,8 +79,10 @@ export async function render(bytes, container, ctx) {
     const t0 = performance.now();
     el.innerHTML = uniqueIds(page.svg);
     if (firstSvg.renderMs === undefined) Object.assign(firstSvg, { renderMs: page.renderMs, insertMs: Math.round(performance.now() - t0), svgKb: Math.round(page.svg.length / 1024) });
-    // 글자 층은 그림을 보인 뒤에 붙인다(첫 쪽을 늦추지 않게).
-    request({ type: 'layout', index }, 'layout')
+    // 글자 층은 그림을 보인 뒤, 스크롤이 멈추면 붙인다(첫 쪽과 넘기는 화면을 늦추지 않게).
+    viewer
+      .settled()
+      .then(() => (el.isConnected ? request({ type: 'layout', index }, 'layout') : { runs: [] }))
       .then(({ runs }) => {
         if (runs.length && el.isConnected) el.appendChild(textLayer(runs, opened.sizes[index], el));
       })

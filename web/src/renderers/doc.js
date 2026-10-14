@@ -72,7 +72,7 @@ export async function render(bytes, container, ctx) {
       container.querySelectorAll('[data-field="numpages"]').forEach((field) => setField(field, String(sizes.length)));
       holder.remove();
     }
-  });
+  }, () => viewer.settled());
   return {
     pages: sizes.length,
     extra: { warnings: parsed.warnings?.length ?? 0, wordVersion: parsed.meta?.fib?.version ?? null, docSegments: rendered.pages?.length ?? 1 },
