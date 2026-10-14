@@ -109,6 +109,7 @@ body {
   padding: 0;
   height: calc(100vh - var(--notes-height, 0px));
   overflow: hidden;
+  position: relative; /* 넘기는 동안 앞 쪽 무대(.flip-leaving)를 겹쳐 둔다 */
 }
 
 /* 검색 막대가 위를 가리는 동안에는 쪽 아래가 밀려 잘리지 않게 세로로 스크롤할 수 있게 한다(쪽은 다시 그리지 않는다). */
@@ -128,6 +129,13 @@ body.searching .flip-stage {
   align-items: center;
   justify-content: center;
   height: 100%;
+}
+
+.flip-stage.flip-leaving {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  pointer-events: none;
 }
 
 .flip-stage > .page {

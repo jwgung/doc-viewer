@@ -1,6 +1,6 @@
 // 쪽이 있는 문서(hwp·ppt·pdf·docx·doc)를 세 가지 방식으로 보여준다.
 //   scroll: 쪽을 세로로 이어 붙이고 화면 근처의 쪽만 그린다.
-//   page:   한 쪽을 화면에 맞춰 보여주고 스와이프나 좌우 탭으로 넘긴다.
+//   page:   한 쪽을 화면에 맞춰 보여주고 스와이프(좌우·위아래)나 좌우 탭으로 넘긴다.
 //   spread: 두 쪽을 나란히 보여주고 두 쪽씩 넘긴다.
 // 연속 스크롤은 처음 크기보다 작게 오므려(줄이기) 여러 쪽을 한 화면에 볼 수 있다. WebView 확대는 쪽이 화면 너비에
 // 맞은 처음 크기 밑으로 줄지 않으므로, 처음 크기에서 더 오므리면 쪽 칸을 직접 줄여 한 줄에 여러 쪽을 놓는다.
@@ -19,6 +19,8 @@ import { t } from './strings.js';
 const KEEP_RENDERED = 8;
 const SWIPE_MIN_PX = 50;
 const EDGE_TAP_RATIO = 0.3;
+// 쪽을 넘길 때 새 쪽이 밀려 들어오는 시간(ms)
+const FLIP_MS = 220;
 const THUMB_PX = 44;
 // 처음 크기에서 줄일 수 있는 가장 작은 비율(연속 스크롤이면 한 줄에 네 쪽)
 const MIN_SHRINK = 0.25;
@@ -280,7 +282,8 @@ export class PagedViewer {
     return this.doc.complete === false ? '…' : String(this.doc.count);
   }
 
-  goTo(index) {
+  /** motion: 쪽을 넘긴 방향({x, y}, 다음 쪽이면 1). 주면 새 쪽이 그쪽에서 밀려 들어온다. */
+  goTo(index, motion) {
     const step = this.mode === 'spread' ? 2 : 1;
     const target = Math.max(0, Math.min(this.doc.count - 1, index));
     if (this.mode === 'scroll') {
@@ -292,7 +295,7 @@ export class PagedViewer {
     const start = target - (target % step);
     if (start === this.current) return;
     this.current = start;
-    this.renderFlip();
+    this.renderFlip(motion);
   }
 
   // ---- 연속 스크롤 -------------------------------------------------------
@@ -384,7 +387,8 @@ export class PagedViewer {
   }
 
   // ---- 한 쪽씩 · 두 쪽씩 ----------------------------------------------------
-  renderFlip() {
+  /** motion은 goTo와 같다. 없으면(처음 그리기·크기 바뀜) 바로 바꾼다. */
+  renderFlip(motion) {
     const step = this.mode === 'spread' ? 2 : 1;
     this.current -= this.current % step;
     const indexes = [this.current, this.current + 1].slice(0, step).filter((i) => i < this.doc.count);
@@ -408,8 +412,13 @@ export class PagedViewer {
       stage.appendChild(el);
       return [index, el];
     });
+    const animate = motion && !matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const old = animate ? this.container.querySelector(':scope > .flip-stage:not(.flip-leaving)') : null;
+    const oldScroll = this.container.scrollTop;
     this.container.replaceChildren(stage);
-    this.container.scrollTop = 0;
+    // 위로 밀어 이전 쪽으로 왔으면 그 쪽의 끝(긴 쪽이면 아래)부터 보여 준다: 이어 읽던 자리.
+    this.container.scrollTop = motion?.y < 0 ? this.container.scrollHeight : 0;
+    if (old) this.slide(old, stage, motion, oldScroll);
     this.changed(this.current);
     // 다음·이전 쪽은 미리 준비할 필요가 없을 만큼 빠르므로 보이는 쪽만 그린다.
     return Promise.all(
@@ -421,6 +430,18 @@ export class PagedViewer {
     );
   }
 
+  /** 앞 쪽 무대를 넘긴 쪽으로 밀어내고 새 무대를 반대쪽에서 밀어 넣는다. 새 쪽은 그리는 중이어도 자리(흰 쪽)부터 움직인다. */
+  slide(old, stage, { x = 0, y = 0 }, oldScroll) {
+    const dx = x * this.container.clientWidth;
+    const dy = y * this.container.clientHeight;
+    old.classList.add('flip-leaving');
+    old.style.top = `${this.container.scrollTop - oldScroll}px`; // 넘기기 전 보던 자리 그대로
+    this.container.appendChild(old);
+    const timing = { duration: FLIP_MS, easing: 'cubic-bezier(0.2, 0.7, 0.3, 1)' };
+    old.animate([{ translate: '0 0' }, { translate: `${-dx}px ${-dy}px` }], timing).onfinish = () => old.remove();
+    stage.animate([{ translate: `${dx}px ${dy}px` }, { translate: '0 0' }], timing);
+  }
+
   /** 그 쪽이 그려질 때까지 기다린다(검색 결과로 옮겨 간 뒤 그려진 글자를 찾을 때 쓴다). */
   whenRendered(index) {
     return (this.rendering.get(index) ?? Promise.resolve()).catch(() => {});
@@ -428,15 +449,15 @@ export class PagedViewer {
 
   /** 지금 화면에 있는 그 쪽의 요소(없으면 null) */
   pageElement(index) {
-    return this.container.querySelector(`.page[data-index="${index}"]`);
+    return this.container.querySelector(`.page[data-index="${index}"]:not(.flip-leaving .page)`);
   }
 
-  next() {
-    this.goTo(this.current + (this.mode === 'spread' ? 2 : 1));
+  next(motion = { x: 1 }) {
+    this.goTo(this.current + (this.mode === 'spread' ? 2 : 1), motion);
   }
 
-  prev() {
-    this.goTo(this.current - (this.mode === 'spread' ? 2 : 1));
+  prev(motion = { x: -1 }) {
+    this.goTo(this.current - (this.mode === 'spread' ? 2 : 1), motion);
   }
 
   bindGestures() {
@@ -448,7 +469,10 @@ export class PagedViewer {
       (e) => {
         const touch = e.touches.length === 1 ? e.touches[0] : null;
         const onUi = e.target instanceof Element && e.target.closest(UI_SELECTOR);
-        start = touch && !onUi ? { x: touch.clientX, y: touch.clientY, t: performance.now() } : null;
+        // 쪽이 화면보다 길어 세로로 스크롤하는 중이면, 위아래로 밀어 넘기기는 끝에 닿은 채 시작했을 때만 한다.
+        const { scrollTop, scrollHeight, clientHeight } = this.container;
+        const edges = { atTop: scrollTop <= 1, atBottom: scrollTop + clientHeight >= scrollHeight - 1 };
+        start = touch && !onUi ? { x: touch.clientX, y: touch.clientY, t: performance.now(), edges } : null;
       },
       { passive: true },
     );
@@ -457,7 +481,7 @@ export class PagedViewer {
       (e) => {
         const touch = e.changedTouches[0];
         if (!start || !touch || e.touches.length > 0) return;
-        const flipped = this.handleGesture(touch.clientX - start.x, touch.clientY - start.y, performance.now() - start.t, touch.clientX);
+        const flipped = this.handleGesture(touch.clientX - start.x, touch.clientY - start.y, performance.now() - start.t, touch.clientX, start.edges);
         if (flipped) PagedViewer.flippedBy = e;
         start = null;
       },
@@ -519,14 +543,20 @@ export class PagedViewer {
     );
   }
 
-  /** 스와이프·가장자리 탭으로 쪽을 넘긴다. 넘기기로 썼으면 true */
-  handleGesture(dx, dy, ms, x) {
+  /** 스와이프·가장자리 탭으로 쪽을 넘긴다. 넘기기로 썼으면 true. edges: 손가락을 댈 때 세로 스크롤이 위·아래 끝이었는지 */
+  handleGesture(dx, dy, ms, x, edges = { atTop: true, atBottom: true }) {
     if (this.mode === 'scroll') return false;
     // 확대한 상태에서는 손가락 이동을 화면 이동으로 남겨 둔다.
     if ((visualViewport?.scale ?? 1) > 1.05) return false;
     if (getSelection()?.toString()) return false;
     if (Math.abs(dx) > SWIPE_MIN_PX && Math.abs(dx) > Math.abs(dy) * 1.5) {
       dx < 0 ? this.next() : this.prev();
+      return true;
+    }
+    if (Math.abs(dy) > SWIPE_MIN_PX && Math.abs(dy) > Math.abs(dx) * 1.5) {
+      if (dy < 0 && edges.atBottom) this.next({ y: 1 });
+      else if (dy > 0 && edges.atTop) this.prev({ y: -1 });
+      else return false;
       return true;
     }
     if (ms < 600 && Math.hypot(dx, dy) < 10) {
