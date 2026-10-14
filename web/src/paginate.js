@@ -375,10 +375,15 @@ export function createPager(iterator) {
     async fill(count) {
       while (pages.length < count && (await step()));
     },
-    /** 나머지를 뒤에서 조금씩(SLICE_MS) 만든다. 쪽이 늘거나 다 나누면 onGrow를 부른다. */
-    async background(onGrow) {
+    /**
+     * 나머지를 뒤에서 조금씩(SLICE_MS) 만든다. 쪽이 늘거나 다 나누면 onGrow를 부른다.
+     * idle(선택)은 조각마다 기다릴 약속: 쪽 뷰어의 settled()를 주면 스크롤하는 동안은 쉰다. 구역 하나를 그리는 일은
+     * 쪼갤 수 없어(표가 많은 docx는 1초 넘게) 넘기는 중에 시작하면 화면이 그만큼 멈췄다.
+     */
+    async background(onGrow, idle) {
       pace.background = true;
       while (!done) {
+        await idle?.();
         await nextTurn();
         pace.since = performance.now();
         const until = pace.since + SLICE_MS;

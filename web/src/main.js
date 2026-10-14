@@ -153,6 +153,9 @@ function report(event, data = {}) {
 
 const heap = () => (performance.memory ? { jsHeapUsedBytes: performance.memory.usedJSHeapSize } : {});
 
+/** 문서를 통째로 받지 않고 스스로 읽는 형식(renderers/pdf.js의 구간 읽기) */
+const SELF_READING = new Set(['pdf']);
+
 async function fetchDocument(url) {
   const response = await fetch(url);
   if (!response.ok) throw new Error(`문서를 읽지 못했습니다 (${response.status})`);
@@ -233,8 +236,12 @@ async function open({ fmt: format, src, name = '', mode = 'scroll', fit, page = 
   try {
     const load = RENDERERS[fmt];
     if (!load) throw new Error(`지원하지 않는 형식입니다: ${fmt}`);
-    let [renderer, bytes] = await Promise.all([load(), fetchDocument(src)]);
-    if (await isEncryptedOoxml(bytes)) {
+    // 스스로 읽는 렌더러(PDF: 큰 문서는 필요한 구간만 읽는다)에는 바이트 대신 주소를 넘긴다.
+    // 나머지는 렌더러를 불러오는 동안 문서를 함께 읽는다.
+    const selfReading = SELF_READING.has(fmt);
+    if (selfReading) Object.assign(ctx, { src, fetchAll: () => fetchDocument(src) });
+    let [renderer, bytes] = await Promise.all([load(), selfReading ? null : fetchDocument(src)]);
+    if (bytes && (await isEncryptedOoxml(bytes))) {
       bytes = await unlockOoxml(bytes, ctx);
       // 확장자와 실제 형식이 다를 수 있어(암호 문서는 앱이 확장자로 형식을 정한다) 풀린 ZIP의 경로로 다시 정한다.
       const actual = await ooxmlFormat(bytes);
@@ -243,13 +250,13 @@ async function open({ fmt: format, src, name = '', mode = 'scroll', fit, page = 
         renderer = await RENDERERS[fmt]();
       }
     }
-    if (bytes[0] === 0x50 && bytes[1] === 0x4b) {
+    if (bytes?.[0] === 0x50 && bytes[1] === 0x4b) {
       const { zipExpandedSize } = await import('./containers.js');
       const expanded = zipExpandedSize(bytes);
       if (expanded > MAX_EXPANDED_BYTES) throw new TooLargeError(`압축을 풀면 ${expanded}바이트`);
     }
     const loadMs = Math.round(performance.now() - t0);
-    const size = bytes.length; // 워커로 넘기면 bytes가 비워지므로 미리 잰다.
+    const size = bytes?.length; // 워커로 넘기면 bytes가 비워지므로 미리 잰다.
     const result = (await renderer.render(bytes, container, ctx)) ?? {};
     ctx.markFirstPage();
     if (!viewer) restoreScroll(scroll);
@@ -262,7 +269,7 @@ async function open({ fmt: format, src, name = '', mode = 'scroll', fit, page = 
       firstPageMs,
       totalMs: Math.round(performance.now() - t0),
       pages: result.pages ?? null,
-      bytes: size,
+      bytes: size ?? result.bytes ?? null,
       ...heap(),
       ...(result.extra ?? {}),
     });
