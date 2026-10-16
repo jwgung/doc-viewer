@@ -6,6 +6,7 @@
 //
 // 쪽은 화면 밖(.offscreen)에 붙여 재며 만든다. 첫 쪽(이어보기면 그 쪽까지)을 먼저 만들어 보여 주고, 나머지는
 // 쉬는 틈에 만들어 쪽 뷰어에 더한다(createPager).
+import { nextTurn } from './next-turn.js';
 
 /** 이만큼(px)까지 넘친 것은 넘친 것으로 보지 않는다(반올림 오차). */
 const SLACK = 1;
@@ -316,15 +317,6 @@ export function loadPage(saved) {
   wrapper.innerHTML = saved;
   return wrapper.firstElementChild;
 }
-
-/**
- * 다음 차례. 낮은 우선순위 작업으로 미뤄 터치·스크롤·화면 그리기를 먼저 하게 한다. requestIdleCallback은
- * 저사양 기기에서 좀처럼 한가해지지 않아 매번 최대 대기까지 기다렸다(238쪽 문서에서 대기만 22초).
- */
-const nextTurn = () =>
-  globalThis.scheduler?.postTask
-    ? scheduler.postTask(() => {}, { priority: 'background' })
-    : new Promise((resolve) => setTimeout(resolve, 0));
 
 /**
  * 뒤에서 나눌 때는 블록 사이에서도 SLICE_MS마다 쉬어, 저사양 기기에서 쪽 하나를 만드는 동안(100ms 넘게)

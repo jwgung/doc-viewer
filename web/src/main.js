@@ -21,6 +21,10 @@ const RENDERERS = {
   csv: () => import('./renderers/sheet.js'),
   md: () => import('./renderers/md.js'),
   txt: () => import('./renderers/txt.js'),
+  json: () => import('./renderers/code.js'),
+  xml: () => import('./renderers/code.js'),
+  toml: () => import('./renderers/code.js'),
+  yaml: () => import('./renderers/code.js'),
 };
 
 const PASSWORD_CANCELLED = 'password cancelled';

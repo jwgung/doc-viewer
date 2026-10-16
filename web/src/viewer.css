@@ -692,6 +692,96 @@ body.searching #doc {
   tab-size: 4;
 }
 
+/* 설정·데이터 파일(JSON·XML·TOML·YAML): 구문 색, 줄 번호, 접기. 긴 줄은 화면 폭에 맞춰 접되 이어지는 줄은 글자 시작에 맞춘다. */
+.flow.code {
+  padding: 12px 12px 24px 4px;
+}
+
+.code pre {
+  --gutter: 3ch;
+  /* 줄 번호 칸 + 접기 표시 칸(20px) + 여백 */
+  --lead: calc(var(--gutter) + 30px);
+  margin: 0;
+  font: 13.5px/1.6 ui-monospace, 'Roboto Mono', Menlo, Consolas, monospace;
+  color: #1f2328;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  tab-size: 4;
+}
+
+.code .l {
+  display: block;
+  padding-left: var(--lead);
+  text-indent: calc(-1 * var(--lead));
+}
+
+.code .l::before {
+  content: attr(data-n);
+  display: inline-block;
+  width: var(--gutter);
+  margin-right: 30px;
+  text-align: right;
+  text-indent: 0;
+  color: #9ea4ab;
+  user-select: none;
+}
+
+.code .l.has-fold::before {
+  margin-right: 10px;
+}
+
+.code .fold {
+  display: inline-block;
+  width: 20px;
+  text-align: center;
+  text-indent: 0;
+  color: #8c959f;
+  cursor: pointer;
+}
+
+.code .fold::before {
+  content: '▾';
+}
+
+.code .l.folded .fold::before {
+  content: '▸';
+}
+
+.code .l.folded::after {
+  content: ' ⋯ ' attr(data-close);
+  margin-left: 2px;
+  padding: 0 6px;
+  color: #57606a;
+  background: #eff1f3;
+  border-radius: 4px;
+}
+
+.code .l.folded + .blk {
+  display: none;
+}
+
+.code .blk {
+  display: block;
+}
+
+/* 상한을 넘긴 나머지 글자: 줄 번호 칸만큼 들여 맞춘다 */
+.code .rest {
+  display: block;
+  padding-left: var(--lead);
+  color: #57606a;
+}
+
+.tk-key { color: #0550ae; }
+.tk-str { color: #0a3069; }
+.tk-num { color: #953800; }
+.tk-kw { color: #cf222e; }
+.tk-cmt { color: #6e7781; font-style: italic; }
+.tk-tag { color: #116329; }
+.tk-attr { color: #0550ae; }
+.tk-punct { color: #57606a; }
+.tk-meta { color: #8250df; }
+.tk-sec { color: #8250df; font-weight: 600; }
+
 /* 인쇄·PDF로 저장 */
 @media screen {
   .print-root {
