@@ -1,9 +1,9 @@
-// 설정·데이터 파일(JSON·XML·TOML·YAML). 구문별로 색을 입히고 줄 번호를 붙인다.
+// 설정·데이터 파일(JSON·XML·TOML·YAML)과 로그(.log). 구문별로 색을 입히고 줄 번호를 붙인다.
 // JSON은 한 줄로 압축된 것이 많아 항상 다시 들여쓴다(JSON.parse를 쓰지 않아 큰 정수·키 순서·잘못된 JSON도 그대로 보인다).
 // XML은 본문 공백이 뜻을 가질 수 있어 압축된 파일(태그 3개 이상이고 태그 4개당 줄바꿈 1개 미만)만 다시 들여쓴다. TOML·YAML은 원문 그대로 색만 입힌다.
 // JSON의 {}·[]와 XML 요소는 줄 번호 옆 표시를 눌러 접는다.
 // 큰 파일: 처음 조각만 바로 보이고 나머지는 쉬어 가며 넣는다. MAX_DECORATED_LINES를 넘는 줄은 색·줄 번호 없이 글자만 잇고,
-// MAX_CHARS를 넘는 글자는 보이지 않는다(각각 안내 문구). 토크나이저는 모두 입력 길이에 비례하는 시간만 쓴다(만든 파일로 멈추지 않게).
+// MAX_CHARS를 넘는 글자는 보이지 않는다(각각 안내 문구). 로그는 끝이 중요하므로 앞이 아니라 뒤를 남긴다. 토크나이저는 모두 입력 길이에 비례하는 시간만 쓴다(만든 파일로 멈추지 않게).
 import { nextTurn } from '../next-turn.js';
 import { t } from '../strings.js';
 import { decodeText } from '../text.js';
@@ -14,7 +14,7 @@ const INDENT = '  ';
 const MAX_INDENT_DEPTH = 40;
 const indentOf = (depth) => INDENT.repeat(Math.min(depth, MAX_INDENT_DEPTH));
 
-const TOKENIZERS = { json: tokenizeJson, xml: tokenizeXml, toml: tokenizeToml, yaml: tokenizeYaml };
+const TOKENIZERS = { json: tokenizeJson, xml: tokenizeXml, toml: tokenizeToml, yaml: tokenizeYaml, log: tokenizeLog };
 
 /** 구문 색·줄 번호·접기를 붙이는 줄 수 상한. 그 뒤는 색 없는 글자로 잇는다(줄마다 요소를 만들면 큰 파일에서 메모리·시간이 너무 든다). */
 const MAX_DECORATED_LINES = 60_000;
@@ -31,7 +31,8 @@ const REST_CHUNK_CHARS = 200_000;
 
 export async function render(bytes, container, ctx) {
   const text = decodeText(bytes);
-  const shown = text.length > MAX_CHARS ? text.slice(0, MAX_CHARS) : text;
+  const keepTail = ctx.fmt === 'log';
+  const shown = text.length <= MAX_CHARS ? text : keepTail ? tailFrom(text, text.length - MAX_CHARS) : text.slice(0, MAX_CHARS);
   const tokens = TOKENIZERS[ctx.fmt](shown);
   const lines = countLines(tokens);
 
@@ -46,7 +47,7 @@ export async function render(bytes, container, ctx) {
   article.appendChild(pre);
   const notes = [];
   if (lines > MAX_DECORATED_LINES) notes.push(t.codeLimited(MAX_DECORATED_LINES.toLocaleString()));
-  if (text.length > MAX_CHARS) notes.push(t.textLimited(MAX_CHARS.toLocaleString(), text.length.toLocaleString()));
+  if (text.length > MAX_CHARS) notes.push((keepTail ? t.textLimitedTail : t.textLimited)(shown.length.toLocaleString(), text.length.toLocaleString()));
   for (const note of notes) {
     const p = document.createElement('p');
     p.className = 'sheet-note';
@@ -66,6 +67,12 @@ export async function render(bytes, container, ctx) {
     sink.flush();
   }
   return { pages: null, extra: { chars: text.length, lines } };
+}
+
+/** from 뒤의 첫 줄 경계부터 끝까지(줄 중간에서 시작하지 않게) */
+function tailFrom(text, from) {
+  const nl = text.indexOf('\n', from);
+  return text.slice(nl < 0 ? from : nl + 1);
 }
 
 function countLines(tokens) {
@@ -785,4 +792,113 @@ function scanSingle(line, start) {
     }
   }
   return line.length;
+}
+
+// ---- 로그 ------------------------------------------------------------------------------------------------------
+// 줄마다 [시간표시] [PID TID] [수준] [스레드] [태그·로거] 메시지 순으로 찾는다. 형식이 제각각이라 느슨한 규칙으로 보고,
+// 못 알아보는 줄은 색 없이 둔다. 예외 머리줄과 그 뒤의 들여쓴 스택 트레이스는 회색으로 가라앉힌다.
+
+/** 줄 앞의 시간표시: ISO(날짜 시간), logcat(월-일 시간), syslog(영문 월 일 시간), 시간만, 대괄호 안 포함 */
+const LOG_TIME =
+  /^\[?(?:\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?|\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) {1,2}\d{1,2} \d{2}:\d{2}:\d{2}|\d{2}:\d{2}:\d{2}(?:[.,]\d+)?)\]?/;
+/** 줄 안 어디든 대괄호 시간표시(nginx·Apache 접근 로그: [16/Oct/2026:22:16:03 +0900]) */
+const LOG_TIME_INLINE = /\[\d{1,2}\/[A-Z][a-z]{2}\/\d{4}:\d{2}:\d{2}:\d{2} [+-]\d{4}\]/;
+/** 수준 단어: 대문자이거나, 대괄호·꺾쇠 안이거나, level= 뒤면 소문자도 */
+const LOG_LEVEL = /(?:^|[\s[(<|="':/])(?:(FATAL|CRITICAL|SEVERE|ERROR|ERR|WARNING|WARN|INFO|NOTICE|DEBUG|TRACE|VERBOSE|FINE)|(?<=[[(<])(fatal|critical|severe|error|err|warning|warn|info|notice|debug|trace|verbose)(?=[\])>])|(?<=\blevel["']?\s*[=:]\s*["']?)(fatal|critical|severe|error|err|warning|warn|info|notice|debug|trace|verbose))(?=$|[\s\]):>|/,"'-])/i;
+/** logcat: `10-16 22:16:03.123  1234  5678 E Tag: msg` 또는 옛 `E/Tag( 123): msg` */
+const LOGCAT = /^(\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})(\s+\d+\s+\d+\s+)([VDIWEF])(\s+)([^:]+?)(:)/;
+const LOGCAT_OLD = /^([VDIWEF])(\/)([^(:]+)(\(\s*\d+\))(:)/;
+/** 예외 머리줄: Java/JS/Python 예외 이름, Caused by, Traceback */
+const LOG_EXCEPTION = /^\s*(?:(?:[\w$]+\.)*[\w$]*(?:Exception|Error|Throwable)\b|Caused by:|Suppressed:|Traceback \(most recent call last\):)/;
+/** 스택 트레이스 줄: at …, … N more, File "…", line N, 들여쓴 Python 코드 */
+const LOG_TRACE = /^\s+(?:at\s|\.\.\.\s*\d+\s+more|File\s+"|\w+\.\w+\()/;
+const LEVEL_CLASS = { fatal: 'lv-err', critical: 'lv-err', severe: 'lv-err', error: 'lv-err', err: 'lv-err', warning: 'lv-warn', warn: 'lv-warn', info: 'lv-info', notice: 'lv-info', debug: 'lv-dbg', trace: 'lv-dbg', verbose: 'lv-dbg', fine: 'lv-dbg' };
+const LOGCAT_CLASS = { V: 'lv-dbg', D: 'lv-dbg', I: 'lv-info', W: 'lv-warn', E: 'lv-err', F: 'lv-err' };
+
+function tokenizeLog(src) {
+  const out = [];
+  const lines = src.split('\n');
+  let inTrace = false; // 예외 머리줄 뒤: 들여쓴 줄은 스택 트레이스로 본다
+  for (let k = 0; k < lines.length; k++) {
+    if (k > 0) out.push(['', '\n']);
+    const line = lines[k];
+    if (!line.trim()) {
+      out.push(['', line]);
+      continue;
+    }
+    if (LOG_TRACE.test(line) || (inTrace && /^\s/.test(line))) {
+      out.push(['trace', line]);
+      continue;
+    }
+    if (LOG_EXCEPTION.test(line)) {
+      out.push(['errmsg', line]);
+      inTrace = true;
+      continue;
+    }
+    inTrace = false;
+    let m;
+    if ((m = LOGCAT.exec(line))) {
+      // 시간, PID TID, 수준 한 글자, 태그, ':' 그리고 메시지
+      const level = LOGCAT_CLASS[m[3]];
+      out.push(['time', m[1]], ['time', m[2]], [level, m[3]], ['', m[4]], ['attr', m[5]], ['punct', m[6]]);
+      pushMessage(out, line.slice(m[0].length), level);
+      continue;
+    }
+    if ((m = LOGCAT_OLD.exec(line))) {
+      const level = LOGCAT_CLASS[m[1]];
+      out.push([level, m[1]], ['punct', m[2]], ['attr', m[3]], ['time', m[4]], ['punct', m[5]]);
+      pushMessage(out, line.slice(m[0].length), level);
+      continue;
+    }
+    let i = 0;
+    if ((m = LOG_TIME.exec(line))) {
+      out.push(['time', m[0]]);
+      i = m[0].length;
+    }
+    // 수준은 줄 앞쪽(시간표시 뒤 160자 안)에서만 찾는다. 메시지 안의 'error'라는 말까지 배지로 만들지 않게.
+    const headEnd = Math.min(line.length, i + 160);
+    const head = line.slice(i, headEnd);
+    const lv = LOG_LEVEL.exec(head);
+    let level = '';
+    if (lv) {
+      const word = lv[1] ?? lv[2] ?? lv[3];
+      const at = i + lv.index + lv[0].indexOf(word);
+      pushInline(out, line.slice(i, at));
+      level = LEVEL_CLASS[word.toLowerCase()];
+      out.push([level, word]);
+      i = at + word.length;
+      // 수준 뒤의 [스레드]와 태그·로거(점 있는 이름이나 ' - '·':' 앞의 낱말)
+      const rest = line.slice(i);
+      const tag = /^(\s*)(\[[^\]]{1,40}\])?(\s*)((?:[\w$.-]+(?=\s*(?: [-–] |: )))?)/.exec(rest);
+      if (tag && (tag[2] || tag[4])) {
+        if (tag[1]) out.push(['', tag[1]]);
+        if (tag[2]) out.push(['meta', tag[2]]);
+        if (tag[3]) out.push(['', tag[3]]);
+        if (tag[4]) out.push(['attr', tag[4]]);
+        i += tag[0].length;
+      }
+    }
+    pushMessage(out, line.slice(i), level);
+  }
+  return out;
+}
+
+/** 메시지: 오류 수준이면 짙은 빨강, 아니면 색 없이. 접근 로그처럼 수준이 없는 줄의 대괄호 시간도 찾는다. */
+function pushMessage(out, text, level) {
+  if (!text) return;
+  if (level === 'lv-err') out.push(['errmsg', text]);
+  else pushInline(out, text);
+}
+
+/** 색 없는 글자. 그 안의 접근 로그 대괄호 시간([16/Oct/2026:22:16:03 +0900])만 시간으로 */
+function pushInline(out, text) {
+  if (!text) return;
+  const m = LOG_TIME_INLINE.exec(text);
+  if (!m) {
+    out.push(['', text]);
+    return;
+  }
+  if (m.index) out.push(['', text.slice(0, m.index)]);
+  out.push(['time', m[0]]);
+  if (m.index + m[0].length < text.length) out.push(['', text.slice(m.index + m[0].length)]);
 }
