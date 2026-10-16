@@ -1,4 +1,4 @@
-// 텍스트 파일(.txt·.log 등). 줄바꿈과 공백을 그대로 두고 화면 폭에 맞춰 접는다.
+// 텍스트 파일(.txt·.ini 등). 줄바꿈과 공백을 그대로 두고 화면 폭에 맞춰 접는다.
 // 아주 큰 파일은 화면이 멈추지 않게 앞부분만 보인다.
 import { t } from '../strings.js';
 import { decodeText } from '../text.js';

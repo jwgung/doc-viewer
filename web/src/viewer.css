@@ -782,6 +782,15 @@ body.searching #doc {
 .tk-meta { color: #8250df; }
 .tk-sec { color: #8250df; font-weight: 600; }
 
+/* 로그: 수준 배지, 흐린 시간표시, 오류 줄 메시지, 가라앉힌 스택 트레이스 */
+.tk-lv-err { color: #cf222e; font-weight: 700; }
+.tk-lv-warn { color: #bc4c00; font-weight: 700; }
+.tk-lv-info { color: #0969da; font-weight: 700; }
+.tk-lv-dbg { color: #6e7781; font-weight: 700; }
+.tk-time { color: #8c959f; }
+.tk-errmsg { color: #82071e; }
+.tk-trace { color: #6e7781; }
+
 /* 인쇄·PDF로 저장 */
 @media screen {
   .print-root {

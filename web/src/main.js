@@ -25,6 +25,7 @@ const RENDERERS = {
   xml: () => import('./renderers/code.js'),
   toml: () => import('./renderers/code.js'),
   yaml: () => import('./renderers/code.js'),
+  log: () => import('./renderers/code.js'),
 };
 
 const PASSWORD_CANCELLED = 'password cancelled';
