@@ -884,7 +884,10 @@ function tokenizeLogLine(out, line) {
     i = m[0].length;
   }
   let level = '';
-  const lv = LOG_LEVEL.exec(line.slice(i, i + LOG_HEAD_CHARS));
+  const headEnd = Math.min(line.length, i + LOG_HEAD_CHARS);
+  let lv = LOG_LEVEL.exec(line.slice(i, headEnd));
+  // 탐색 범위 끝에서 잘린 단어('INFOrmation' → 'INFO')가 수준어로 보이지 않게
+  if (lv && headEnd < line.length && i + lv.index + lv[0].length === headEnd) lv = null;
   if (lv) {
     const word = lv[1] ?? lv[2] ?? lv[3] ?? lv[4];
     const at = i + lv.index + lv[0].indexOf(word);
