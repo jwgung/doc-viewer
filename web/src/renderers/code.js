@@ -31,6 +31,7 @@ const REST_CHUNK_CHARS = 200_000;
 
 export async function render(bytes, container, ctx) {
   const text = decodeText(bytes);
+  // 상한을 넘으면 앞부분만. 로그는 끝이 중요하므로 뒷부분을 줄 경계부터(그래서 안내 숫자는 MAX_CHARS보다 조금 작을 수 있다).
   const keepTail = ctx.fmt === 'log';
   const shown = text.length <= MAX_CHARS ? text : keepTail ? tailFrom(text, text.length - MAX_CHARS) : text.slice(0, MAX_CHARS);
   const tokens = TOKENIZERS[ctx.fmt](shown);
@@ -796,24 +797,48 @@ function scanSingle(line, start) {
 
 // ---- 로그 ------------------------------------------------------------------------------------------------------
 // 줄마다 [시간표시] [PID TID] [수준] [스레드] [태그·로거] 메시지 순으로 찾는다. 형식이 제각각이라 느슨한 규칙으로 보고,
-// 못 알아보는 줄은 색 없이 둔다. 예외 머리줄과 그 뒤의 들여쓴 스택 트레이스는 회색으로 가라앉힌다.
+// 못 알아보는 줄은 색 없이 둔다. 예외 머리줄은 짙은 빨강, 그 뒤의 들여쓴 스택 트레이스는 회색으로 가라앉힌다.
+// 로그 전용 토큰 종류: lv-err·lv-warn·lv-info·lv-dbg(수준 배지), time(시간표시·PID), errmsg(오류 줄 메시지), trace(스택 트레이스).
 
-/** 줄 앞의 시간표시: ISO(날짜 시간), logcat(월-일 시간), syslog(영문 월 일 시간), 시간만, 대괄호 안 포함 */
+/** 줄 앞의 시간표시: ISO(날짜 시간), logcat(월-일 시간), syslog(영문 월 일 시간), 시간만. 대괄호로 감싼 것도. */
 const LOG_TIME =
   /^\[?(?:\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?|\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) {1,2}\d{1,2} \d{2}:\d{2}:\d{2}|\d{2}:\d{2}:\d{2}(?:[.,]\d+)?)\]?/;
 /** 줄 안 어디든 대괄호 시간표시(nginx·Apache 접근 로그: [16/Oct/2026:22:16:03 +0900]) */
 const LOG_TIME_INLINE = /\[\d{1,2}\/[A-Z][a-z]{2}\/\d{4}:\d{2}:\d{2}:\d{2} [+-]\d{4}\]/;
-/** 수준 단어: 대문자이거나, 대괄호·꺾쇠 안이거나, level= 뒤면 소문자도 */
-const LOG_LEVEL = /(?:^|[\s[(<|="':/])(?:(FATAL|CRITICAL|SEVERE|ERROR|ERR|WARNING|WARN|INFO|NOTICE|DEBUG|TRACE|VERBOSE|FINE)|(?<=[[(<])(fatal|critical|severe|error|err|warning|warn|info|notice|debug|trace|verbose)(?=[\])>])|(?<=\blevel["']?\s*[=:]\s*["']?)(fatal|critical|severe|error|err|warning|warn|info|notice|debug|trace|verbose))(?=$|[\s\]):>|/,"'-])/i;
+/** 수준 단어와 배지 종류(한 곳에서만 적고 정규식은 여기서 만든다) */
+const LEVEL_CLASS = {
+  fatal: 'lv-err', critical: 'lv-err', severe: 'lv-err', error: 'lv-err', err: 'lv-err',
+  warning: 'lv-warn', warn: 'lv-warn',
+  info: 'lv-info', notice: 'lv-info',
+  debug: 'lv-dbg', trace: 'lv-dbg', verbose: 'lv-dbg', fine: 'lv-dbg',
+};
+const LEVEL_WORDS = Object.keys(LEVEL_CLASS);
+/**
+ * 수준 단어 찾기. 메시지 속 'the error count' 같은 보통 말까지 배지로 만들지 않게, 소문자는 괄호 안이나 level= 뒤에서만 받는다.
+ * 1) ERROR·Error처럼 대문자로 시작하는 단어 2) [warn]·(info)처럼 괄호 안이면 소문자도 3) logfmt level=warn, JSON lines "level":"warn"
+ * 앞뒤 경계는 공백·괄호·구분 문자(| / , : = 따옴표 -)여야 한다(STDERR·INFORMATION 같은 긴 단어의 일부는 제외).
+ */
+const LOG_LEVEL = new RegExp(
+  '(?:^|[\\s[(<|="\':/])' +
+    '(?:' +
+    `(${LEVEL_WORDS.map((w) => `${w.toUpperCase()}|${w[0].toUpperCase()}${w.slice(1)}`).join('|')})` +
+    `|(?<=[[(<])(${LEVEL_WORDS.join('|')})(?=[\\])>])` +
+    `|(?<=\\blevel["']?\\s*[=:]\\s*["']?)(${LEVEL_WORDS.join('|')})` +
+    ')' +
+    '(?=$|[\\s\\]):>|/,"\'-])',
+);
 /** logcat: `10-16 22:16:03.123  1234  5678 E Tag: msg` 또는 옛 `E/Tag( 123): msg` */
 const LOGCAT = /^(\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})(\s+\d+\s+\d+\s+)([VDIWEF])(\s+)([^:]+?)(:)/;
 const LOGCAT_OLD = /^([VDIWEF])(\/)([^(:]+)(\(\s*\d+\))(:)/;
-/** 예외 머리줄: Java/JS/Python 예외 이름, Caused by, Traceback */
-const LOG_EXCEPTION = /^\s*(?:(?:[\w$]+\.)*[\w$]*(?:Exception|Error|Throwable)\b|Caused by:|Suppressed:|Traceback \(most recent call last\):)/;
-/** 스택 트레이스 줄: at …, … N more, File "…", line N, 들여쓴 Python 코드 */
-const LOG_TRACE = /^\s+(?:at\s|\.\.\.\s*\d+\s+more|File\s+"|\w+\.\w+\()/;
-const LEVEL_CLASS = { fatal: 'lv-err', critical: 'lv-err', severe: 'lv-err', error: 'lv-err', err: 'lv-err', warning: 'lv-warn', warn: 'lv-warn', info: 'lv-info', notice: 'lv-info', debug: 'lv-dbg', trace: 'lv-dbg', verbose: 'lv-dbg', fine: 'lv-dbg' };
 const LOGCAT_CLASS = { V: 'lv-dbg', D: 'lv-dbg', I: 'lv-info', W: 'lv-warn', E: 'lv-err', F: 'lv-err' };
+/** 수준 뒤의 [스레드]와 태그·로거: 뒤에 ' - '나 ': '가 오는 낱말(점·대시 포함 가능). 둘 다 없으면 태그로 보지 않는다. */
+const LOG_TAG = /^(\s*)(\[[^\]]{1,40}\])?(\s*)((?:[\w$.-]+(?=\s*(?: [-–] |: )))?)/;
+/** 예외 머리줄: Java/JS/Python 예외 이름(…Exception·…Error·…Throwable), Caused by, Suppressed, Traceback */
+const LOG_EXCEPTION = /^\s*(?:(?:[\w$]+\.)*[\w$]*(?:Exception|Error|Throwable)\b|Caused by:|Suppressed:|Traceback \(most recent call last\):)/;
+/** 스택 트레이스 줄: 들여쓴 `at …`, `… N more`, `File "…"`, `모듈.함수(`. 그 밖의 들여쓴 줄은 예외 머리줄 뒤에서만 트레이스로 본다. */
+const LOG_TRACE = /^\s+(?:at\s|\.\.\.\s*\d+\s+more|File\s+"|\w+\.\w+\()/;
+/** 수준을 찾는 범위: 시간표시 뒤 이만큼 안. 메시지 깊숙한 곳의 단어는 배지로 만들지 않는다. */
+const LOG_HEAD_CHARS = 160;
 
 function tokenizeLog(src) {
   const out = [];
@@ -824,74 +849,69 @@ function tokenizeLog(src) {
     const line = lines[k];
     if (!line.trim()) {
       out.push(['', line]);
-      continue;
-    }
-    if (LOG_TRACE.test(line) || (inTrace && /^\s/.test(line))) {
+    } else if (LOG_TRACE.test(line) || (inTrace && /^\s/.test(line))) {
       out.push(['trace', line]);
-      continue;
-    }
-    if (LOG_EXCEPTION.test(line)) {
+    } else if (LOG_EXCEPTION.test(line)) {
       out.push(['errmsg', line]);
       inTrace = true;
-      continue;
+    } else {
+      inTrace = false;
+      tokenizeLogLine(out, line);
     }
-    inTrace = false;
-    let m;
-    if ((m = LOGCAT.exec(line))) {
-      // 시간, PID TID, 수준 한 글자, 태그, ':' 그리고 메시지
-      const level = LOGCAT_CLASS[m[3]];
-      out.push(['time', m[1]], ['time', m[2]], [level, m[3]], ['', m[4]], ['attr', m[5]], ['punct', m[6]]);
-      pushMessage(out, line.slice(m[0].length), level);
-      continue;
-    }
-    if ((m = LOGCAT_OLD.exec(line))) {
-      const level = LOGCAT_CLASS[m[1]];
-      out.push([level, m[1]], ['punct', m[2]], ['attr', m[3]], ['time', m[4]], ['punct', m[5]]);
-      pushMessage(out, line.slice(m[0].length), level);
-      continue;
-    }
-    let i = 0;
-    if ((m = LOG_TIME.exec(line))) {
-      out.push(['time', m[0]]);
-      i = m[0].length;
-    }
-    // 수준은 줄 앞쪽(시간표시 뒤 160자 안)에서만 찾는다. 메시지 안의 'error'라는 말까지 배지로 만들지 않게.
-    const headEnd = Math.min(line.length, i + 160);
-    const head = line.slice(i, headEnd);
-    const lv = LOG_LEVEL.exec(head);
-    let level = '';
-    if (lv) {
-      const word = lv[1] ?? lv[2] ?? lv[3];
-      const at = i + lv.index + lv[0].indexOf(word);
-      pushInline(out, line.slice(i, at));
-      level = LEVEL_CLASS[word.toLowerCase()];
-      out.push([level, word]);
-      i = at + word.length;
-      // 수준 뒤의 [스레드]와 태그·로거(점 있는 이름이나 ' - '·':' 앞의 낱말)
-      const rest = line.slice(i);
-      const tag = /^(\s*)(\[[^\]]{1,40}\])?(\s*)((?:[\w$.-]+(?=\s*(?: [-–] |: )))?)/.exec(rest);
-      if (tag && (tag[2] || tag[4])) {
-        if (tag[1]) out.push(['', tag[1]]);
-        if (tag[2]) out.push(['meta', tag[2]]);
-        if (tag[3]) out.push(['', tag[3]]);
-        if (tag[4]) out.push(['attr', tag[4]]);
-        i += tag[0].length;
-      }
-    }
-    pushMessage(out, line.slice(i), level);
   }
   return out;
 }
 
-/** 메시지: 오류 수준이면 짙은 빨강, 아니면 색 없이. 접근 로그처럼 수준이 없는 줄의 대괄호 시간도 찾는다. */
+/** 로그 한 줄: logcat 두 형식을 먼저 보고, 아니면 시간표시 → 수준 → [스레드]·태그 → 메시지 순으로 자른다. */
+function tokenizeLogLine(out, line) {
+  let m;
+  if ((m = LOGCAT.exec(line))) {
+    const level = LOGCAT_CLASS[m[3]];
+    out.push(['time', m[1]], ['time', m[2]], [level, m[3]], ['', m[4]], ['attr', m[5]], ['punct', m[6]]);
+    pushMessage(out, line.slice(m[0].length), level);
+    return;
+  }
+  if ((m = LOGCAT_OLD.exec(line))) {
+    const level = LOGCAT_CLASS[m[1]];
+    out.push([level, m[1]], ['punct', m[2]], ['attr', m[3]], ['time', m[4]], ['punct', m[5]]);
+    pushMessage(out, line.slice(m[0].length), level);
+    return;
+  }
+  let i = 0;
+  if ((m = LOG_TIME.exec(line))) {
+    out.push(['time', m[0]]);
+    i = m[0].length;
+  }
+  let level = '';
+  const lv = LOG_LEVEL.exec(line.slice(i, i + LOG_HEAD_CHARS));
+  if (lv) {
+    const word = lv[1] ?? lv[2] ?? lv[3];
+    const at = i + lv.index + lv[0].indexOf(word);
+    pushWithInlineTime(out, line.slice(i, at)); // 시간표시와 수준 사이(호스트·로거 이름 등)
+    level = LEVEL_CLASS[word.toLowerCase()];
+    out.push([level, word]);
+    i = at + word.length;
+    const tag = LOG_TAG.exec(line.slice(i));
+    if (tag && (tag[2] || tag[4])) {
+      if (tag[1]) out.push(['', tag[1]]);
+      if (tag[2]) out.push(['meta', tag[2]]);
+      if (tag[3]) out.push(['', tag[3]]);
+      if (tag[4]) out.push(['attr', tag[4]]);
+      i += tag[0].length;
+    }
+  }
+  pushMessage(out, line.slice(i), level);
+}
+
+/** 수준 뒤 메시지: 오류 수준이면 통째로 짙은 빨강, 아니면 색 없이(접근 로그처럼 수준 없는 줄의 대괄호 시간은 찾는다). */
 function pushMessage(out, text, level) {
   if (!text) return;
   if (level === 'lv-err') out.push(['errmsg', text]);
-  else pushInline(out, text);
+  else pushWithInlineTime(out, text);
 }
 
 /** 색 없는 글자. 그 안의 접근 로그 대괄호 시간([16/Oct/2026:22:16:03 +0900])만 시간으로 */
-function pushInline(out, text) {
+function pushWithInlineTime(out, text) {
   if (!text) return;
   const m = LOG_TIME_INLINE.exec(text);
   if (!m) {
