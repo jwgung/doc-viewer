@@ -1,12 +1,18 @@
 // 설정·데이터 파일(JSON·XML·TOML·YAML). 구문별로 색을 입히고 줄 번호를 붙인다.
 // JSON은 한 줄로 압축된 것이 많아 항상 다시 들여쓴다(JSON.parse를 쓰지 않아 큰 정수·키 순서·잘못된 JSON도 그대로 보인다).
-// XML은 본문 공백이 뜻을 가질 수 있어 한 줄로 압축된 파일만 다시 들여쓴다. TOML·YAML은 원문 그대로 색만 입힌다.
-// JSON의 {}·[]와 XML 요소는 줄 번호 옆 표시를 눌러 접는다. 아주 큰 파일은 화면이 멈추지 않게 앞부분만 보인다.
+// XML은 본문 공백이 뜻을 가질 수 있어 압축된 파일(태그 4개당 줄바꿈 1개 미만)만 다시 들여쓴다. TOML·YAML은 원문 그대로 색만 입힌다.
+// JSON의 {}·[]와 XML 요소는 줄 번호 옆 표시를 눌러 접는다.
+// 큰 파일: 처음 조각만 바로 보이고 나머지는 쉬어 가며 넣는다. MAX_DECORATED_LINES를 넘는 줄은 색·줄 번호 없이 글자만 잇고,
+// MAX_CHARS를 넘는 글자는 보이지 않는다(각각 안내 문구). 토크나이저는 모두 입력 길이에 비례하는 시간만 쓴다(만든 파일로 멈추지 않게).
+import { nextTurn } from '../next-turn.js';
 import { t } from '../strings.js';
 import { decodeText } from '../text.js';
 
 const MAX_CHARS = 3_000_000;
 const INDENT = '  ';
+/** 다시 들여쓸 때의 깊이 상한. '[[[[…'처럼 깊게만 판 파일이 줄마다 긴 들여쓰기를 만들어 메모리를 다 쓰지 않게. */
+const MAX_INDENT_DEPTH = 40;
+const indentOf = (depth) => INDENT.repeat(Math.min(depth, MAX_INDENT_DEPTH));
 
 const TOKENIZERS = { json: tokenizeJson, xml: tokenizeXml, toml: tokenizeToml, yaml: tokenizeYaml };
 
@@ -15,11 +21,13 @@ const MAX_DECORATED_LINES = 60_000;
 /** 처음 화면에 바로 넣는 줄 수. 나머지는 뒤에서 조각마다 쉬어 가며 넣는다(스크롤·탭을 막지 않게). */
 const FIRST_CHUNK = 1_500;
 const CHUNK = 1_000;
+/** 상한을 넘긴 색 없는 글자를 한 번에 넣는 길이 */
+const REST_CHUNK_CHARS = 200_000;
 
 export async function render(bytes, container, ctx) {
   const text = decodeText(bytes);
   const shown = text.length > MAX_CHARS ? text.slice(0, MAX_CHARS) : text;
-  const tokens = (TOKENIZERS[ctx.fmt] ?? tokenizeYaml)(shown);
+  const tokens = TOKENIZERS[ctx.fmt](shown);
   const lines = countLines(tokens);
 
   const article = document.createElement('article');
@@ -54,10 +62,6 @@ export async function render(bytes, container, ctx) {
   }
   return { pages: null, extra: { chars: text.length, lines } };
 }
-
-/** 낮은 우선순위로 다음 차례를 기다린다(paginate.js와 같은 방식: requestIdleCallback은 저사양 기기에서 좀처럼 오지 않는다). */
-const nextTurn = () =>
-  globalThis.scheduler?.postTask ? scheduler.postTask(() => {}, { priority: 'background' }) : new Promise((resolve) => setTimeout(resolve, 0));
 
 function countLines(tokens) {
   let count = 1;
@@ -123,7 +127,7 @@ function* buildLines(tokens, sink) {
   const stack = [];
   let closing = 0; // 이 줄 끝에서 닫을 blk 요소 수
   let budget = FIRST_CHUNK;
-  const flush = () => {
+  const endLine = () => {
     // 이 줄에서 열려 아직 닫히지 않은 묶음(스택 위쪽)에 blk를 만든다. 다른 묶음을 닫는 줄에서 연 묶음은 형제 자리에 둘 수
     // 없어(닫는 span 뒤에 와야 한다) 접지 않는다.
     let opened = 0;
@@ -157,7 +161,7 @@ function* buildLines(tokens, sink) {
     const pieces = text.split('\n');
     for (let k = 0; k < pieces.length; k++) {
       if (k > 0) {
-        flush();
+        endLine();
         if (--budget <= 0) {
           budget = CHUNK;
           yield;
@@ -166,13 +170,13 @@ function* buildLines(tokens, sink) {
       if (pieces[k]) line += type ? `<span class="tk-${type}">${escapeHtml(pieces[k])}</span>` : escapeHtml(pieces[k]);
     }
   }
-  if (line || closing) flush();
+  if (line || closing) endLine();
   sink.close(stack.filter((entry) => entry.blk).length);
   // 상한을 넘긴 나머지: 색 없는 글자로(줄 번호 칸만큼 들여 맞춘다)
   let plain = '';
   for (; i < tokens.length; i++) {
     plain += tokens[i][1];
-    if (plain.length > 200_000) {
+    if (plain.length > REST_CHUNK_CHARS) {
       sink.text(`<span class="rest">${escapeHtml(plain)}</span>`);
       plain = '';
       yield;
@@ -186,6 +190,14 @@ function escapeHtml(text) {
 }
 
 const isSpace = (code) => code === 0x20 || code === 0x09 || code === 0x0a || code === 0x0d;
+
+/** 줄 안의 공백(스페이스·탭·CR)을 색 없는 토큰으로 넣고 그 다음 위치를 돌려준다. */
+function skipBlanks(line, i, out) {
+  let j = i;
+  while (j < line.length && (line[j] === ' ' || line[j] === '\t' || line[j] === '\r')) j++;
+  if (j > i) out.push(['', line.slice(i, j)]);
+  return j;
+}
 
 /** 따옴표로 시작하는 문자열의 끝(닫는 따옴표 다음) 위치. 줄 끝까지 닫히지 않으면 줄 끝에서 멈춘다. */
 function scanQuoted(src, start, escapes = true) {
@@ -209,13 +221,16 @@ function tokenizeJson(src) {
   const n = src.length;
   let depth = 0;
   let lineEmpty = true; // 지금 줄에 들여쓰기만 있다(빈 줄을 만들지 않게)
+  let lines = 1;
   const emit = (type, text) => {
     out.push([type, text]);
     lineEmpty = false;
   };
+  // 꾸밈 상한을 넘긴 줄은 색 없이 보이므로 들여쓰기도 넣지 않는다(깊게만 판 파일이 입력의 수십 배로 불어나지 않게).
   const newline = () => {
-    if (lineEmpty && out.length) out[out.length - 1][1] = `\n${INDENT.repeat(depth)}`;
-    else out.push(['', `\n${INDENT.repeat(depth)}`]);
+    const pad = `\n${lines++ < MAX_DECORATED_LINES ? indentOf(depth) : ''}`;
+    if (lineEmpty && out.length) out[out.length - 1][1] = pad;
+    else out.push(['', pad]);
     lineEmpty = true;
   };
   const nextNonSpace = (from) => {
@@ -275,7 +290,7 @@ function tokenizeJson(src) {
       let end = src.indexOf('*/', i + 2);
       end = end < 0 ? n : end + 2;
       // 여러 줄 주석은 원래 줄 나눔을 두고 지금 들여쓰기만 앞에 붙인다.
-      emit('cmt', src.slice(i, end).replace(/\n[ \t]*/g, `\n${INDENT.repeat(depth)}`));
+      emit('cmt', src.slice(i, end).replace(/\n[ \t]*/g, `\n${indentOf(depth)}`));
       i = end;
       if (src[nextNonSpace(i)] !== ',') newline();
     } else {
@@ -305,7 +320,7 @@ const XML_ATTR_VALUE = /"[^"]*"|'[^']*'|[^\s>]+/y;
 
 /**
  * 마디(node)로 먼저 나눈다: 여는 태그·닫는 태그·빈 요소 태그·글·주석·처리 명령·CDATA·DOCTYPE.
- * 한 줄로 압축된 파일이면 마디마다 줄을 나눠 들여쓰고, 아니면 원문 그대로 잇는다.
+ * 압축된 파일(태그 4개당 줄바꿈 1개 미만, 태그 3개 이상)이면 마디마다 줄을 나눠 들여쓰고, 아니면 원문 그대로 잇는다.
  */
 function tokenizeXml(src) {
   const nodes = xmlNodes(src);
@@ -317,8 +332,9 @@ function tokenizeXml(src) {
   const out = [];
   let depth = 0;
   let first = true;
+  let lines = 1;
   const newline = () => {
-    if (!first) out.push(['', `\n${INDENT.repeat(depth)}`]);
+    if (!first) out.push(['', `\n${lines++ < MAX_DECORATED_LINES ? indentOf(depth) : ''}`]);
     first = false;
   };
   for (let k = 0; k < nodes.length; k++) {
@@ -387,10 +403,10 @@ function xmlNodes(src) {
       nodes.push({ kind: 'other', tokens: [['meta', src.slice(i, end)]] });
       i = end;
     } else if (src.startsWith('<!', i)) {
-      // DOCTYPE: 내부 부분 집합([ ... ])이 있으면 그 뒤의 '>'까지
-      const bracket = src.indexOf('[', i);
+      // DOCTYPE: 첫 '>' 앞에 내부 부분 집합([ ... ])이 시작되면 그 ']' 뒤의 '>'까지('['는 태그 안에서만 찾아 큰 파일에서 되풀이 훑지 않게)
       let gt = src.indexOf('>', i);
-      if (bracket >= 0 && gt > bracket) gt = src.indexOf('>', src.indexOf(']', bracket) + 1);
+      const bracket = gt < 0 ? -1 : src.slice(i, gt).indexOf('[');
+      if (bracket >= 0) gt = src.indexOf('>', src.indexOf(']', i + bracket) + 1);
       const end = gt < 0 ? n : gt + 1;
       nodes.push({ kind: 'other', tokens: [['meta', src.slice(i, end)]] });
       i = end;
@@ -507,10 +523,7 @@ function tokenizeToml(src) {
     while (i < line.length) {
       const c = line[i];
       if (c === ' ' || c === '\t' || c === '\r') {
-        let j = i;
-        while (j < line.length && (line[j] === ' ' || line[j] === '\t' || line[j] === '\r')) j++;
-        out.push(['', line.slice(i, j)]);
-        i = j;
+        i = skipBlanks(line, i, out);
         continue;
       }
       if (c === '#') {
@@ -610,9 +623,37 @@ function tokenizeToml(src) {
 
 // ---- YAML -----------------------------------------------------------------------------------------------------
 
-const YAML_KEY = /(?:"(?:[^"\\]|\\.)*"|'(?:[^']|'')*'|[^\s#&*!|>'"%@`,[\]{}][^#]*?)(?=\s*:(?:\s|$))/y;
-/** 흐름([ ]·{ }) 안의 키: 쉼표·괄호 앞에서 끝난다. */
-const YAML_KEY_FLOW = /(?:"(?:[^"\\]|\\.)*"|'(?:[^']|'')*'|[^\s#&*!|>'"%@`,[\]{}][^#,[\]{}]*?)(?=\s*:(?:\s|$))/y;
+/** 키가 될 수 없는 첫 글자(지시자·따옴표·흐름 기호) */
+const YAML_NOT_KEY_START = new Set([...'#&*!|>\'"%@`,[]{}']);
+
+/**
+ * i에서 시작하는 매핑 키의 길이(뒤따르는 ':'은 빼고). 키가 아니면 0. 따옴표 키 또는 ': '(줄 끝의 ':' 포함) 앞까지의 글자.
+ * 정규식의 느린 되돌이(긴 공백 줄에서 제곱 시간) 대신 한 번만 훑는다. 흐름([ ]·{ }) 안에서는 쉼표·괄호 앞에서 끝난다.
+ */
+function yamlKeyLength(line, i, flow) {
+  const c = line[i];
+  let j = i;
+  if (c === '"' || c === "'") {
+    j = c === '"' ? scanQuoted(line, i) : scanSingle(line, i);
+    if (line[j - 1] !== c || j - i < 2) return 0;
+  } else {
+    if (YAML_NOT_KEY_START.has(c)) return 0;
+    for (; j < line.length; j++) {
+      const ch = line[j];
+      if (ch === ':' && (j + 1 === line.length || line[j + 1] === ' ' || line[j + 1] === '\t' || line[j + 1] === '\r')) break;
+      if (ch === '#' && (line[j - 1] === ' ' || line[j - 1] === '\t')) return 0;
+      if (flow && (ch === ',' || ch === '[' || ch === ']' || ch === '{' || ch === '}')) return 0;
+    }
+    if (j >= line.length) return 0;
+    while (j > i && (line[j - 1] === ' ' || line[j - 1] === '\t')) j--;
+    return j - i;
+  }
+  // 따옴표 키 뒤: 공백 다음 ':'
+  let k = j;
+  while (line[k] === ' ' || line[k] === '\t') k++;
+  const colonAtEnd = line[k] === ':' && (k + 1 === line.length || line[k + 1] === ' ' || line[k + 1] === '\t' || line[k + 1] === '\r');
+  return colonAtEnd ? j - i : 0;
+}
 const YAML_SCALAR_WORD = /^(?:true|false|yes|no|on|off|null|~)$/i;
 const YAML_NUMBER = /^(?:[+-]?(?:\d[\d_]*(?:\.\d*)?(?:[eE][+-]?\d+)?|\.\d+|0x[0-9a-fA-F]+|0o[0-7]+|\.inf|\.nan)|\d{4}-\d{2}-\d{2}(?:[Tt ].*)?)$/;
 
@@ -647,10 +688,7 @@ function tokenizeYaml(src) {
     while (i < line.length) {
       const c = line[i];
       if (c === ' ' || c === '\t' || c === '\r') {
-        let j = i;
-        while (j < line.length && (line[j] === ' ' || line[j] === '\t' || line[j] === '\r')) j++;
-        out.push(['', line.slice(i, j)]);
-        i = j;
+        i = skipBlanks(line, i, out);
         continue;
       }
       if (c === '#' && (i === 0 || line[i - 1] === ' ' || line[i - 1] === '\t')) {
@@ -695,12 +733,10 @@ function tokenizeYaml(src) {
           continue;
         }
       }
-      const keyPattern = flow ? YAML_KEY_FLOW : YAML_KEY;
-      keyPattern.lastIndex = i;
-      const key = keyPattern.exec(line)?.[0];
-      if (key) {
-        out.push(['key', key]);
-        i += key.length;
+      const keyLength = yamlKeyLength(line, i, flow);
+      if (keyLength) {
+        out.push(['key', line.slice(i, i + keyLength)]);
+        i += keyLength;
         let j = i;
         while (line[j] === ' ') j++;
         if (j > i) out.push(['', line.slice(i, j)]);
@@ -717,7 +753,8 @@ function tokenizeYaml(src) {
       // 따옴표 없는 스칼라: ' #' 주석 앞까지(흐름 안에서는 , ] } 앞까지)
       const rest = line.slice(i);
       const stop = rest.search(flow ? /\s#|[,\]}]/ : /\s#/);
-      const word = (stop < 0 ? rest : rest.slice(0, stop)).replace(/\s+$/, '') || c;
+      // trimEnd: /\s+$/는 긴 공백 줄에서 제곱 시간이 든다.
+      const word = (stop < 0 ? rest : rest.slice(0, stop)).trimEnd() || c;
       out.push([YAML_SCALAR_WORD.test(word) ? 'kw' : YAML_NUMBER.test(word) ? 'num' : '', word]);
       i += word.length;
     }
