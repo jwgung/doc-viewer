@@ -1,6 +1,6 @@
 // 설정·데이터 파일(JSON·XML·TOML·YAML). 구문별로 색을 입히고 줄 번호를 붙인다.
 // JSON은 한 줄로 압축된 것이 많아 항상 다시 들여쓴다(JSON.parse를 쓰지 않아 큰 정수·키 순서·잘못된 JSON도 그대로 보인다).
-// XML은 본문 공백이 뜻을 가질 수 있어 압축된 파일(태그 4개당 줄바꿈 1개 미만)만 다시 들여쓴다. TOML·YAML은 원문 그대로 색만 입힌다.
+// XML은 본문 공백이 뜻을 가질 수 있어 압축된 파일(태그 3개 이상이고 태그 4개당 줄바꿈 1개 미만)만 다시 들여쓴다. TOML·YAML은 원문 그대로 색만 입힌다.
 // JSON의 {}·[]와 XML 요소는 줄 번호 옆 표시를 눌러 접는다.
 // 큰 파일: 처음 조각만 바로 보이고 나머지는 쉬어 가며 넣는다. MAX_DECORATED_LINES를 넘는 줄은 색·줄 번호 없이 글자만 잇고,
 // MAX_CHARS를 넘는 글자는 보이지 않는다(각각 안내 문구). 토크나이저는 모두 입력 길이에 비례하는 시간만 쓴다(만든 파일로 멈추지 않게).
@@ -18,6 +18,11 @@ const TOKENIZERS = { json: tokenizeJson, xml: tokenizeXml, toml: tokenizeToml, y
 
 /** 구문 색·줄 번호·접기를 붙이는 줄 수 상한. 그 뒤는 색 없는 글자로 잇는다(줄마다 요소를 만들면 큰 파일에서 메모리·시간이 너무 든다). */
 const MAX_DECORATED_LINES = 60_000;
+/**
+ * 다시 들여쓸 때 넣는 줄바꿈. counter는 토크나이저가 지금까지 만든 줄 수({n})로, 꾸밈 상한을 넘긴 줄은 색 없이 보이므로
+ * 들여쓰기도 넣지 않는다(깊게만 판 파일이 입력의 수십 배로 불어나지 않게).
+ */
+const newlineFor = (counter, depth) => `\n${counter.n++ < MAX_DECORATED_LINES ? indentOf(depth) : ''}`;
 /** 처음 화면에 바로 넣는 줄 수. 나머지는 뒤에서 조각마다 쉬어 가며 넣는다(스크롤·탭을 막지 않게). */
 const FIRST_CHUNK = 1_500;
 const CHUNK = 1_000;
@@ -221,14 +226,13 @@ function tokenizeJson(src) {
   const n = src.length;
   let depth = 0;
   let lineEmpty = true; // 지금 줄에 들여쓰기만 있다(빈 줄을 만들지 않게)
-  let lines = 1;
+  const lines = { n: 1 };
   const emit = (type, text) => {
     out.push([type, text]);
     lineEmpty = false;
   };
-  // 꾸밈 상한을 넘긴 줄은 색 없이 보이므로 들여쓰기도 넣지 않는다(깊게만 판 파일이 입력의 수십 배로 불어나지 않게).
   const newline = () => {
-    const pad = `\n${lines++ < MAX_DECORATED_LINES ? indentOf(depth) : ''}`;
+    const pad = newlineFor(lines, depth);
     if (lineEmpty && out.length) out[out.length - 1][1] = pad;
     else out.push(['', pad]);
     lineEmpty = true;
@@ -289,8 +293,8 @@ function tokenizeJson(src) {
     } else if (c === '/' && src[i + 1] === '*') {
       let end = src.indexOf('*/', i + 2);
       end = end < 0 ? n : end + 2;
-      // 여러 줄 주석은 원래 줄 나눔을 두고 지금 들여쓰기만 앞에 붙인다.
-      emit('cmt', src.slice(i, end).replace(/\n[ \t]*/g, () => `\n${lines++ < MAX_DECORATED_LINES ? indentOf(depth) : ''}`));
+      // 여러 줄 주석은 원래 줄 나눔을 두고 줄마다 지금 들여쓰기를 붙인다(newline()과 같은 상한 규칙).
+      emit('cmt', src.slice(i, end).replace(/\n[ \t]*/g, () => newlineFor(lines, depth)));
       i = end;
       if (src[nextNonSpace(i)] !== ',') newline();
     } else {
@@ -315,6 +319,7 @@ function tokenizeJson(src) {
 
 // ---- XML ------------------------------------------------------------------------------------------------------
 
+/** 태그·속성 이름. '<'를 빼야 '<<<<…'나 '<a<b>' 같은 깨진 입력에서 이름이 다음 태그를 삼키지 않는다. */
 const XML_NAME = /[^\s/>=<]+/y;
 const XML_ATTR_VALUE = /"[^"]*"|'[^']*'|[^\s>]+/y;
 
@@ -332,9 +337,9 @@ function tokenizeXml(src) {
   const out = [];
   let depth = 0;
   let first = true;
-  let lines = 1;
+  const lines = { n: 1 };
   const newline = () => {
-    if (!first) out.push(['', `\n${lines++ < MAX_DECORATED_LINES ? indentOf(depth) : ''}`]);
+    if (!first) out.push(['', newlineFor(lines, depth)]);
     first = false;
   };
   for (let k = 0; k < nodes.length; k++) {
@@ -346,24 +351,29 @@ function tokenizeXml(src) {
       const inline = nodes[k - 1]?.kind === 'open' && nodes[k + 1]?.kind === 'close';
       if (!inline) newline();
       const trimmed = trimTokens(node.tokens);
-      out.push(...trimmed);
+      append(out, trimmed);
       if (inline && nodes[k + 1]) {
         depth = Math.max(0, depth - 1);
-        out.push(...nodes[++k].tokens);
+        append(out, nodes[++k].tokens);
       }
       continue;
     }
     if (node.kind === 'close') {
       depth = Math.max(0, depth - 1);
       newline();
-      out.push(...node.tokens);
+      append(out, node.tokens);
       continue;
     }
     newline();
-    out.push(...node.tokens);
+    append(out, node.tokens);
     if (node.kind === 'open') depth++;
   }
   return out;
+}
+
+/** 토큰을 뒤에 잇는다. push(...큰 배열)은 인자 수 한계(엔티티가 수십만 개인 글 마디)에서 RangeError가 난다. */
+function append(out, tokens) {
+  for (const token of tokens) out.push(token);
 }
 
 /** 글 토큰 묶음의 양 끝 공백을 뗀다. */
@@ -393,10 +403,11 @@ function xmlNodes(src) {
       nodes.push({ kind: 'other', tokens: [['cmt', src.slice(i, end)]] });
       i = end;
     } else if (src.startsWith('<![CDATA[', i)) {
-      let end = src.indexOf(']]>', i + 9);
-      end = end < 0 ? n : end + 3;
-      nodes.push({ kind: 'other', tokens: [['punct', '<![CDATA['], ['str', src.slice(i + 9, end - 3)], ['punct', ']]>']] });
-      i = end;
+      const close = src.indexOf(']]>', i + 9);
+      // 닫히지 않은 CDATA는 끝까지 내용으로 보인다(없는 ']]>'를 그리지 않는다).
+      const tokens = close < 0 ? [['punct', '<![CDATA['], ['str', src.slice(i + 9)]] : [['punct', '<![CDATA['], ['str', src.slice(i + 9, close)], ['punct', ']]>']];
+      nodes.push({ kind: 'other', tokens });
+      i = close < 0 ? n : close + 3;
     } else if (src.startsWith('<?', i)) {
       let end = src.indexOf('?>', i + 2);
       end = end < 0 ? n : end + 2;
@@ -416,7 +427,7 @@ function xmlNodes(src) {
     } else {
       const tag = xmlTag(src, i);
       if (!tag) {
-        // 태그가 아닌 '<'(닫히지 않음 등): 글로 둔다.
+        // 태그가 아닌 '<'(이름 없음: '< ', '<>', '<=' 등): 글로 둔다.
         nodes.push({ kind: 'text', tokens: [['', '<']] });
         i++;
       } else {
