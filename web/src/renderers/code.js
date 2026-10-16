@@ -31,7 +31,8 @@ const REST_CHUNK_CHARS = 200_000;
 
 export async function render(bytes, container, ctx) {
   const text = decodeText(bytes);
-  // 상한을 넘으면 앞부분만. 로그는 끝이 중요하므로 뒷부분을 줄 경계부터(그래서 안내 숫자는 MAX_CHARS보다 조금 작을 수 있다).
+  // 상한을 넘으면 앞부분만. 로그는 끝이 중요하므로 뒷부분을 줄 경계부터 보인다. 안내 숫자는 실제로 보이는 글자 수(shown.length)라
+  // 잘린 줄 하나 길이만큼 MAX_CHARS보다 작을 수 있다.
   const keepTail = ctx.fmt === 'log';
   const shown = text.length <= MAX_CHARS ? text : keepTail ? tailFrom(text, text.length - MAX_CHARS) : text.slice(0, MAX_CHARS);
   const tokens = TOKENIZERS[ctx.fmt](shown);
@@ -817,8 +818,9 @@ const LEVEL_WORDS = Object.keys(LEVEL_CLASS);
 /**
  * 수준 단어 찾기. 메시지 속 'the error count' 같은 보통 말까지 배지로 만들지 않게 소문자는 자리를 가려 받는다.
  * 1) ERROR·Error처럼 대문자로 시작하는 단어 2) [warn]·(info)처럼 괄호 안이면 소문자도 3) logfmt level=warn, JSON lines "level":"warn"
- * 4) 'error: disk full'처럼 뒤에 ':'·' - '·'|'가 오는 소문자(수준 자리). 앞뒤 경계는 공백·괄호·구분 문자(| / , : = 따옴표 -)여야 한다
- * (STDERR·INFORMATION 같은 긴 단어의 일부는 제외).
+ * 4) 'error: disk full'처럼 뒤에 ':'·' - '·'|'가 오는 소문자(수준 자리).
+ * 경계: 앞은 줄 앞이나 공백·여는 괄호·| = " ' : /, 뒤는 줄 끝이나 공백·닫는 괄호·: > | / , " ' -. 그래서 STDERR·INFORMATION 같은
+ * 긴 단어의 일부는 잡히지 않는다.
  */
 const LEVEL_UPPER = LEVEL_WORDS.map((w) => `${w.toUpperCase()}|${w[0].toUpperCase()}${w.slice(1)}`).join('|');
 const LEVEL_LOWER = LEVEL_WORDS.join('|');
@@ -829,7 +831,7 @@ const LOG_LEVEL = new RegExp(
 const LOGCAT = /^(\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})(\s+\d+\s+\d+\s+)([VDIWEF])(\s+)([^:]+?)(:)/;
 const LOGCAT_OLD = /^([VDIWEF])(\/)([^(:]+)(\(\s*\d+\))(:)/;
 const LOGCAT_CLASS = { V: 'lv-dbg', D: 'lv-dbg', I: 'lv-info', W: 'lv-warn', E: 'lv-err', F: 'lv-err' };
-/** 수준 뒤의 [스레드]와 태그·로거: 뒤에 ' - '나 ': '가 오는 낱말(점·대시 포함 가능). 둘 다 없으면 태그로 보지 않는다. */
+/** 수준 뒤의 [스레드]와 태그·로거: 뒤에 ' - '(en dash '–'도)나 ': '가 오는 낱말(점·대시 포함 가능). 둘 다 없으면 태그로 보지 않는다. */
 const LOG_TAG = /^(\s*)(\[[^\]]{1,40}\])?(\s*)((?:[\w$.-]+(?=\s*(?: [-–] |: )))?)/;
 /** 예외 머리줄: Java/JS/Python 예외 이름(…Exception·…Error·…Throwable), Caused by, Suppressed, Traceback */
 const LOG_EXCEPTION = /^\s*(?:(?:[\w$]+\.)*[\w$]*(?:Exception|Error|Throwable)\b|Caused by:|Suppressed:|Traceback \(most recent call last\):)/;
@@ -847,11 +849,12 @@ function tokenizeLog(src) {
     const line = lines[k];
     if (!line.trim()) {
       out.push(['', line]);
-    } else if (LOG_TRACE.test(line) || (inTrace && /^\s/.test(line))) {
-      out.push(['trace', line]);
     } else if (LOG_EXCEPTION.test(line)) {
+      // 트레이스보다 먼저 본다: Java의 'Suppressed:'는 트레이스 안에 탭으로 들여써 나온다.
       out.push(['errmsg', line]);
       inTrace = true;
+    } else if (LOG_TRACE.test(line) || (inTrace && /^\s/.test(line))) {
+      out.push(['trace', line]);
     } else {
       inTrace = false;
       tokenizeLogLine(out, line);
