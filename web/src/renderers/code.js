@@ -799,6 +799,7 @@ function scanSingle(line, start) {
 // 줄마다 [시간표시] [PID TID] [수준] [스레드] [태그·로거] 메시지 순으로 찾는다. 형식이 제각각이라 느슨한 규칙으로 보고,
 // 못 알아보는 줄은 색 없이 둔다. 예외 머리줄은 짙은 빨강, 그 뒤의 들여쓴 스택 트레이스는 회색으로 가라앉힌다.
 // 로그 전용 토큰 종류: lv-err·lv-warn·lv-info·lv-dbg(수준 배지), time(시간표시·PID), errmsg(오류 줄 메시지), trace(스택 트레이스).
+// 공통 종류(meta: [스레드], attr: 태그·로거, punct: 구분 기호, '': 색 없음)는 다른 형식과 같다.
 
 /** 줄 앞의 시간표시: ISO(날짜 시간), logcat(월-일 시간), syslog(영문 월 일 시간), 시간만. 대괄호로 감싼 것도. */
 const LOG_TIME =
@@ -814,18 +815,15 @@ const LEVEL_CLASS = {
 };
 const LEVEL_WORDS = Object.keys(LEVEL_CLASS);
 /**
- * 수준 단어 찾기. 메시지 속 'the error count' 같은 보통 말까지 배지로 만들지 않게, 소문자는 괄호 안이나 level= 뒤에서만 받는다.
+ * 수준 단어 찾기. 메시지 속 'the error count' 같은 보통 말까지 배지로 만들지 않게 소문자는 자리를 가려 받는다.
  * 1) ERROR·Error처럼 대문자로 시작하는 단어 2) [warn]·(info)처럼 괄호 안이면 소문자도 3) logfmt level=warn, JSON lines "level":"warn"
- * 앞뒤 경계는 공백·괄호·구분 문자(| / , : = 따옴표 -)여야 한다(STDERR·INFORMATION 같은 긴 단어의 일부는 제외).
+ * 4) 'error: disk full'처럼 뒤에 ':'·' - '·'|'가 오는 소문자(수준 자리). 앞뒤 경계는 공백·괄호·구분 문자(| / , : = 따옴표 -)여야 한다
+ * (STDERR·INFORMATION 같은 긴 단어의 일부는 제외).
  */
+const LEVEL_UPPER = LEVEL_WORDS.map((w) => `${w.toUpperCase()}|${w[0].toUpperCase()}${w.slice(1)}`).join('|');
+const LEVEL_LOWER = LEVEL_WORDS.join('|');
 const LOG_LEVEL = new RegExp(
-  '(?:^|[\\s[(<|="\':/])' +
-    '(?:' +
-    `(${LEVEL_WORDS.map((w) => `${w.toUpperCase()}|${w[0].toUpperCase()}${w.slice(1)}`).join('|')})` +
-    `|(?<=[[(<])(${LEVEL_WORDS.join('|')})(?=[\\])>])` +
-    `|(?<=\\blevel["']?\\s*[=:]\\s*["']?)(${LEVEL_WORDS.join('|')})` +
-    ')' +
-    '(?=$|[\\s\\]):>|/,"\'-])',
+  String.raw`(?:^|[\s[(<|="':/])(?:(${LEVEL_UPPER})|(?<=[[(<])(${LEVEL_LOWER})(?=[\])>])|(?<=\blevel["']?\s*[=:]\s*["']?)(${LEVEL_LOWER})|(${LEVEL_LOWER})(?=\s*(?::|\s-\s|\|)))(?=$|[\s\]):>|/,"'-])`,
 );
 /** logcat: `10-16 22:16:03.123  1234  5678 E Tag: msg` 또는 옛 `E/Tag( 123): msg` */
 const LOGCAT = /^(\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})(\s+\d+\s+\d+\s+)([VDIWEF])(\s+)([^:]+?)(:)/;
@@ -885,7 +883,7 @@ function tokenizeLogLine(out, line) {
   let level = '';
   const lv = LOG_LEVEL.exec(line.slice(i, i + LOG_HEAD_CHARS));
   if (lv) {
-    const word = lv[1] ?? lv[2] ?? lv[3];
+    const word = lv[1] ?? lv[2] ?? lv[3] ?? lv[4];
     const at = i + lv.index + lv[0].indexOf(word);
     pushWithInlineTime(out, line.slice(i, at)); // 시간표시와 수준 사이(호스트·로거 이름 등)
     level = LEVEL_CLASS[word.toLowerCase()];
