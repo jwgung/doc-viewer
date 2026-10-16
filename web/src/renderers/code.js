@@ -290,7 +290,7 @@ function tokenizeJson(src) {
       let end = src.indexOf('*/', i + 2);
       end = end < 0 ? n : end + 2;
       // 여러 줄 주석은 원래 줄 나눔을 두고 지금 들여쓰기만 앞에 붙인다.
-      emit('cmt', src.slice(i, end).replace(/\n[ \t]*/g, `\n${indentOf(depth)}`));
+      emit('cmt', src.slice(i, end).replace(/\n[ \t]*/g, () => `\n${lines++ < MAX_DECORATED_LINES ? indentOf(depth) : ''}`));
       i = end;
       if (src[nextNonSpace(i)] !== ',') newline();
     } else {
@@ -315,7 +315,7 @@ function tokenizeJson(src) {
 
 // ---- XML ------------------------------------------------------------------------------------------------------
 
-const XML_NAME = /[^\s/>=]+/y;
+const XML_NAME = /[^\s/>=<]+/y;
 const XML_ATTR_VALUE = /"[^"]*"|'[^']*'|[^\s>]+/y;
 
 /**
@@ -406,7 +406,10 @@ function xmlNodes(src) {
       // DOCTYPE: 첫 '>' 앞에 내부 부분 집합([ ... ])이 시작되면 그 ']' 뒤의 '>'까지('['는 태그 안에서만 찾아 큰 파일에서 되풀이 훑지 않게)
       let gt = src.indexOf('>', i);
       const bracket = gt < 0 ? -1 : src.slice(i, gt).indexOf('[');
-      if (bracket >= 0) gt = src.indexOf('>', src.indexOf(']', i + bracket) + 1);
+      if (bracket >= 0) {
+        const close = src.indexOf(']', i + bracket);
+        gt = close < 0 ? -1 : src.indexOf('>', close + 1); // ']'가 없으면 끝까지 DOCTYPE
+      }
       const end = gt < 0 ? n : gt + 1;
       nodes.push({ kind: 'other', tokens: [['meta', src.slice(i, end)]] });
       i = end;
