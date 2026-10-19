@@ -692,6 +692,11 @@ body.searching #doc {
   tab-size: 4;
 }
 
+/* 설정·소스 코드·diff: 들여쓰기가 맞아 보이게 고정폭. 색은 없다. */
+.plaintext.mono pre {
+  font: 13px/1.55 ui-monospace, 'Roboto Mono', 'Droid Sans Mono', monospace;
+}
+
 /* 설정·데이터 파일(JSON·XML·TOML·YAML): 구문 색, 줄 번호, 접기. 긴 줄은 화면 폭에 맞춰 접되 이어지는 줄은 글자 시작에 맞춘다. */
 .flow.code {
   padding: 12px 12px 24px 4px;
