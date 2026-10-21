@@ -11,30 +11,42 @@
 .sheet-tabs {
   display: flex;
   flex: none;
-  gap: 4px;
-  padding: 6px 8px;
+  padding: 0 4px;
   overflow-x: auto;
-  background: var(--bg);
+  scrollbar-width: none;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
 }
 
 .sheet-tabs[hidden] {
   display: none;
 }
 
+/* 글자만 두고 고른 탭은 강조색 글자와 밑줄로 표시한다. 굵기는 모두 같게 둬서 고를 때 탭 폭이 바뀌지 않는다. */
 .sheet-tabs button {
-  padding: 4px 10px;
-  font-size: 13px;
+  flex: none;
+  min-height: 40px;
+  padding: 0 14px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
   white-space: nowrap;
-  color: var(--text);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 4px;
+  color: var(--text-2);
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .sheet-tabs button[aria-selected='true'] {
-  color: var(--on-accent);
-  background: var(--accent);
-  border-color: var(--accent);
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.sheet-tabs button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -4px;
 }
 
 .sheet-body {
