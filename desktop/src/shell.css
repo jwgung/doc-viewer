@@ -443,10 +443,28 @@ body.resizing iframe {
 /* ---- 문서 탭 */
 
 .docs {
+  position: relative;
   display: flex;
   flex: 1;
+  min-width: 0;
+}
+
+/* 칸: 탭 줄 + 문서 자리. 나누면 두 칸이 폭을 나눠 갖는다(shell.js applySplitRatio). */
+.pane {
+  display: flex;
+  flex: 1 1 0;
   flex-direction: column;
   min-width: 0;
+}
+
+/* 나눈 화면에서 초점이 없는 칸의 보이는 탭은 강조색 대신 회색 선 */
+.docs.split .pane:not(.focused) .tab.active {
+  box-shadow: inset 0 2px var(--border);
+}
+
+.docs > .empty {
+  position: absolute;
+  inset: 0;
 }
 
 .tabs {
@@ -530,10 +548,41 @@ body.resizing iframe {
   background: var(--pressed);
 }
 
-main {
+.frames {
   position: relative;
   flex: 1;
   min-height: 0;
+}
+
+/* ---- 탭 끌기 */
+
+body.dragging-tab {
+  cursor: grabbing;
+  user-select: none;
+}
+
+body.dragging-tab iframe {
+  pointer-events: none;
+}
+
+.tab.dragging {
+  opacity: 0.5;
+}
+
+.drop-mark {
+  position: fixed;
+  z-index: 20;
+  pointer-events: none;
+}
+
+.drop-mark.line {
+  background: var(--accent);
+}
+
+.drop-mark.area {
+  box-sizing: border-box;
+  border: 2px solid var(--accent);
+  background: var(--accent-soft);
 }
 
 iframe {

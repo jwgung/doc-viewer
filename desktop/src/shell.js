@@ -26,6 +26,9 @@ const STRINGS = {
     zoomOut: '축소 (Ctrl+-)',
     zoomReset: '원래 크기 (Ctrl+0)',
     closeTab: '닫기 (Ctrl+W)',
+    closeOthers: '다른 탭 닫기',
+    splitRight: '오른쪽으로 나누기',
+    moveToOtherPane: '다른 칸으로 옮기기',
     emptyHint: '왼쪽에서 폴더를 열어 문서를 고르거나, 문서를 여기에 끌어다 놓으세요.',
     unsupported: '지원하지 않는 형식의 파일입니다.',
     folderFailed: '폴더를 읽지 못했습니다.',
@@ -65,6 +68,9 @@ const STRINGS = {
     zoomOut: 'Zoom out (Ctrl+-)',
     zoomReset: 'Actual size (Ctrl+0)',
     closeTab: 'Close (Ctrl+W)',
+    closeOthers: 'Close other tabs',
+    splitRight: 'Split right',
+    moveToOtherPane: 'Move to other pane',
     emptyHint: 'Open a folder on the left and pick a document, or drop documents here.',
     unsupported: 'This file type is not supported.',
     folderFailed: "Couldn't read the folder.",
@@ -98,8 +104,6 @@ const { getCurrentWebviewWindow } = window.__TAURI__.webviewWindow;
 const appWindow = getCurrentWebviewWindow();
 
 const $ = (id) => document.getElementById(id);
-const frames = $('frames');
-const tabBar = $('tabs');
 const viewButton = $('view-menu');
 const notesButton = $('notes');
 const outlineButton = $('outline');
@@ -137,7 +141,7 @@ function loadSettings(fmt) {
   return saved?.mode && saved?.fit ? saved : defaultSettings(fmt);
 }
 
-// ---- 탭: { id, name, fmt, frame, button, mode, fit, zoom, page, scroll, lastUsed, hasOutline, hasNotes, notesShown, printing }
+// ---- 탭: { id, name, fmt, pane, frame, button, mode, fit, zoom, page, scroll, lastUsed, loading, hasOutline, hasNotes, notesShown, printing }
 // 문서는 탭을 처음 볼 때 불러온다(지난번 탭을 여러 개 되살려도 보는 탭만 그린다).
 // 탭을 많이 열어도 메모리가 쌓이지 않게, 최근에 본 MAX_AWAKE개 밖이거나 오래 안 본 탭은 재운다:
 // 렌더러(iframe)를 버리고 보던 상태(쪽·스크롤·확대·보기 방식)만 남겼다가, 다시 보면 그 상태로 새로 불러온다.
@@ -147,16 +151,134 @@ const IDLE_SLEEP_MS = 15 * 60 * 1000;
 
 /** @type {Array<object>} */
 const tabs = [];
+/** 초점 칸에서 보이는 탭. 상단바·단축키가 다룬다(syncActive가 맞춘다). */
 let active = null;
 
 const viewerOf = (tab) => tab?.frame.contentWindow?.viewer;
 const viewer = () => viewerOf(active);
+const tabOfWindow = (win) => tabs.find((tab) => tab.frame.contentWindow === win);
+
+// ---- 칸(pane): 좌우 두 칸까지. 칸마다 탭 줄·문서 자리·로딩 화면이 있고 보이는 탭(active)이 하나다.
+// 상단바·단축키는 마지막으로 누른 칸(focused)에 적용한다. 두 칸 사이 경계선을 끌어 폭을 바꾼다.
+
+const docs = $('docs');
+/** @type {Array<{ el: HTMLElement, bar: HTMLElement, frames: HTMLElement, loading: HTMLElement, active: object | null }>} */
+const panes = [];
+let focused = null;
+let splitResizer = null;
+
+function createPane() {
+  const pane = { el: document.createElement('section'), bar: document.createElement('nav'), frames: document.createElement('main'), active: null };
+  pane.el.className = 'pane';
+  pane.bar.className = 'tabs';
+  pane.bar.setAttribute('role', 'tablist');
+  pane.frames.className = 'frames';
+  pane.loading = document.createElement('div');
+  pane.loading.className = 'loading';
+  pane.loading.setAttribute('role', 'status');
+  pane.loading.hidden = true;
+  pane.loading.append(
+    Object.assign(document.createElement('span'), { className: 'spinner' }),
+    Object.assign(document.createElement('span'), { className: 'loading-name' }),
+    Object.assign(document.createElement('span'), { textContent: t.opening }),
+  );
+  pane.frames.appendChild(pane.loading);
+  pane.el.append(pane.bar, pane.frames);
+  // 칸 안(탭 줄·빈 자리)을 누르면 그 칸이 초점 칸이 된다. 문서(iframe) 안을 누른 것은 createFrame이 알린다.
+  pane.el.addEventListener('pointerdown', () => focusPane(pane), true);
+  if (panes.length) {
+    splitResizer = createSplitResizer();
+    docs.append(splitResizer, pane.el);
+  } else docs.appendChild(pane.el);
+  panes.push(pane);
+  applySplitRatio();
+  return pane;
+}
+
+/** 빈 칸을 없앤다(칸이 하나면 그대로 둔다). */
+function removePane(pane) {
+  if (panes.length < 2) return;
+  panes.splice(panes.indexOf(pane), 1);
+  pane.el.remove();
+  splitResizer?.remove();
+  splitResizer = null;
+  docs.classList.remove('split');
+  if (focused === pane) focusPane(panes[0]);
+  applySplitRatio();
+}
+
+const otherPane = (pane) => panes.find((candidate) => candidate !== pane);
+const tabsOf = (pane) => tabs.filter((tab) => tab.pane === pane);
+
+function focusPane(pane) {
+  if (!pane || focused === pane) return;
+  focused = pane;
+  for (const candidate of panes) candidate.el.classList.toggle('focused', candidate === pane);
+  syncActive();
+}
+
+/** 상단바가 다룰 탭을 초점 칸의 보이는 탭으로 맞춘다. */
+function syncActive() {
+  active = focused?.active ?? null;
+  showToolbar();
+}
+
+function showPaneLoading(pane) {
+  const tab = pane.active;
+  pane.loading.hidden = !tab?.loading;
+  if (tab) pane.loading.querySelector('.loading-name').textContent = tab.name;
+}
+
+// 두 칸의 폭 비율(왼쪽 칸 몫). 경계선을 끌어 바꾸고 다음에도 쓴다.
+const MIN_PANE_RATIO = 0.2;
+let splitRatio = loadPref('splitRatio') ?? 0.5;
+
+function applySplitRatio() {
+  docs.classList.toggle('split', panes.length > 1);
+  if (panes.length < 2) {
+    panes[0].el.style.flex = '';
+    return;
+  }
+  panes[0].el.style.flex = `${splitRatio} 1 0`;
+  panes[1].el.style.flex = `${1 - splitRatio} 1 0`;
+}
+
+function createSplitResizer() {
+  const resizer = document.createElement('div');
+  resizer.className = 'resizer';
+  resizer.setAttribute('role', 'separator');
+  resizer.setAttribute('aria-orientation', 'vertical');
+  resizer.addEventListener('pointerdown', (e) => {
+    resizer.setPointerCapture(e.pointerId);
+    document.body.classList.add('resizing');
+  });
+  resizer.addEventListener('pointermove', (e) => {
+    if (!resizer.hasPointerCapture(e.pointerId)) return;
+    const rect = docs.getBoundingClientRect();
+    splitRatio = Math.min(1 - MIN_PANE_RATIO, Math.max(MIN_PANE_RATIO, (e.clientX - rect.left) / rect.width));
+    applySplitRatio();
+  });
+  const end = (e) => {
+    if (!resizer.hasPointerCapture(e.pointerId)) return;
+    resizer.releasePointerCapture(e.pointerId);
+    document.body.classList.remove('resizing');
+    savePref('splitRatio', splitRatio);
+  };
+  resizer.addEventListener('pointerup', end);
+  resizer.addEventListener('pointercancel', end);
+  resizer.addEventListener('dblclick', () => {
+    splitRatio = 0.5;
+    applySplitRatio();
+    savePref('splitRatio', splitRatio);
+  });
+  return resizer;
+}
 
 /**
  * 문서를 탭으로 연다. view는 지난번에 보던 상태(되살릴 때)다: { mode, fit, zoom, page, scroll }.
- * select가 false면 탭만 만들고 보지 않는다(되살리기).
+ * select가 false면 탭만 만들고 보지 않는다(되살리기). 이미 연 파일이면 그 탭(어느 칸이든)으로 간다.
  */
-function openTab(opened, view = null, select = true) {
+function openTab(opened, view = null, select = true, pane = focused) {
   const existing = tabs.find((tab) => tab.id === opened.id);
   if (existing) return select && activate(existing);
   // 내용으로 가린 형식이 확장자보다 앞서고, 확장자로도 모르는 글자 파일은 첫 글자로 가린 형식을 쓴다.
@@ -170,6 +292,7 @@ function openTab(opened, view = null, select = true) {
   const tab = {
     ...opened,
     fmt,
+    pane,
     mode: view?.mode ?? settings.mode,
     fit: view?.fit ?? settings.fit,
     zoom: 1,
@@ -206,11 +329,16 @@ function openTab(opened, view = null, select = true) {
     closeTab(tab);
   });
   tab.button.append(fileIcon(fmt), label, close);
-  tab.button.addEventListener('click', () => activate(tab));
+  tab.button.addEventListener('click', () => !dragJustEnded && activate(tab));
   tab.button.addEventListener('keydown', (e) => (e.key === 'Enter' || e.key === ' ') && activate(tab));
   // 가운데 단추로 누르면 닫는다(브라우저 탭과 같이).
   tab.button.addEventListener('auxclick', (e) => e.button === 1 && closeTab(tab));
-  tabBar.appendChild(tab.button);
+  tab.button.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    showMenu(e.clientX, e.clientY, tabActions(tab));
+  });
+  tab.button.addEventListener('pointerdown', (e) => startTabDrag(tab, e));
+  pane.bar.appendChild(tab.button);
 
   tabs.push(tab);
   if (select) activate(tab);
@@ -220,7 +348,7 @@ function openTab(opened, view = null, select = true) {
 function createFrame(tab) {
   const frame = document.createElement('iframe');
   frame.title = tab.name;
-  frame.hidden = tab !== active;
+  frame.hidden = tab.pane.active !== tab;
   // 문서가 창 전체를 다른 곳으로 옮기거나 새 창을 띄우지 못하게 한다(인쇄 대화상자는 허용).
   frame.sandbox = 'allow-scripts allow-same-origin allow-modals';
   frame.addEventListener('load', () => {
@@ -228,31 +356,40 @@ function createFrame(tab) {
     win?.addEventListener('keydown', onKey);
     win?.addEventListener('wheel', onWheel, { passive: false });
     win?.addEventListener('click', blockExternalLink, true);
+    // 문서 안을 누르면 그 칸이 초점 칸이 된다(iframe 안 포인터는 셸 칸까지 올라오지 않는다).
+    win?.addEventListener('pointerdown', () => focusPane(tab.pane), true);
   });
-  frames.appendChild(frame);
+  tab.pane.frames.appendChild(frame);
   return frame;
 }
 
 /**
  * 문서 속 링크(docx·pptx 하이퍼링크 등)가 탭을 바깥 웹 페이지로 바꾸지 않게 막는다. 문서 안 이동(#)과 렌더러가 직접 처리하는
  * 링크(PDF 쪽 이동 등)는 그대로 둔다. 바깥 링크를 브라우저로 여는 기능은 아직 없다.
+ * SVG 안 링크(<a>)는 href가 문자열이 아니므로(SVGAnimatedString) 속성 값으로 비교한다.
  */
 function blockExternalLink(e) {
-  const link = e.target instanceof Element ? e.target.closest('a[href]') : null;
-  if (!link || link.getAttribute('href').startsWith('#')) return;
-  if (new URL(link.href, location.href).origin !== location.origin) e.preventDefault();
+  const link = e.target instanceof Element ? e.target.closest('a[href], a[*|href]') : null;
+  const href = link?.getAttribute('href') ?? link?.getAttribute('xlink:href');
+  if (!href || href.startsWith('#')) return;
+  if (new URL(href, link.baseURI).origin !== location.origin) e.preventDefault();
 }
 
-/** 탭을 재운다: 렌더러를 버리고 다시 볼 때 쓸 상태만 남긴다. */
-function sleepTab(tab) {
-  if (tab === active || !tab.frame.src || tab.printing) return;
+/** 렌더러를 버리고 다시 볼 때 쓸 상태만 남긴다(잠들기·칸 옮기기). */
+function dropRenderer(tab) {
   viewerOf(tab)?.closeOverlay(); // 모아 두던 읽던 위치를 바로 알리게 한다(검색 막대도 닫힌다).
   // 되살린 확대를 아직 적용하기 전(그리는 중)이면 그 값을 그대로 둔다.
-  if (tab.savedZoom === 1) tab.savedZoom = tab.zoom;
-  Object.assign(tab, { zoom: 1, hasOutline: false, hasNotes: false, notesShown: false });
+  if (tab.frame.src && tab.savedZoom === 1) tab.savedZoom = tab.zoom;
+  Object.assign(tab, { zoom: 1, loading: false, hasOutline: false, hasNotes: false, notesShown: false });
   const old = tab.frame;
   tab.frame = createFrame(tab);
   old.remove();
+}
+
+/** 탭을 재운다(보이는 탭·인쇄 중인 탭은 두고). */
+function sleepTab(tab) {
+  if (tab.pane.active === tab || !tab.frame.src || tab.printing) return;
+  dropRenderer(tab);
   tab.button.classList.add('asleep');
   saveSession();
 }
@@ -275,47 +412,206 @@ function loadTab(tab) {
   tab.frame.src = `viewer/viewer.html?${params}`;
 }
 
+/** 탭을 그 칸에서 보이게 하고 그 칸을 초점 칸으로 한다. */
 function activate(tab) {
-  active = tab;
-  for (const other of tabs) {
+  const pane = tab.pane;
+  pane.active = tab;
+  for (const other of tabsOf(pane)) {
     other.frame.hidden = other !== tab;
     other.button.classList.toggle('active', other === tab);
     other.button.setAttribute('aria-selected', String(other === tab));
   }
   tab.lastUsed = Date.now();
   loadTab(tab);
+  showPaneLoading(pane);
   tab.button.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-  showToolbar();
+  focused = null; // 같은 칸이어도 상단바를 다시 맞춘다
+  focusPane(pane);
   sleepIdleTabs();
   saveSession();
 }
 
+/** 칸에서 탭 하나가 빠진 뒤: 그 칸에 남은 탭을 보이거나, 빈 칸이면 없앤다. */
+function afterLeave(pane, index) {
+  if (pane.active && tabs.includes(pane.active) && pane.active.pane === pane) return;
+  const rest = tabsOf(pane);
+  pane.active = null;
+  if (rest.length) return activate(rest[Math.min(index, rest.length - 1)]);
+  if (panes.length > 1) removePane(pane);
+  else {
+    pane.loading.hidden = true;
+    syncActive();
+  }
+}
+
 function closeTab(tab) {
-  const index = tabs.indexOf(tab);
+  const pane = tab.pane;
+  const index = tabsOf(pane).indexOf(tab);
   if (index < 0) return;
-  tabs.splice(index, 1);
+  tabs.splice(tabs.indexOf(tab), 1);
   tab.frame.remove();
   tab.button.remove();
   invoke('close_document', { id: tab.id });
-  if (active === tab) {
-    active = null;
-    const next = tabs[Math.min(index, tabs.length - 1)];
-    if (next) activate(next);
-    else showToolbar();
-  }
+  afterLeave(pane, index);
   saveSession();
 }
 
+/**
+ * 탭을 다른 칸(또는 같은 칸의 다른 자리)으로 옮긴다. index는 대상 칸 탭 줄에서의 자리(없으면 끝).
+ * 다른 칸으로 옮기면 iframe을 새로 만들어 보던 상태로 다시 불러온다(iframe은 옮기면 처음부터 다시 읽힌다).
+ */
+function moveTab(tab, target, index = Infinity) {
+  const from = tab.pane;
+  const fromIndex = tabsOf(from).indexOf(tab);
+  const siblings = tabsOf(target).filter((other) => other !== tab);
+  const before = siblings[index] ?? null;
+  // tabs 배열 순서도 탭 줄 순서와 같게 둔다(Ctrl+Tab·저장 순서).
+  tabs.splice(tabs.indexOf(tab), 1);
+  tabs.splice(before ? tabs.indexOf(before) : tabs.length, 0, tab);
+  target.bar.insertBefore(tab.button, before?.button ?? null);
+  if (from !== target) {
+    dropRenderer(tab); // 예전 칸에 새 자리를 만들었다가
+    tab.frame.remove();
+    tab.pane = target; // 대상 칸에 다시 만든다
+    tab.frame = createFrame(tab);
+    if (from.active === tab) from.active = null;
+    afterLeave(from, fromIndex);
+  }
+  activate(tab);
+}
+
+/** 탭을 옆 칸으로 보낸다. 칸이 하나면 오른쪽에 새 칸을 만든다(탭이 하나뿐이면 나눌 것이 없다). */
+function splitTab(tab) {
+  if (panes.length < 2 && tabsOf(tab.pane).length < 2) return;
+  moveTab(tab, otherPane(tab.pane) ?? createPane());
+}
+
+function tabActions(tab) {
+  const split = panes.length > 1;
+  return [
+    { label: split ? t.moveToOtherPane : t.splitRight, hint: 'Ctrl+\\', run: () => splitTab(tab) },
+    'separator',
+    { label: t.closeTab.replace(/ \(.*\)$/, ''), hint: 'Ctrl+W', run: () => closeTab(tab) },
+    { label: t.closeOthers, run: () => tabsOf(tab.pane).filter((other) => other !== tab).forEach(closeTab) },
+  ];
+}
+
+// ---- 탭 끌기: 포인터 이벤트로 직접 한다. Windows에서 Tauri가 파일 끌어다 놓기를 받으면 웹 안의 HTML 끌어다 놓기가 막힌다.
+// 탭 줄에 놓으면 그 자리로(다른 칸이면 그 칸으로), 칸이 하나일 때 문서 오른쪽 가장자리에 놓으면 오른쪽에 새 칸을 만든다.
+
+const DRAG_START_PX = 6;
+/** 칸이 하나일 때 이 비율보다 오른쪽에 놓으면 나눈다 */
+const SPLIT_EDGE = 0.75;
+let drag = null;
+/** 끌기가 끝난 직후의 click(탭 고르기)을 한 번 무시한다 */
+let dragJustEnded = false;
+const dropMark = Object.assign(document.createElement('div'), { className: 'drop-mark', hidden: true });
+document.body.appendChild(dropMark);
+
+function startTabDrag(tab, e) {
+  if (e.button !== 0 || e.target.closest('.tab-close')) return;
+  drag = { tab, x: e.clientX, y: e.clientY, started: false, target: null };
+  tab.button.setPointerCapture(e.pointerId);
+  tab.button.addEventListener('pointermove', moveTabDrag);
+  tab.button.addEventListener('pointerup', endTabDrag, { once: true });
+  tab.button.addEventListener('pointercancel', endTabDrag, { once: true });
+}
+
+function moveTabDrag(e) {
+  if (!drag) return;
+  if (!drag.started) {
+    if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < DRAG_START_PX) return;
+    drag.started = true;
+    document.body.classList.add('dragging-tab'); // 문서 iframe이 포인터를 가로채지 않게
+    drag.tab.button.classList.add('dragging');
+  }
+  drag.target = dropTarget(e.clientX, e.clientY);
+  showDropMark(drag.target);
+}
+
+/** 포인터 아래의 놓을 곳: { pane, index }(탭 줄) 또는 { split: true }(오른쪽 가장자리) */
+function dropTarget(x, y) {
+  for (const pane of panes) {
+    const bar = pane.bar.getBoundingClientRect();
+    const rect = pane.el.getBoundingClientRect();
+    if (x < rect.left || x > rect.right) continue;
+    // 탭 줄(비어 있으면 높이가 0이라 위쪽 34px을 탭 줄로 본다)
+    if (y >= rect.top && y <= rect.top + Math.max(bar.height, 34)) {
+      const others = tabsOf(pane).filter((tab) => tab !== drag.tab);
+      const index = others.filter((tab) => {
+        const r = tab.button.getBoundingClientRect();
+        return x > r.left + r.width / 2;
+      }).length;
+      return { pane, index };
+    }
+    if (y > rect.top && y < rect.bottom) {
+      if (panes.length === 1 && x > rect.left + rect.width * SPLIT_EDGE && tabsOf(pane).length > 1) return { split: true };
+      if (pane !== drag.tab.pane) return { pane, index: Infinity };
+    }
+  }
+  return null;
+}
+
+function showDropMark(target) {
+  dropMark.hidden = !target;
+  if (!target) return;
+  let rect;
+  if (target.split) {
+    const r = panes[0].frames.getBoundingClientRect();
+    rect = { left: r.left + r.width / 2, top: r.top, width: r.width / 2, height: r.height };
+    dropMark.className = 'drop-mark area';
+  } else if (target.index === Infinity && target.pane !== drag.tab.pane) {
+    const r = target.pane.frames.getBoundingClientRect();
+    rect = { left: r.left, top: r.top, width: r.width, height: r.height };
+    dropMark.className = 'drop-mark area';
+  } else {
+    // 탭 줄의 끼울 자리에 세로 막대
+    const others = tabsOf(target.pane).filter((tab) => tab !== drag.tab);
+    const bar = target.pane.bar.getBoundingClientRect();
+    const ref = others[target.index]?.button.getBoundingClientRect();
+    const last = others.at(-1)?.button.getBoundingClientRect();
+    const x = ref ? ref.left : last ? last.right : bar.left;
+    rect = { left: x - 1, top: target.pane.el.getBoundingClientRect().top, width: 2, height: Math.max(bar.height, 34) };
+    dropMark.className = 'drop-mark line';
+  }
+  Object.assign(dropMark.style, { left: `${rect.left}px`, top: `${rect.top}px`, width: `${rect.width}px`, height: `${rect.height}px` });
+}
+
+function endTabDrag(e) {
+  const current = drag;
+  drag = null;
+  current.tab.button.removeEventListener('pointermove', moveTabDrag);
+  if (current.tab.button.hasPointerCapture(e.pointerId)) current.tab.button.releasePointerCapture(e.pointerId);
+  document.body.classList.remove('dragging-tab');
+  current.tab.button.classList.remove('dragging');
+  dropMark.hidden = true;
+  if (!current.started) return;
+  dragJustEnded = true;
+  setTimeout(() => (dragJustEnded = false), 0);
+  const target = e.type === 'pointerup' ? current.target : null;
+  if (target?.split) splitTab(current.tab);
+  else if (target) moveTab(current.tab, target.pane, target.index);
+}
+
 // ---- 지난번 상태: 열린 탭과 탭마다 보던 상태를 Rust가 앱 설정 폴더에 적어 둔다(경로는 Rust만 안다).
+// 칸 번호(pane)와 그 칸에서 보이던 탭(shown)도 함께 적어 나눈 화면을 되살린다.
 
 let sessionTimer = null;
 function saveSession() {
   clearTimeout(sessionTimer);
   sessionTimer = setTimeout(() => {
-    const state = tabs.map(({ id, mode, fit, zoom, savedZoom, page, scroll, frame }) => ({
-      id,
-      // 아직 불러오지 않은 탭은 되살린 상태를 그대로 둔다.
-      view: { mode, fit, zoom: frame.src ? zoom : savedZoom, page, scroll },
+    const state = tabs.map((tab) => ({
+      id: tab.id,
+      view: {
+        mode: tab.mode,
+        fit: tab.fit,
+        // 아직 불러오지 않은 탭은 되살린 상태를 그대로 둔다.
+        zoom: tab.frame.src ? tab.zoom : tab.savedZoom,
+        page: tab.page,
+        scroll: tab.scroll,
+        pane: panes.indexOf(tab.pane),
+        shown: tab.pane.active === tab,
+      },
     }));
     invoke('save_session', { tabs: state, active: active?.id ?? null });
   }, 300);
@@ -323,25 +619,31 @@ function saveSession() {
 
 async function restoreSession() {
   const { tabs: saved, active: activeId } = await invoke('restore_session');
-  for (const { opened, view } of saved) openTab(opened, view, false);
-  const tab = tabs.find((candidate) => candidate.id === activeId) ?? tabs[0];
+  if (saved.some(({ view }) => view?.pane === 1) && saved.some(({ view }) => (view?.pane ?? 0) === 0)) createPane();
+  for (const { opened, view } of saved) openTab(opened, view, false, panes[view?.pane ?? 0] ?? panes[0]);
+  // 칸마다 보이던 탭을 보이고, 마지막에 초점 칸의 탭을 고른다.
+  for (const pane of panes) {
+    const own = tabsOf(pane);
+    const shown = own.find((tab) => saved.find((entry) => entry.opened.id === tab.id)?.view?.shown) ?? own[0];
+    if (shown) activate(shown);
+  }
+  const tab = tabs.find((candidate) => candidate.id === activeId);
   if (tab) activate(tab);
 }
 
 function cycleTab(step) {
-  if (tabs.length < 2) return;
-  activate(tabs[(tabs.indexOf(active) + step + tabs.length) % tabs.length]);
+  const own = tabsOf(focused);
+  if (own.length < 2) return;
+  activate(own[(own.indexOf(active) + step + own.length) % own.length]);
 }
 
-/** 상단바를 지금 탭에 맞춘다. 창 제목은 늘 앱 이름이다(작업 표시줄에 파일 이름을 붙이지 않는다). */
+/** 상단바를 초점 칸의 탭에 맞춘다. 창 제목은 늘 앱 이름이다(작업 표시줄에 파일 이름을 붙이지 않는다). */
 function showToolbar() {
   const tab = active;
   document.body.classList.toggle('has-doc', !!tab);
   document.body.classList.toggle('paged', !!tab && isPaged(tab.fmt));
-  $('empty').hidden = !!tab;
-  $('loading').hidden = !tab?.loading;
+  $('empty').hidden = tabs.length > 0;
   if (!tab) return;
-  $('loading-name').textContent = tab.name;
   viewButton.replaceChildren(
     lineIcon(VIEW_ICONS[tab.mode]),
     Object.assign(document.createElement('span'), { textContent: `${MODE_LABELS[tab.mode]} · ${FIT_LABELS[tab.fit]}` }),
@@ -384,9 +686,11 @@ window.viewerHost = {
       case 'firstPage':
       case 'error':
         tab.loading = false;
+        showPaneLoading(tab.pane);
         break;
       case 'done':
         tab.loading = false;
+        showPaneLoading(tab.pane);
         if (tab === active) showToolbar();
         // 지난번 확대 비율로 되돌린다(렌더러는 처음 크기로 연다).
         if (tab.savedZoom !== 1) viewerOf(tab)?.setZoom(tab.savedZoom);
@@ -450,6 +754,9 @@ function setZoom(value, focusX, focusY) {
 function onWheel(e) {
   if (!e.ctrlKey) return;
   e.preventDefault(); // 문서가 없어도 WebView 전체 확대는 막는다.
+  // 문서 위에서 굴렸으면 그 칸을 다룬다(나눈 화면에서 초점이 없는 칸 위).
+  const tab = tabOfWindow(e.view);
+  if (tab) focusPane(tab.pane);
   if (!active) return;
   const dy = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? e.deltaY * WHEEL_LINE_PX : e.deltaY;
   setZoom(active.zoom * Math.exp(-dy * WHEEL_ZOOM_RATE), e.clientX, e.clientY);
@@ -471,7 +778,6 @@ notesButton.addEventListener('click', () => {
   showToolbar();
 });
 // 보기 방식·맞춤: 단추 하나를 누르면 메뉴로 고른다(기본 select는 Windows 목록 상자로 떠서 셸과 어울리지 않는다).
-
 function setView(change) {
   Object.assign(active, change);
   if (change.mode) viewer()?.setMode(active.mode);
@@ -509,6 +815,7 @@ function onKey(e) {
   if (ctrl && key === 'o') pickFolder();
   else if (ctrl && key === 'tab') cycleTab(e.shiftKey ? -1 : 1);
   else if (ctrl && key === 'w' && active) closeTab(active);
+  else if (ctrl && key === '\\' && active) splitTab(active);
   else if (ctrl && key === 'f' && active) viewer()?.openSearch();
   else if (ctrl && key === 'p' && active) requestPrint();
   else if (e.key === 'Escape' && active) viewer()?.closeOverlay();
@@ -834,6 +1141,8 @@ resizer.addEventListener('dblclick', () => {
 
 // ---- 시작
 
+createPane();
+focusPane(panes[0]);
 showExplorer(loadPref('explorer') ?? true);
 showToolbar();
 appWindow.listen('documents', takeDocuments);

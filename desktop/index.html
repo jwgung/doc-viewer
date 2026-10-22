@@ -43,18 +43,11 @@
         </div>
       </aside>
       <div id="explorer-resizer" class="resizer" role="separator" aria-orientation="vertical"></div>
-      <section class="docs">
-        <nav id="tabs" class="tabs" role="tablist"></nav>
-        <main id="frames">
-          <div id="empty" class="empty">
-            <p data-label="emptyHint"></p>
-          </div>
-          <div id="loading" class="loading" role="status" hidden>
-            <span class="spinner"></span>
-            <span id="loading-name" class="loading-name"></span>
-            <span data-label="opening"></span>
-          </div>
-        </main>
+      <!-- 칸(.pane: 탭 줄 + 문서 자리)은 shell.js가 만든다. 나누면 두 칸 사이에 경계선이 들어간다. -->
+      <section id="docs" class="docs">
+        <div id="empty" class="empty">
+          <p data-label="emptyHint"></p>
+        </div>
       </section>
     </div>
     <div id="toast" role="status"></div>
