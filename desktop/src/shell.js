@@ -638,7 +638,7 @@ function closeTab(tab) {
   // 끌던 탭을 닫으면(Ctrl+W) 탭 단추가 사라져 pointerup이 오지 않으므로 끌기를 여기서 끝낸다.
   if (drag?.tab === tab) {
     drag = null;
-    document.body.classList.remove('dragging-tab');
+    document.body.classList.remove('dragging-tab', 'copying-tab');
     dropMark.hidden = true;
   }
   rememberClosed(tab, index);
@@ -763,7 +763,7 @@ document.body.appendChild(dropMark);
 
 function startTabDrag(tab, e) {
   if (e.button !== 0 || e.target.closest('.tab-close')) return;
-  drag = { tab, x: e.clientX, y: e.clientY, started: false, target: null };
+  drag = { tab, x: e.clientX, y: e.clientY, started: false, target: null, copy: false };
   tab.button.setPointerCapture(e.pointerId);
   tab.button.addEventListener('pointermove', moveTabDrag);
   tab.button.addEventListener('pointerup', endTabDrag, { once: true });
@@ -787,7 +787,8 @@ function moveTabDrag(e) {
 
 /**
  * 포인터 아래의 놓을 곳: { pane, index }(탭 줄·다른 칸 가운데) 또는 { pane, side }(가장자리에 새 칸).
- * tab은 끄는 탭이고, 새로 여는 파일(사이드바·Windows 탐색기에서 끌어옴)이면 null이다: 그때는 어느 칸 가운데든 그 칸에 연다.
+ * tab은 끄는 탭이고, 새로 여는 파일(사이드바·Windows 탐색기에서 끌어옴)이나 복제(Ctrl+끌기)면 null이다:
+ * 그때는 어느 칸 가운데든(제 칸 포함) 그 칸에 연다.
  */
 function dropTarget(x, y, tab = drag?.tab ?? null) {
   for (const pane of panes) {
@@ -830,7 +831,7 @@ function showDropMark(target) {
     dropMark.className = 'drop-mark area';
   } else {
     // 탭 줄의 끼울 자리에 세로 막대
-    const others = tabsOf(target.pane).filter((tab) => tab !== drag?.tab);
+    const others = tabsOf(target.pane).filter((tab) => drag?.copy || tab !== drag?.tab); // 복제면 끄는 탭도 자리를 차지한다
     const bar = target.pane.bar.getBoundingClientRect();
     const ref = others[target.index]?.button.getBoundingClientRect();
     const last = others.at(-1)?.button.getBoundingClientRect();
@@ -856,7 +857,8 @@ function endTabDrag(e) {
   document.body.classList.remove('copying-tab');
   // 끄는 사이 놓을 칸이 사라졌으면(Ctrl+W) 아무것도 하지 않는다.
   const target = e.type === 'pointerup' && panes.includes(current.target?.pane) ? current.target : null;
-  if (target && e.ctrlKey) duplicateTab(current.tab, target);
+  // 미리 보인 놓을 곳과 같은 판단(끄는 동안의 Ctrl)으로 복제할지 정한다.
+  if (target && current.copy) duplicateTab(current.tab, target);
   else if (target?.side) splitTab(current.tab, target.side, target.pane);
   else if (target) moveTab(current.tab, target.pane, target.index);
 }

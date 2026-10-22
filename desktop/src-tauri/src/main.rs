@@ -6,7 +6,7 @@
 mod detect;
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     fs::File,
     io::{Read, Seek, SeekFrom},
     path::{Path, PathBuf},
@@ -97,15 +97,22 @@ fn register(app: &AppHandle, path: PathBuf) -> Opened {
 fn register_as(app: &AppHandle, path: PathBuf, reuse: bool) -> Opened {
     let path = dunce::canonicalize(&path).unwrap_or(path);
     let docs = app.state::<Documents>();
-    let mut open = docs.open.lock().unwrap();
-    let existing = if reuse { open.iter().find(|(_, p)| **p == path).map(|(id, _)| *id) } else { None };
-    let id = existing.unwrap_or_else(|| {
-        let id = docs.next_id.fetch_add(1, Ordering::Relaxed) + 1;
-        open.insert(id, path.clone());
-        id
-    });
+    let id = assign_id(&mut docs.open.lock().unwrap(), &docs.next_id, &path, reuse);
     let detected = detect::detect(&path);
     Opened { id, src: format!("{DOC_ORIGIN}/{id}"), name: file_name(&path), content_fmt: detected.content, text_fmt: detected.text }
+}
+
+/// register_as의 번호 붙이기. reuse면 그 파일의 가장 먼저 연 탭(가장 작은 번호: 원본)을 돌려준다 —
+/// 복사본이 여럿이어도 사이드바·탐색기로 열면 늘 같은 탭으로 간다.
+fn assign_id(open: &mut HashMap<u64, PathBuf>, next_id: &AtomicU64, path: &Path, reuse: bool) -> u64 {
+    if reuse {
+        if let Some(id) = open.iter().filter(|(_, p)| p.as_path() == path).map(|(id, _)| *id).min() {
+            return id;
+        }
+    }
+    let id = next_id.fetch_add(1, Ordering::Relaxed) + 1;
+    open.insert(id, path.to_path_buf());
+    id
 }
 
 /// 끌어다 놓은 자리(창 안 CSS 픽셀). 셸은 이 자리로 놓을 칸·나눌 방향을 정한다.
@@ -298,7 +305,7 @@ fn restore_session(app: AppHandle) -> Restored {
         config_file(&app, SESSION_FILE).and_then(|f| std::fs::read(f).ok()).and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
     let mut active = None;
     // 같은 파일을 탭 여럿에 띄워 두었으면(탭 복제) 탭마다 따로 번호를 붙여 모두 되살린다.
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = HashSet::new();
     let tabs = session
         .tabs
         .into_iter()
@@ -636,6 +643,22 @@ mod tests {
         assert!(!only_case_changes(&root.join("sub/REAL.pdf"), &root.join("sub/real.pdf")));
         assert!(!only_case_changes(&root.join("sub/real.pdf"), &root.join("link.pdf")));
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn copies_get_their_own_number_and_reuse_finds_the_original() {
+        let mut open = HashMap::new();
+        let next = AtomicU64::new(0);
+        let a = Path::new("a.pdf");
+        let first = assign_id(&mut open, &next, a, true);
+        assert_eq!(assign_id(&mut open, &next, a, true), first, "이미 연 파일은 그 번호");
+        let copy = assign_id(&mut open, &next, a, false);
+        let copy2 = assign_id(&mut open, &next, a, false);
+        assert!(copy != first && copy2 != copy, "복사본마다 새 번호");
+        assert_eq!(assign_id(&mut open, &next, a, true), first, "복사본이 있어도 원본으로 간다");
+        open.remove(&first);
+        assert_eq!(assign_id(&mut open, &next, a, true), copy, "원본을 닫으면 남은 것 중 가장 먼저 연 탭");
+        assert_ne!(assign_id(&mut open, &next, Path::new("b.pdf"), true), first);
     }
 
     #[test]
