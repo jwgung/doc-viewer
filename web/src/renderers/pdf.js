@@ -184,6 +184,7 @@ export async function render(bytes, container, ctx) {
       if (outline?.length) ctx.setOutline(() => outlineItems(pdf, outline, viewer));
     })
     .catch(() => {});
-  addEventListener('pagehide', () => pdf.destroy(), { once: true });
+  // pdf.js 6의 문서 객체에는 destroy가 없어 불러오기 작업으로 정리한다.
+  addEventListener('pagehide', () => task.destroy(), { once: true });
   return { pages: pdf.numPages, bytes: size, extra: { ranged: !!input.range } };
 }
