@@ -690,7 +690,8 @@ function parseMedia(nvPr: Element | null, env: Env): MediaInfo | undefined {
   if (isExternalTarget(rel.target)) return { kind, src: rel.target, external: true };
   const ext = rel.target.slice(rel.target.lastIndexOf('.') + 1).toLowerCase();
   const mime = MEDIA_MIME[ext] ?? (kind === 'audio' ? 'audio/mpeg' : 'video/mp4');
-  return { kind, src: env.pkg.blobUrl(rel.target, mime), mime };
+  // [doc-viewer] 동영상은 수십 MB일 수 있어 해석할 때 blob을 만들지 않고 경로만 둔다(재생할 때 mediaUrl로 만든다).
+  return env.pkg.files[rel.target] ? { kind, src: null, path: rel.target, mime } : { kind, src: null };
 }
 
 function parsePic(pic: Element, env: Env): ImageElement | UnsupportedElement | null {
@@ -1526,6 +1527,7 @@ function buildPresentation(pkg: Pkg, bytes: Uint8Array, opts: PptxParseOptions):
   return {
     width, height, slides, source: 'pptx',
     dispose: () => pkg.dispose(),
+    mediaUrl: (media: MediaInfo) => (media.path && media.mime ? pkg.blobUrl(media.path, media.mime) : media.src),
     embeddedFonts: parseEmbeddedFonts(pkg, presRoot, presRels),
     sections: sections.length ? sections : undefined,
   };

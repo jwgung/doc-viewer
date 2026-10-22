@@ -17,6 +17,11 @@ export interface Presentation {
    * 调用后依赖这些 URL 的已渲染 SVG 将无法显示图片。
    */
   dispose?: () => void;
+  /**
+   * [doc-viewer] 包内媒体（MediaInfo.path）的播放地址。媒体可能有几十 MB，解析时不建 blob，播放时才建。
+   * 外链返回原始 URL，取不到时为 null。
+   */
+  mediaUrl?: (media: MediaInfo) => string | null;
   /** 节（p14:sectionLst），供缩略图分组 */
   sections?: Section[];
 }
@@ -231,8 +236,10 @@ export interface ShapeElement extends ElementBase {
 /** 媒体对象（音频 / 视频）：封面帧走 ImageElement.src，本字段记录可播放的源 */
 export interface MediaInfo {
   kind: 'audio' | 'video';
-  /** 媒体地址：包内资源为 blob URL，外链为原始 URL；解析不到时为 null */
+  /** 媒体地址：外链为原始 URL；包内资源为 null（[doc-viewer] 播放时用 Presentation.mediaUrl 取），解析不到时也为 null */
   src: string | null;
+  /** [doc-viewer] 包内媒体的路径（ppt/media/…），交给 Presentation.mediaUrl */
+  path?: string;
   /** 来自 r:link 的外部链接 */
   external?: boolean;
   /** 媒体 MIME，便于将来交给 <video>/<audio> */
