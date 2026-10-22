@@ -261,9 +261,9 @@ fn list_folder(path: String, extensions: Vec<String>, docs: State<Documents>) ->
     list_entries(&dir, &extensions).map_err(|e| e.to_string())
 }
 
-/// 고른 폴더 아래(폴더 자신은 빼고)의 항목. 이름 바꾸기·지우기·탐색기에서 보기가 고른 폴더 밖을 건드리지 못하게 한다.
-/// 이름 바꾸기·지우기 대상. 부모 폴더만 실제 경로로 풀고 이름은 그대로 붙인다: 바로가기(심볼릭 링크·정션)를 고르면
-/// 링크가 가리키는 파일이 아니라 링크 자체를 바꾸거나 지운다.
+/// 이름 바꾸기·지우기·탐색기에서 보기의 대상. 부모 폴더가 고른 폴더 아래여야 한다(폴더 자신과 밖은 거부).
+/// 부모 폴더만 실제 경로로 풀고 이름은 그대로 붙인다: 바로가기(심볼릭 링크·정션)를 고르면 링크가 가리키는 파일이 아니라
+/// 링크 자체를 바꾸거나 지운다.
 fn entry_path(docs: &Documents, path: &str) -> Result<PathBuf, String> {
     let root = docs.folder.lock().unwrap().clone().ok_or("no folder")?;
     let root = dunce::canonicalize(&root).map_err(|e| e.to_string())?;
@@ -290,6 +290,7 @@ fn invalid_name(name: &str) -> bool {
 }
 
 /// 탐색기 항목 이름 바꾸기(같은 폴더 안). 그 파일(폴더면 그 안)을 연 탭은 새 경로를 따라간다.
+/// 바로가기는 링크 자체의 이름만 바뀌고, 링크로 연 탭(가리키는 파일 경로로 열린다)은 그대로 둔다.
 #[tauri::command]
 fn rename_entry(path: String, name: String, docs: State<Documents>) -> Result<Changed, String> {
     let from = entry_path(&docs, &path)?;
@@ -298,13 +299,7 @@ fn rename_entry(path: String, name: String, docs: State<Documents>) -> Result<Ch
         return Err("invalid".into());
     }
     let to = from.parent().ok_or("invalid")?.join(name);
-    // 대소문자만 바꾸는 경우(Windows는 같은 파일로 본다. É→é처럼 영문 밖 글자 포함)는 막지 않는다.
-    let same_entry = || {
-        let from_name = from.file_name().map(|n| n.to_string_lossy().to_lowercase());
-        from_name.as_deref() == Some(name.to_lowercase().as_str())
-            && dunce::canonicalize(&to).ok() == dunce::canonicalize(&from).ok()
-    };
-    if to.symlink_metadata().is_ok() && !same_entry() {
+    if to.symlink_metadata().is_ok() && !only_case_changes(&from, &to) {
         return Err("exists".into());
     }
     std::fs::rename(&from, &to).map_err(|e| e.to_string())?;
@@ -315,6 +310,15 @@ fn rename_entry(path: String, name: String, docs: State<Documents>) -> Result<Ch
         ids.push(*id);
     }
     Ok(Changed { path: to.to_string_lossy().into_owned(), ids })
+}
+
+/// to가 이미 있어도 from의 대소문자만 바꾸는 것인지(Windows는 같은 파일로 본다. É→é처럼 영문 밖 글자 포함).
+/// 어느 쪽이든 링크면 예외로 두지 않는다: 대소문자를 구분하는 폴더에서 링크 이름을 그 링크가 가리키는 파일 이름으로 바꾸면
+/// 실제 파일을 링크로 덮어쓰게 된다.
+fn only_case_changes(from: &Path, to: &Path) -> bool {
+    let is_link = |p: &Path| p.symlink_metadata().map(|m| m.file_type().is_symlink()).unwrap_or(false);
+    let lower = |p: &Path| p.file_name().map(|n| n.to_string_lossy().to_lowercase());
+    !is_link(from) && !is_link(to) && lower(from) == lower(to) && dunce::canonicalize(from).ok() == dunce::canonicalize(to).ok()
 }
 
 /// 탐색기 항목을 휴지통으로 보낸다(묻는 문구는 셸이 화면 언어로 준다). 취소하면 None.
@@ -549,6 +553,10 @@ mod tests {
         assert!(entry_path(&docs, &root.to_string_lossy()).is_err(), "고른 폴더 자체는 안 된다");
         assert!(entry_path(&docs, &root.join("sub/..").to_string_lossy()).is_err());
         assert!(entry_path(&docs, &root.join("missing.pdf").to_string_lossy()).is_err());
+        // 링크 이름을 그 링크가 가리키는 파일 이름으로 바꾸는 것은 대소문자만 바꾸는 것으로 보지 않는다(실제 파일을 덮어쓴다).
+        std::os::unix::fs::symlink(root.join("sub/real.pdf"), root.join("sub/REAL.pdf")).unwrap();
+        assert!(!only_case_changes(&root.join("sub/REAL.pdf"), &root.join("sub/real.pdf")));
+        assert!(!only_case_changes(&root.join("sub/real.pdf"), &root.join("link.pdf")));
         std::fs::remove_dir_all(root).unwrap();
     }
 

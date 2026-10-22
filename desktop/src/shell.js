@@ -924,7 +924,7 @@ function setZoom(value, focusX, focusY) {
   showToolbar();
 }
 
-/** Ctrl+휠: 마우스 아래 자리를 기준으로 키운다. 터치패드 오므리기도 Ctrl+휠로 온다. */
+/** Ctrl+휠: 문서 안에서는 마우스 아래 자리, 셸(상단바·탐색기) 위에서는 문서 가운데를 기준으로 키운다. 터치패드 오므리기도 Ctrl+휠로 온다. */
 function onWheel(e) {
   if (!e.ctrlKey) return;
   e.preventDefault(); // 문서가 없어도 WebView 전체 확대는 막는다.
@@ -1325,10 +1325,15 @@ focusPane(panes[0]);
 showExplorer(loadPref('explorer') ?? true);
 showToolbar();
 appWindow.listen('documents', takeDocuments);
-// 창을 닫을 때: 탭마다 묶어 두던 읽던 위치를 바로 받고, 탭 상태를 미루지 않고 적은 뒤 닫는다.
+// 창을 닫을 때: 탭마다 묶어 두던 읽던 위치를 바로 받고, 탭 상태를 미루지 않고 적는다. 이 처리가 끝나면 Tauri가 창을
+// 없앤다(destroy, 그래서 core:window:allow-destroy 권한을 둔다). 적다가 실패해도 창은 닫히게 오류를 삼킨다.
 appWindow.onCloseRequested(async () => {
-  for (const tab of tabs) viewerOf(tab)?.flushPosition?.();
-  await saveSession(true);
+  try {
+    for (const tab of tabs) viewerOf(tab)?.flushPosition?.();
+    await saveSession(true);
+  } catch (error) {
+    console.warn('닫기 전에 상태를 적지 못함', error);
+  }
 });
 showFolder(await invoke('current_folder'));
 await restoreSession();
