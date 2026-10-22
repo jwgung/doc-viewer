@@ -76,7 +76,7 @@ fn file_name(path: &Path) -> String {
 
 /// 문서에 번호를 붙인다. 이미 연 파일이면 그 번호를 돌려줘 셸이 그 탭으로 간다.
 fn register(app: &AppHandle, path: PathBuf) -> Opened {
-    let path = path.canonicalize().unwrap_or(path);
+    let path = dunce::canonicalize(&path).unwrap_or(path);
     let docs = app.state::<Documents>();
     let mut open = docs.open.lock().unwrap();
     let id = match open.iter().find(|(_, p)| **p == path) {
@@ -112,8 +112,8 @@ fn path_args(args: impl IntoIterator<Item = String>, cwd: &Path) -> Vec<PathBuf>
 
 /// path가 root 아래(또는 root)인가. 둘 다 실제 경로로 바꿔 '..'·바로가기로 벗어나지 못하게 한다.
 fn is_within(root: &Path, path: &Path) -> Option<PathBuf> {
-    let path = path.canonicalize().ok()?;
-    path.starts_with(root.canonicalize().ok()?).then_some(path)
+    let path = dunce::canonicalize(path).ok()?;
+    path.starts_with(dunce::canonicalize(root).ok()?).then_some(path)
 }
 
 /// 폴더 안의 하위 폴더와 확장자가 맞는 파일. 숨김 항목은 빼고, 폴더 먼저 이름순으로 둔다.
@@ -204,7 +204,7 @@ fn close_document(id: u64, docs: State<Documents>) {
 #[tauri::command]
 async fn pick_folder(window: WebviewWindow) -> Option<Folder> {
     let path = window.dialog().file().set_parent(&window).blocking_pick_folder()?.into_path().ok()?;
-    let path = path.canonicalize().unwrap_or(path);
+    let path = dunce::canonicalize(&path).unwrap_or(path);
     let app = window.app_handle();
     write_config(app, FOLDER_FILE, path.to_string_lossy().as_bytes());
     let info = folder_info(&path);
@@ -264,7 +264,7 @@ fn list_folder(path: String, extensions: Vec<String>, docs: State<Documents>) ->
 /// 고른 폴더 아래(폴더 자신은 빼고)의 항목. 이름 바꾸기·지우기·탐색기에서 보기가 고른 폴더 밖을 건드리지 못하게 한다.
 fn entry_path(docs: &Documents, path: &str) -> Result<PathBuf, String> {
     let root = docs.folder.lock().unwrap().clone().ok_or("no folder")?;
-    let root = root.canonicalize().map_err(|e| e.to_string())?;
+    let root = dunce::canonicalize(&root).map_err(|e| e.to_string())?;
     is_within(&root, Path::new(path)).filter(|p| *p != root).ok_or_else(|| "outside folder".into())
 }
 
@@ -294,7 +294,7 @@ fn rename_entry(path: String, name: String, docs: State<Documents>) -> Result<Ch
         return Err("exists".into());
     }
     std::fs::rename(&from, &to).map_err(|e| e.to_string())?;
-    let to = to.canonicalize().unwrap_or(to);
+    let to = dunce::canonicalize(&to).unwrap_or(to);
     let mut open = docs.open.lock().unwrap();
     let mut ids = Vec::new();
     for (id, p) in open.iter_mut().filter(|(_, p)| p.starts_with(&from)) {
@@ -334,8 +334,12 @@ async fn trash_entry(window: WebviewWindow, path: String, title: String, message
 #[tauri::command]
 fn reveal_entry(path: String, docs: State<Documents>) -> Result<(), String> {
     let target = entry_path(&docs, &path)?;
+    // explorer는 인자를 쉼표로 나눠 읽으므로 경로를 따옴표로 감싸 그대로 넘긴다(Windows 파일 이름에는 " 가 들어갈 수 없다).
     #[cfg(windows)]
-    let result = std::process::Command::new("explorer").arg(format!("/select,{}", target.display())).spawn();
+    let result = {
+        use std::os::windows::process::CommandExt;
+        std::process::Command::new("explorer").raw_arg(format!("/select,\"{}\"", target.display())).spawn()
+    };
     #[cfg(not(windows))]
     let result = std::process::Command::new("xdg-open").arg(target.parent().unwrap_or(&target)).spawn();
     result.map(|_| ()).map_err(|e| e.to_string())

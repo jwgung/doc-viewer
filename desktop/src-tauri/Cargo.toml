@@ -20,6 +20,8 @@ zip = { version = "2", default-features = false }
 cfb = "0.15"
 # 탐색기에서 지운 파일은 휴지통으로
 trash = "5"
+# 실제 경로를 Windows 전용 접두(\\?\) 없이 얻는다(경로 복사·explorer 인자에 그대로 쓴다)
+dunce = "1"
 
 [profile.release]
 codegen-units = 1

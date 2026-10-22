@@ -35,7 +35,6 @@ const STRINGS = {
     reveal: '탐색기에서 보기',
     copyPath: '경로 복사',
     trash: '삭제',
-    trashTitle: '삭제',
     trashMessage: (name) => `'${name}'을(를) 휴지통으로 보낼까요?`,
     renameExists: '같은 이름이 이미 있습니다.',
     renameInvalid: '파일 이름으로 쓸 수 없는 이름입니다.',
@@ -75,7 +74,6 @@ const STRINGS = {
     reveal: 'Show in File Explorer',
     copyPath: 'Copy path',
     trash: 'Delete',
-    trashTitle: 'Delete',
     trashMessage: (name) => `Move '${name}' to the Recycle Bin?`,
     renameExists: 'An item with that name already exists.',
     renameInvalid: "That name can't be used for a file.",
@@ -86,6 +84,14 @@ const STRINGS = {
   },
 };
 const t = STRINGS[navigator.language?.slice(0, 2)] ?? STRINGS.en;
+
+// 보기 방식·맞춤의 아이콘과 이름(상단바 단추와 메뉴)
+const VIEW_ICONS = { scroll: 'viewScroll', page: 'viewPage', spread: 'viewSpread' };
+const FIT_ICONS = { width: 'fitWidth', page: 'fitPage' };
+const MODE_LABELS = { scroll: t.viewModeScroll, page: t.viewModePage, spread: t.viewModeSpread };
+const FIT_LABELS = { width: t.fitWidth, page: t.fitPage };
+/** 줄 단위 휠(마우스 설정 '한 번에 여러 줄')을 픽셀로 바꾸는 값. web/src/paged-viewer.js의 WHEEL_LINE_PX와 같다. */
+const WHEEL_LINE_PX = 40;
 
 const { invoke } = window.__TAURI__.core;
 const { getCurrentWebviewWindow } = window.__TAURI__.webviewWindow;
@@ -215,12 +221,26 @@ function createFrame(tab) {
   const frame = document.createElement('iframe');
   frame.title = tab.name;
   frame.hidden = tab !== active;
+  // 문서가 창 전체를 다른 곳으로 옮기거나 새 창을 띄우지 못하게 한다(인쇄 대화상자는 허용).
+  frame.sandbox = 'allow-scripts allow-same-origin allow-modals';
   frame.addEventListener('load', () => {
-    frame.contentWindow?.addEventListener('keydown', onKey);
-    frame.contentWindow?.addEventListener('wheel', onWheel, { passive: false });
+    const win = frame.contentWindow;
+    win?.addEventListener('keydown', onKey);
+    win?.addEventListener('wheel', onWheel, { passive: false });
+    win?.addEventListener('click', blockExternalLink, true);
   });
   frames.appendChild(frame);
   return frame;
+}
+
+/**
+ * 문서 속 링크(docx·pptx 하이퍼링크 등)가 탭을 바깥 웹 페이지로 바꾸지 않게 막는다. 문서 안 이동(#)과 렌더러가 직접 처리하는
+ * 링크(PDF 쪽 이동 등)는 그대로 둔다. 바깥 링크를 브라우저로 여는 기능은 아직 없다.
+ */
+function blockExternalLink(e) {
+  const link = e.target instanceof Element ? e.target.closest('a[href]') : null;
+  if (!link || link.getAttribute('href').startsWith('#')) return;
+  if (new URL(link.href, location.href).origin !== location.origin) e.preventDefault();
 }
 
 /** 탭을 재운다: 렌더러를 버리고 다시 볼 때 쓸 상태만 남긴다. */
@@ -324,7 +344,7 @@ function showToolbar() {
   $('loading-name').textContent = tab.name;
   viewButton.replaceChildren(
     lineIcon(VIEW_ICONS[tab.mode]),
-    Object.assign(document.createElement('span'), { textContent: `${MODE_LABELS()[tab.mode]} · ${FIT_LABELS()[tab.fit]}` }),
+    Object.assign(document.createElement('span'), { textContent: `${MODE_LABELS[tab.mode]} · ${FIT_LABELS[tab.fit]}` }),
     lineIcon('chevronDown'),
   );
   outlineButton.hidden = !tab.hasOutline;
@@ -431,7 +451,7 @@ function onWheel(e) {
   if (!e.ctrlKey) return;
   e.preventDefault(); // 문서가 없어도 WebView 전체 확대는 막는다.
   if (!active) return;
-  const dy = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? e.deltaY * 40 : e.deltaY;
+  const dy = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? e.deltaY * WHEEL_LINE_PX : e.deltaY;
   setZoom(active.zoom * Math.exp(-dy * WHEEL_ZOOM_RATE), e.clientX, e.clientY);
 }
 
@@ -451,9 +471,6 @@ notesButton.addEventListener('click', () => {
   showToolbar();
 });
 // 보기 방식·맞춤: 단추 하나를 누르면 메뉴로 고른다(기본 select는 Windows 목록 상자로 떠서 셸과 어울리지 않는다).
-const VIEW_ICONS = { scroll: 'viewScroll', page: 'viewPage', spread: 'viewSpread' };
-const MODE_LABELS = () => ({ scroll: t.viewModeScroll, page: t.viewModePage, spread: t.viewModeSpread });
-const FIT_LABELS = () => ({ width: t.fitWidth, page: t.fitPage });
 
 function setView(change) {
   Object.assign(active, change);
@@ -468,7 +485,7 @@ viewButton.addEventListener('click', () => {
   const rect = viewButton.getBoundingClientRect();
   showMenu(rect.left, rect.bottom + 4, [
     { heading: t.viewMode },
-    ...Object.entries(MODE_LABELS()).map(([mode, label]) => ({
+    ...Object.entries(MODE_LABELS).map(([mode, label]) => ({
       label,
       icon: VIEW_ICONS[mode],
       checked: active.mode === mode,
@@ -476,9 +493,9 @@ viewButton.addEventListener('click', () => {
     })),
     'separator',
     { heading: t.fit },
-    ...Object.entries(FIT_LABELS()).map(([fit, label]) => ({
+    ...Object.entries(FIT_LABELS).map(([fit, label]) => ({
       label,
-      icon: fit === 'width' ? 'fitWidth' : 'fitPage',
+      icon: FIT_ICONS[fit],
       checked: active.fit === fit,
       run: () => setView({ fit }),
     })),
@@ -619,6 +636,17 @@ function entryActions(item) {
   ].filter(Boolean);
 }
 
+/** 이름을 바꾼 항목(폴더면 그 아래까지)의 '펼쳐 둔 폴더' 기억을 새 경로로 옮긴다. */
+function moveExpanded(from, to) {
+  for (const path of [...expanded]) {
+    if (path === from || path.startsWith(`${from}\\`) || path.startsWith(`${from}/`)) {
+      expanded.delete(path);
+      expanded.add(to + path.slice(from.length));
+    }
+  }
+  savePref('expanded', [...expanded]);
+}
+
 /** 이름 칸을 입력칸으로 바꾼다. Enter·초점 잃음이면 바꾸고 Esc면 그만둔다. 파일은 확장자 앞까지만 고른다. */
 function startRename(item) {
   const { entry } = item;
@@ -642,14 +670,7 @@ function startRename(item) {
     if (!apply || !next || next === entry.name) return;
     try {
       const changed = await invoke('rename_entry', { path: entry.path, name: next });
-      // 펼쳐 둔 폴더 기억도 새 경로로 옮긴다.
-      for (const path of [...expanded]) {
-        if (path === entry.path || path.startsWith(entry.path + '\\') || path.startsWith(entry.path + '/')) {
-          expanded.delete(path);
-          expanded.add(changed.path + path.slice(entry.path.length));
-        }
-      }
-      savePref('expanded', [...expanded]);
+      moveExpanded(entry.path, changed.path);
       if (!entry.dir) {
         for (const tab of tabs.filter((candidate) => changed.ids.includes(candidate.id))) {
           tab.name = next;
@@ -677,7 +698,7 @@ function startRename(item) {
 async function trashEntry(item) {
   const { entry } = item;
   try {
-    const changed = await invoke('trash_entry', { path: entry.path, title: t.trashTitle, message: t.trashMessage(entry.name) });
+    const changed = await invoke('trash_entry', { path: entry.path, title: t.trash, message: t.trashMessage(entry.name) });
     if (!changed) return;
     for (const tab of tabs.filter((candidate) => changed.ids.includes(candidate.id))) closeTab(tab);
     await refreshList(item.parentElement);

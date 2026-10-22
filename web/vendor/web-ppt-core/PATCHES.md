@@ -25,6 +25,7 @@ pnpm --dir spike/renderer-eval install && pnpm --dir spike/renderer-eval build
 ```
 
 Android의 `buildWebViewer` 작업은 `web/vendor/`도 입력으로 보므로 소스가 바뀌면 웹 번들을 다시 만든다(이때도 위 `pnpm install`은 먼저 해 둔다).
+윈도우 앱(`desktop/`)은 `pnpm build:front`가 `web`을 빌드해 그 번들을 담는다.
 
 ## 업스트림 0.4.5 대비 변경
 
@@ -72,7 +73,6 @@ Android의 `buildWebViewer` 작업은 `web/vendor/`도 입력으로 보므로 �
 | pptx의 OLE 개체를 Office 2010+가 `mc:AlternateContent`로 감싸면(Choice에는 spid, Fallback에는 미리보기 `p:pic`) 감싼 것을 찾지 못해 'OLE 개체' 자리 표시만 그렸다. Fallback·Choice의 oleObj에서 미리보기를 찾는다. | `pptx/parser.ts` OLE 분기 |
 | 레이아웃의 `showMasterSp="0"`(마스터 도형 숨김)을 레이아웃 자신의 도형까지 숨기는 것으로 읽어, 제목 슬라이드 레이아웃의 배경 그림·띠·로고가 빠졌다. 슬라이드의 값은 레이아웃·마스터 도형을, 레이아웃의 값은 마스터 도형만 숨긴다. | `pptx/parser.ts` `parseSlide` |
 | EMF 글자(`EXTTEXTOUT`)의 글자 간격(dx)에 `exScale`을 곱했다. `exScale`은 페이지 단위를 0.01mm로 바꾸는 참고값(GM_COMPATIBLE에서 대개 25~30)이고 dx는 이미 논리 단위라, 글자 폭이 수십 배로 늘어 `textLength`로 눌린 검은 덩어리가 됐다(차트·표 미리보기, OLE 개체 이름 등). 곱하지 않는다. 시험 문서의 pptx·xlsx·docx EMF 중 해당 글자가 있는 12개를 전후 비교해 모두 원래 글자로 나옴을 확인. | `image/emf.ts` `extTextOut` |
-
 | GDI 기록 없이 EMF+(GDI+) 주석만 든 EMF(PowerPoint가 비트맵 그림을 EMF로 감싸 붙일 때)를 GDI로만 해석해 빈칸이었다. 이런 파일은 안의 첫 그림 객체(압축 PNG·JPEG·GIF·TIFF 또는 32·24비트 화소)를 꺼내 틀 크기로 그린다. GDI 기록이 함께 있는 이중 파일은 그대로 GDI로 그린다. 실제 보고 문서의 3.9MB·4.7MB EMF 두 개가 나옴을 확인. | `image/emf.ts` `emfPlusOnlyImage`, `emfPlusImageUri` |
 
 ### 글꼴

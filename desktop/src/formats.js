@@ -1,5 +1,5 @@
 // 확장자 → 웹 렌더러 형식(viewer.html?fmt=). Android DocFormat.kt의 key·VARIANTS·PLAIN_TEXT_EXTENSIONS를 옮긴 것이라 함께 고친다.
-// 윈도우에서는 파일 이름의 확장자만 보고 정한다(Android처럼 내용 서명으로 다시 확인하지 않는다).
+// 형식은 Rust가 내용으로 먼저 가리고(src-tauri/src/detect.rs), 내용으로 못 정하면 이 표의 확장자를 쓴다.
 
 const KEYS = ['pdf', 'hwp', 'hwpx', 'doc', 'docx', 'xls', 'xlsx', 'csv', 'ppt', 'pptx', 'md', 'txt', 'json', 'xml', 'toml', 'yaml', 'log'];
 

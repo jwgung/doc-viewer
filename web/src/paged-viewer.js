@@ -31,6 +31,8 @@ const WHEEL_FLIP_PX = 50;
 // 넘긴 뒤 휠이 이만큼(ms) 멈춰야 다시 넘긴다(터치패드 관성으로 여러 쪽이 넘어가지 않게). 마우스 휠 한 칸은 WHEEL_REPEAT_MS 뒤 바로 넘긴다.
 const WHEEL_GAP_MS = 150;
 const WHEEL_REPEAT_MS = 250;
+// 줄 단위 휠(마우스 설정 '한 번에 여러 줄')을 픽셀로 바꾸는 값(윈도우 셸 desktop/src/shell.js의 WHEEL_LINE_PX와 같다)
+const WHEEL_LINE_PX = 40;
 const THUMB_PX = 44;
 // 처음 크기에서 줄일 수 있는 가장 작은 비율(연속 스크롤이면 한 줄에 네 쪽)
 const MIN_SHRINK = 0.25;
@@ -637,7 +639,7 @@ export class PagedViewer {
       (e) => {
         if (this.mode === 'scroll' || e.ctrlKey) return; // Ctrl+휠은 셸의 확대·축소
         if (e.target instanceof Element && e.target.closest(`${UI_SELECTOR}, .search-bar`)) return;
-        const dy = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? e.deltaY * 40 : e.deltaY;
+        const dy = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? e.deltaY * WHEEL_LINE_PX : e.deltaY;
         if (!dy) return;
         const now = performance.now();
         if (now - last > WHEEL_GAP_MS) {

@@ -832,6 +832,7 @@ name = "doc-viewer-desktop"
 version = "0.0.0"
 dependencies = [
  "cfb 0.15.0",
+ "dunce",
  "serde",
  "serde_json",
  "tauri",
