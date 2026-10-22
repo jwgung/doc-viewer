@@ -2,7 +2,7 @@
 
 # Doc Viewer
 
-**Open PDF, Hangul (HWP/HWPX), Word, Excel and PowerPoint files — offline, on Windows, macOS and Linux.**
+A desktop viewer for PDF, HWP, Word, Excel and PowerPoint files. Works offline on Windows, macOS and Linux.
 
 [![Release](https://img.shields.io/github/v/release/jwgung/doc-viewer?label=download&sort=semver)](https://github.com/jwgung/doc-viewer/releases/latest)
 [![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-blue)](#download)
@@ -14,18 +14,18 @@
 
 </div>
 
-Doc Viewer is a lightweight, read-only document viewer. It renders everything inside the app — no cloud conversion, no account, no Office installation. **Your files never leave your computer.**
+Doc Viewer opens documents without Office or Hangul installed. Documents are rendered inside the app and are not uploaded anywhere. There is no account and no data collection.
 
-## Highlights
+Website: https://jwgung.github.io/doc-viewer/
 
-- 📄 **Many formats, one app** — PDF, HWP/HWPX (Hangul), DOC/DOCX, XLS/XLSX/CSV, PPT/PPTX, Markdown, plain text and more.
-- 🗂️ **Folder explorer + tabs** — open a folder, click a file, keep many documents open. Rename, move to trash or reveal files right from the sidebar.
-- 🪟 **Split view (up to 4 panes)** — drag a tab or a file to any edge of a document to split. Resize panes by dragging the dividers.
-- 🔁 **Pick up where you left off** — open tabs, pages, zoom and your split layout come back the next time you start.
-- ⌨️ **Browser-like shortcuts** — <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> reopens closed tabs, duplicate a tab to read two parts of the same document side by side.
-- 🎬 **Media in slides** — videos and audio embedded in PPTX play right on the slide.
-- 🌙 **Light and dark** — follows your system theme.
-- 🔒 **Private by design** — works fully offline; nothing is uploaded anywhere.
+## Features
+
+- **Formats:** PDF, HWP/HWPX, DOC/DOCX, XLS/XLSX/CSV, PPT/PPTX, Markdown and plain text. Files with the wrong extension are detected by content.
+- **Folders and tabs:** open a folder in the sidebar and keep several documents open in tabs. Rename or delete files from the sidebar.
+- **Split view:** drag a tab or a file to the edge of a document to split the window, up to four panes.
+- **Session restore:** open tabs, page, zoom and split layout come back when you restart. <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> reopens a closed tab. A tab can be duplicated to view two parts of one document.
+- **Video in slides:** video and audio embedded in PPTX files play on the slide.
+- **Light and dark theme**, following the system setting.
 
 <div align="center">
 <img src="docs/screenshots/en/split-drag.gif" alt="Dragging a tab and a file to split the window" width="860">
@@ -43,7 +43,7 @@ Get the latest version from **[Releases](https://github.com/jwgung/doc-viewer/re
 | **Linux** (Ubuntu 22.04+ and similar) | `…-linux-amd64.deb` or `…-linux-amd64.AppImage` | For the AppImage, make it executable (`chmod +x`) and run it. |
 
 > [!NOTE]
-> On older Windows 10 without WebView2, the installer downloads it once — that is the only time an internet connection is needed.
+> On older Windows 10 without WebView2, the installer downloads it once. This is the only time an internet connection is needed.
 > The macOS and Linux builds are new; please [open an issue](https://github.com/jwgung/doc-viewer/issues) if something looks wrong.
 
 ## Supported formats
@@ -67,7 +67,7 @@ Files with a wrong or missing extension are recognized by their content. Passwor
 <td width="50%"><img src="docs/screenshots/en/dark.png" alt="Dark theme with a Hangul document"><br><sub>Dark theme with a Hangul (HWP) document</sub></td>
 </tr>
 <tr>
-<td colspan="2"><img src="docs/screenshots/en/slides.jpg" alt="PowerPoint slide in page view"><br><sub>Slides one page at a time — the mouse wheel flips pages</sub></td>
+<td colspan="2"><img src="docs/screenshots/en/slides.jpg" alt="PowerPoint slide in page view"><br><sub>Slides, one page at a time (the mouse wheel flips pages)</sub></td>
 </tr>
 </table>
 
@@ -92,10 +92,10 @@ On macOS, use <kbd>⌘</kbd> instead of <kbd>Ctrl</kbd> for most shortcuts. Swit
 No. Doc Viewer has no server. Files are read from your disk and rendered inside the app.
 
 **Can I edit documents?**
-No — Doc Viewer is a viewer. It is meant to open things quickly and accurately.
+No. It is a viewer only.
 
 **Some layouts look slightly different from Office/Hangul.**
-Rendering is done by open-source engines, so complex documents may differ a little. Fonts embedded in documents are not used yet; your system fonts are used instead. Issues with sample files are very welcome.
+Rendering uses open-source engines, so complex documents may look slightly different. Fonts embedded in documents are not used yet; your system fonts are used instead. Issues with sample files are welcome.
 
 **Is there a mobile version?**
 An Android version lives in a separate repository.
@@ -114,12 +114,12 @@ pnpm tauri build    # build installers for your OS
 
 Project layout:
 
-- `web/` — the document renderer (pdf.js, rhwp, a patched copy of web-ppt, and more), shared with the Android app.
-- `desktop/` — the [Tauri](https://tauri.app) shell: tabs, folder explorer and split view in `desktop/src/`; file access, format detection and the local `doc` scheme in `desktop/src-tauri/`.
+- `web/`: the document renderer (pdf.js, rhwp, a patched copy of web-ppt, and more), shared with the Android app.
+- `desktop/`: the [Tauri](https://tauri.app) shell: tabs, folder explorer and split view in `desktop/src/`; file access, format detection and the local `doc` scheme in `desktop/src-tauri/`.
 - Releases: pushing a `v*` tag builds Windows, macOS and Linux installers and attaches them to a GitHub Release.
 
 ## Acknowledgements
 
-Built on great open-source projects, including [pdf.js](https://github.com/mozilla/pdf.js), [rhwp](https://github.com/edwardkim/rhwp), [web-ppt](https://github.com/unStone/web-ppt) and [Tauri](https://tauri.app). Third-party licenses are bundled with the app; see [NOTICE.md](NOTICE.md).
+Built with open-source projects including [pdf.js](https://github.com/mozilla/pdf.js), [rhwp](https://github.com/edwardkim/rhwp), [web-ppt](https://github.com/unStone/web-ppt) and [Tauri](https://tauri.app). Third-party licenses are bundled with the app; see [NOTICE.md](NOTICE.md).
 
 This product was developed with reference to the HWP document format specification published by Hancom Inc.

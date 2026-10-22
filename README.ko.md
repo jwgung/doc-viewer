@@ -2,7 +2,7 @@
 
 # Doc Viewer
 
-**PDF·한글(HWP/HWPX)·Word·Excel·PowerPoint 문서를 인터넷 없이 여는 데스크톱 뷰어 — Windows·macOS·Linux**
+PDF, 한글, 워드, 엑셀, 파워포인트 문서를 보는 데스크톱 뷰어입니다. 인터넷 없이 Windows, macOS, Linux에서 씁니다.
 
 [![Release](https://img.shields.io/github/v/release/jwgung/doc-viewer?label=%EB%82%B4%EB%A0%A4%EB%B0%9B%EA%B8%B0&sort=semver)](https://github.com/jwgung/doc-viewer/releases/latest)
 [![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-blue)](#내려받기)
@@ -14,18 +14,18 @@
 
 </div>
 
-Doc Viewer는 가볍게 문서를 보기만 하는 뷰어입니다. 클라우드 변환도, 계정도, 오피스 설치도 필요 없이 앱 안에서 직접 그립니다. **문서는 컴퓨터 밖으로 나가지 않습니다.**
+오피스나 한글이 설치돼 있지 않아도 문서를 열 수 있습니다. 문서는 앱 안에서 그리고, 어디에도 올리지 않습니다. 계정이 없고 사용 기록도 모으지 않습니다.
 
-## 이런 걸 할 수 있어요
+사이트: https://jwgung.github.io/doc-viewer/ko/
 
-- 📄 **여러 형식을 앱 하나로** — PDF, 한글(HWP/HWPX), DOC/DOCX, XLS/XLSX/CSV, PPT/PPTX, 마크다운, 텍스트 등.
-- 🗂️ **폴더 탐색기 + 탭** — 폴더를 열고 파일을 누르면 탭으로 열립니다. 사이드바에서 이름 바꾸기·휴지통·위치 열기도 됩니다.
-- 🪟 **화면 나누기(최대 4칸)** — 탭이나 파일을 문서의 위·아래·왼쪽·오른쪽 가장자리로 끌어 놓으면 나뉩니다. 칸 사이 경계선을 끌어 크기를 바꿉니다.
-- 🔁 **보던 그대로 다시** — 다시 켜면 열려 있던 탭·보던 쪽·확대·나눈 화면이 그대로 돌아옵니다.
-- ⌨️ **브라우저처럼** — <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd>로 닫은 탭 다시 열기, 탭 복제로 같은 문서의 다른 쪽을 나란히 보기.
-- 🎬 **슬라이드 속 동영상** — PPTX에 들어 있는 동영상·소리를 슬라이드 위에서 바로 재생합니다.
-- 🌙 **밝은 화면·어두운 화면** — 시스템 설정을 따라갑니다.
-- 🔒 **안심** — 인터넷 없이 동작하고 어디에도 올리지 않습니다.
+## 기능
+
+- **문서 형식:** PDF, 한글(HWP/HWPX), DOC/DOCX, XLS/XLSX/CSV, PPT/PPTX, 마크다운, 텍스트. 확장자가 틀려도 내용으로 형식을 알아봅니다.
+- **폴더와 탭:** 사이드바에서 폴더를 열고 여러 문서를 탭으로 띄웁니다. 이름 바꾸기와 삭제도 사이드바에서 합니다.
+- **화면 나누기:** 탭이나 파일을 문서 가장자리로 끌어 놓으면 화면이 나뉩니다(최대 4칸).
+- **이어 보기:** 다시 켜면 열려 있던 탭, 보던 쪽, 확대, 나눈 화면이 그대로 열립니다. 닫은 탭은 <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd>로 다시 엽니다. 탭을 복제해 한 문서의 두 곳을 나란히 볼 수 있습니다.
+- **슬라이드 동영상:** PPTX에 들어 있는 동영상과 소리를 슬라이드에서 재생합니다.
+- **밝은 화면과 어두운 화면:** 시스템 설정을 따릅니다.
 
 <div align="center">
 <img src="docs/screenshots/ko/split-drag.gif" alt="탭과 파일을 끌어 화면을 나누는 모습" width="860">
@@ -67,7 +67,7 @@ Doc Viewer는 가볍게 문서를 보기만 하는 뷰어입니다. 클라우드
 <td width="50%"><img src="docs/screenshots/ko/dark.png" alt="어두운 화면에서 한글 문서"><br><sub>어두운 화면과 한글(HWP) 문서</sub></td>
 </tr>
 <tr>
-<td colspan="2"><img src="docs/screenshots/ko/slides.jpg" alt="한 쪽씩 보는 슬라이드"><br><sub>슬라이드를 한 쪽씩 — 마우스 휠로 넘깁니다</sub></td>
+<td colspan="2"><img src="docs/screenshots/ko/slides.jpg" alt="한 쪽씩 보는 슬라이드"><br><sub>슬라이드를 한 쪽씩 보기(마우스 휠로 넘김)</sub></td>
 </tr>
 </table>
 
@@ -92,10 +92,10 @@ macOS에서는 대부분의 단축키에 <kbd>Ctrl</kbd> 대신 <kbd>⌘</kbd>�
 아니요. 서버가 없습니다. 내 디스크의 파일을 읽어 앱 안에서 그립니다.
 
 **편집도 되나요?**
-아니요. 빠르고 정확하게 여는 데 집중한 뷰어입니다.
+아니요. 보기만 할 수 있습니다.
 
 **오피스·한글에서 보던 것과 조금 달라요.**
-오픈소스 엔진으로 그리기 때문에 복잡한 문서는 조금 다를 수 있습니다. 문서에 들어 있는 글꼴은 아직 쓰지 않고 시스템 글꼴로 보여 줍니다. 예시 파일과 함께 이슈를 남겨 주시면 큰 도움이 됩니다.
+오픈소스 엔진으로 그리기 때문에 복잡한 문서는 조금 다를 수 있습니다. 문서에 들어 있는 글꼴은 아직 쓰지 않고 시스템 글꼴로 보여 줍니다. 예시 파일과 함께 이슈를 남겨 주세요.
 
 **모바일 판도 있나요?**
 Android 판은 별도 레포에서 만들고 있습니다.
@@ -114,12 +114,12 @@ pnpm tauri build    # 지금 운영체제용 설치 파일
 
 구조:
 
-- `web/` — 문서 렌더러(pdf.js, rhwp, web-ppt 수정 사본 등). Android 앱과 같은 코드입니다.
-- `desktop/` — [Tauri](https://tauri.app) 셸. 탭·폴더 탐색기·화면 나누기는 `desktop/src/`, 파일 읽기·형식 판별·문서 내주기(`doc` 스킴)는 `desktop/src-tauri/`.
+- `web/`: 문서 렌더러(pdf.js, rhwp, web-ppt 수정 사본 등). Android 앱과 같은 코드입니다.
+- `desktop/`: [Tauri](https://tauri.app) 셸. 탭·폴더 탐색기·화면 나누기는 `desktop/src/`, 파일 읽기·형식 판별·문서 내주기(`doc` 스킴)는 `desktop/src-tauri/`.
 - 배포: `v*` 태그를 올리면 Windows·macOS·Linux 설치 파일을 만들어 GitHub Release에 붙입니다.
 
-## 고마운 프로젝트
+## 사용한 오픈소스
 
-[pdf.js](https://github.com/mozilla/pdf.js), [rhwp](https://github.com/edwardkim/rhwp), [web-ppt](https://github.com/unStone/web-ppt), [Tauri](https://tauri.app) 등 훌륭한 오픈소스 위에 만들었습니다. 오픈소스 라이선스는 앱에 함께 들어 있습니다. [NOTICE.md](NOTICE.md)를 보세요.
+[pdf.js](https://github.com/mozilla/pdf.js), [rhwp](https://github.com/edwardkim/rhwp), [web-ppt](https://github.com/unStone/web-ppt), [Tauri](https://tauri.app) 등을 사용했습니다. 오픈소스 라이선스는 앱에 함께 들어 있습니다. [NOTICE.md](NOTICE.md)를 보세요.
 
 본 제품은 한글과컴퓨터의 한/글 문서 파일(.hwp) 공개 문서를 참고하여 개발하였습니다.
