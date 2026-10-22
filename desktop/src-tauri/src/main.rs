@@ -261,9 +261,9 @@ fn list_folder(path: String, extensions: Vec<String>, docs: State<Documents>) ->
     list_entries(&dir, &extensions).map_err(|e| e.to_string())
 }
 
-/// 고른 폴더 아래(폴더 자신은 빼고)의 항목. 이름 바꾸기·지우기·탐색기에서 보기가 고른 폴더 밖을 건드리지 못하게 한다.
-/// 이름 바꾸기·지우기 대상. 부모 폴더만 실제 경로로 풀고 이름은 그대로 붙인다: 바로가기(심볼릭 링크·정션)를 고르면
-/// 링크가 가리키는 파일이 아니라 링크 자체를 바꾸거나 지운다.
+/// 이름 바꾸기·지우기·탐색기에서 보기의 대상. 부모 폴더가 고른 폴더 아래여야 한다(폴더 자신과 밖은 거부).
+/// 부모 폴더만 실제 경로로 풀고 이름은 그대로 붙인다: 바로가기(심볼릭 링크·정션)를 고르면 링크가 가리키는 파일이 아니라
+/// 링크 자체를 바꾸거나 지운다.
 fn entry_path(docs: &Documents, path: &str) -> Result<PathBuf, String> {
     let root = docs.folder.lock().unwrap().clone().ok_or("no folder")?;
     let root = dunce::canonicalize(&root).map_err(|e| e.to_string())?;

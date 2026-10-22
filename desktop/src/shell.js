@@ -844,10 +844,15 @@ resizer.addEventListener('dblclick', () => {
 showExplorer(loadPref('explorer') ?? true);
 showToolbar();
 appWindow.listen('documents', takeDocuments);
-// 창을 닫을 때: 탭마다 묶어 두던 읽던 위치를 바로 받고, 탭 상태를 미루지 않고 적은 뒤 닫는다.
+// 창을 닫을 때: 탭마다 묶어 두던 읽던 위치를 바로 받고, 탭 상태를 미루지 않고 적는다. 이 처리가 끝나면 Tauri가 창을
+// 없앤다(destroy, 그래서 core:window:allow-destroy 권한을 둔다). 적다가 실패해도 창은 닫히게 오류를 삼킨다.
 appWindow.onCloseRequested(async () => {
-  for (const tab of tabs) viewerOf(tab)?.flushPosition?.();
-  await saveSession(true);
+  try {
+    for (const tab of tabs) viewerOf(tab)?.flushPosition?.();
+    await saveSession(true);
+  } catch (error) {
+    console.warn('닫기 전에 상태를 적지 못함', error);
+  }
 });
 showFolder(await invoke('current_folder'));
 await restoreSession();
