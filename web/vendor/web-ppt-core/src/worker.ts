@@ -33,8 +33,10 @@ self.onmessage = (e: MessageEvent<WorkerRequest>) => {
     const { presentation, assets } = parsePptxDeferred(view);
 
     // dispose 是函数，无法结构化克隆，剥掉
-    const { dispose, ...plain } = presentation;
+    // [doc-viewer] mediaUrl도 함수라 뗀다(Worker 해석에서는 包内媒体를 재생할 수 없다: 앱은 메인 스레드에서 해석한다)
+    const { dispose, mediaUrl, ...plain } = presentation;
     void dispose;
+    void mediaUrl;
 
     const buffers = assets.map((a) => {
       // 复制一份出来才能作为 transferable，避免动到原 zip 内存

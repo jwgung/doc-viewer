@@ -30,7 +30,7 @@ Android의 `buildWebViewer` 작업은 `web/vendor/`도 입력으로 보므로 �
 ## 업스트림 0.4.5 대비 변경
 
 전체 차이는 [upstream-0.4.5.diff](upstream-0.4.5.diff)에 있다(업스트림 저장소 루트에서 `git apply upstream-0.4.5.diff`).
-고친 곳은 대부분 .ppt(PowerPoint 97~2003) 경로인 `src/ppt/`이고, pptx 경로는 XML 파서(열기 속도)·발표자 노트·레이아웃 도형·OLE 미리보기·TIFF 그림을 고쳤다. 코드에는 `[doc-viewer]` 표시를 달았다.
+고친 곳은 대부분 .ppt(PowerPoint 97~2003) 경로인 `src/ppt/`이고, pptx 경로는 XML 파서(열기 속도)·발표자 노트·레이아웃 도형·OLE 미리보기·TIFF 그림·동영상·소리를 고쳤다. 코드에는 `[doc-viewer]` 표시를 달았다.
 
 ### 글자 누락
 
@@ -107,6 +107,14 @@ Android의 `buildWebViewer` 작업은 `web/vendor/`도 입력으로 보므로 �
 | 원인 | 고친 곳 |
 |---|---|
 | pptx 메모 페이지의 글을 모두 이어 붙여, 쪽 번호·머리글·바닥글·날짜 자리표시자 글자(쪽 번호 '1' 등)가 메모 끝에 붙었다. 이 자리표시자 도형은 빼고 메모 글만 남긴다. | `pptx/parser.ts` `notesText` |
+
+### 동영상·소리
+
+| 원인 | 고친 곳 |
+|---|---|
+| pptx를 열 때 슬라이드의 동영상·소리마다 blob URL을 만들었다. 동영상은 수십 MB일 수 있는데 재생하지 않아도 사본이 생긴다. 해석할 때는 패키지 안 경로(`MediaInfo.path`)와 MIME만 두고, 재생할 때 `Presentation.mediaUrl(media)`로 blob URL을 만든다(같은 매체는 캐시). 외부 링크는 원래 주소를 돌려준다. | `types.ts` `MediaInfo.path`·`Presentation.mediaUrl`, `pptx/parser.ts` `parseMedia`·`buildPresentation` |
+| 재생 표시(`mediaBadge`)는 그림만 그려 앱이 그 자리에 재생기를 얹을 수 없었다. 표시 묶음에 매체 정보(`data-media`, JSON: kind·path·mime·src·external)와 요소 전체 크기의 투명 사각형을 넣어, 앱이 그려진 화면 위치를 재서 재생 단추·`<video>`/`<audio>`를 얹는다(앱 `web/src/media-player.js`). 업스트림의 `media: 'player'`(foreignObject 재생기)는 `media.src`가 있을 때만 쓰므로 패키지 안 매체에는 더 이상 쓰이지 않는다(앱은 쓰지 않는다). | `render/svg.ts` `mediaBadge` |
+| `Presentation`에 함수 `mediaUrl`이 생겨 Worker 해석(`parseInWorker`)이 결과를 보낼 때 구조화 복제에 실패한다. `dispose`처럼 떼어 낸다. Worker로 해석하면 패키지 안 매체는 재생할 수 없다(앱은 메인 스레드에서 해석한다). | `worker.ts` |
 
 ### 패키지 진입점
 

@@ -2608,7 +2608,17 @@ diff -ruN a/packages/core/src/pptx/parser.ts b/packages/core/src/pptx/parser.ts
      if (this.assetMode === 'defer') {
        let token = this.deferredIndex.get(key);
        if (token === undefined) {
-@@ -966,8 +972,12 @@
+@@ -684,7 +690,8 @@
+   if (isExternalTarget(rel.target)) return { kind, src: rel.target, external: true };
+   const ext = rel.target.slice(rel.target.lastIndexOf('.') + 1).toLowerCase();
+   const mime = MEDIA_MIME[ext] ?? (kind === 'audio' ? 'audio/mpeg' : 'video/mp4');
+-  return { kind, src: env.pkg.blobUrl(rel.target, mime), mime };
++  // [doc-viewer] 동영상은 수십 MB일 수 있어 해석할 때 blob을 만들지 않고 경로만 둔다(재생할 때 mediaUrl로 만든다).
++  return env.pkg.files[rel.target] ? { kind, src: null, path: rel.target, mime } : { kind, src: null };
+ }
+ 
+ function parsePic(pic: Element, env: Env): ImageElement | UnsupportedElement | null {
+@@ -966,8 +973,12 @@
    // graphicData 的 URI 是 .../presentationml/2006/ole，不含 oleObject —— 原先的
    // includes('oleObject') 从来没匹配上，OLE 一直落到「不支持的对象」分支
    if (uri.endsWith('/ole') || uri.includes('oleObject')) {
@@ -2623,7 +2633,7 @@ diff -ruN a/packages/core/src/pptx/parser.ts b/packages/core/src/pptx/parser.ts
        // Office 2010+ 把预览图直接写成 p:oleObj 的 p:pic 子元素，
        // 走它能连裁剪 / 效果一起拿到；旧式的 VML 快照是后备路径
        const pic = kid(oleObj, 'pic');
-@@ -978,6 +988,8 @@
+@@ -978,6 +989,8 @@
            return { ...img, ...base(xf), name: name ?? img.name, id: frameId };
          }
        }
@@ -2632,7 +2642,7 @@ diff -ruN a/packages/core/src/pptx/parser.ts b/packages/core/src/pptx/parser.ts
        const src = olePreview(oleObj, env);
        if (src) return { kind: 'image', ...base(xf), src, crop: null, name, id: frameId };
      }
-@@ -1286,6 +1298,19 @@
+@@ -1286,6 +1299,19 @@
    return out.join('').replace(/\n+/g, '\n').trim();
  }
  
@@ -2652,7 +2662,15 @@ diff -ruN a/packages/core/src/pptx/parser.ts b/packages/core/src/pptx/parser.ts
  // ---------------- 批注 ----------------
  
  interface AuthorInfo {
-@@ -1578,9 +1603,10 @@
+@@ -1501,6 +1527,7 @@
+   return {
+     width, height, slides, source: 'pptx',
+     dispose: () => pkg.dispose(),
++    mediaUrl: (media: MediaInfo) => (media.path && media.mime ? pkg.blobUrl(media.path, media.mime) : media.src),
+     embeddedFonts: parseEmbeddedFonts(pkg, presRoot, presRels),
+     sections: sections.length ? sections : undefined,
+   };
+@@ -1578,9 +1605,10 @@
    });
  
    const elements: SlideElement[] = [];
@@ -2666,7 +2684,7 @@ diff -ruN a/packages/core/src/pptx/parser.ts b/packages/core/src/pptx/parser.ts
      elements.push(...parseShapeTree(layoutTree, envFor(layoutPath, false), true));
    }
    elements.push(...parseShapeTree(slideTree, envFor(slidePath, true), false));
-@@ -1612,7 +1638,7 @@
+@@ -1612,7 +1640,7 @@
    const slideH = emu(numAttr(sz, 'cy') ?? 6858000);
  
    const notesPath = relByType(slideRels, '/notesSlide');
@@ -2675,7 +2693,7 @@ diff -ruN a/packages/core/src/pptx/parser.ts b/packages/core/src/pptx/parser.ts
    const comments = parseSlideComments(pkg, slideRels, authors);
  
    return {
-@@ -1626,3 +1652,41 @@
+@@ -1626,3 +1654,41 @@
      animations: parseTiming(kid(slideRoot, 'timing'), slideW, slideH),
    };
  }
@@ -2761,7 +2779,21 @@ diff -ruN a/packages/core/src/render/svg.ts b/packages/core/src/render/svg.ts
    return wrapEl(el, inner, ctx);
  }
  
-@@ -568,7 +571,9 @@
+@@ -505,8 +508,11 @@
+   }
+ 
+   const label = media.kind === 'audio' ? '音频' : '视频';
+-  const note = media.src ? (media.external ? `${label}（外链）` : label) : `${label}（源不可用）`;
+-  return `<g aria-hidden="true" pointer-events="none"><title>${esc(note)}</title>${ring}${glyph}</g>`;
++  const note = media.src || media.path ? (media.external ? `${label}（外链）` : label) : `${label}（源不可用）`;
++  // [doc-viewer] 앱이 이 자리에 재생기를 얹도록 매체 정보와 요소 전체 크기의 투명 사각형을 둔다(그려진 화면 위치를 재려고).
++  const info = esc(JSON.stringify({ kind: media.kind, path: media.path, mime: media.mime, src: media.src, external: media.external }));
++  const area = `<rect width="${r(el.w)}" height="${r(el.h)}" fill="none"/>`;
++  return `<g aria-hidden="true" pointer-events="none" data-media="${info}">${area}<title>${esc(note)}</title>${ring}${glyph}</g>`;
+ }
+ 
+ /** 真实播放器：<video> 用封面帧做 poster，<audio> 贴底显示以免盖住封面 */
+@@ -568,7 +574,9 @@
  
  function renderGroup(el: GroupElement, ctx: Ctx): string {
    const childXf = `scale(${r(el.scaleX || 1)} ${r(el.scaleY || 1)}) translate(${r(-el.childX)} ${r(-el.childY)})`;
@@ -2772,7 +2804,7 @@ diff -ruN a/packages/core/src/render/svg.ts b/packages/core/src/render/svg.ts
    return wrapEl(el, `<g transform="${flipTransform(el)} ${childXf}">${children}</g>`, ctx);
  }
  
-@@ -666,7 +671,8 @@
+@@ -666,7 +674,8 @@
  
  const ANCHOR_CSS: Record<TextBody['anchor'], string> = { top: 'flex-start', middle: 'center', bottom: 'flex-end' };
  
@@ -2782,7 +2814,7 @@ diff -ruN a/packages/core/src/render/svg.ts b/packages/core/src/render/svg.ts
  
  /**
   * 字体栈：文件指定的字体在前，通用中文回退在后。
-@@ -704,7 +710,7 @@
+@@ -704,7 +713,7 @@
      if (run.underlineColor) css += `text-decoration-color:${run.underlineColor};`;
    }
    if (run.fonts.length) css += `font-family:${stack(run.fonts, FONT_FALLBACK)};`;
@@ -2791,7 +2823,7 @@ diff -ruN a/packages/core/src/render/svg.ts b/packages/core/src/render/svg.ts
    if (run.caps === 'all') css += 'text-transform:uppercase;';
    else if (run.caps === 'small') css += 'font-variant:small-caps;';
    if (run.highlight) css += `background-color:${run.highlight};`;
-@@ -764,6 +770,17 @@
+@@ -764,6 +773,17 @@
    wordArtVert: 'writing-mode:vertical-rl;text-orientation:upright;',
  };
  
@@ -2842,6 +2874,48 @@ diff -ruN a/packages/core/src/render/text-svg.ts b/packages/core/src/render/text
    const deco: string[] = [];
    if (run.u) deco.push('underline');
    if (run.strike) deco.push('line-through');
+diff -ruN a/packages/core/src/types.ts b/packages/core/src/types.ts
+--- a/packages/core/src/types.ts
++++ b/packages/core/src/types.ts
+@@ -17,6 +17,11 @@
+    * 调用后依赖这些 URL 的已渲染 SVG 将无法显示图片。
+    */
+   dispose?: () => void;
++  /**
++   * [doc-viewer] 包内媒体（MediaInfo.path）的播放地址。媒体可能有几十 MB，解析时不建 blob，播放时才建。
++   * 外链返回原始 URL，取不到时为 null。
++   */
++  mediaUrl?: (media: MediaInfo) => string | null;
+   /** 节（p14:sectionLst），供缩略图分组 */
+   sections?: Section[];
+ }
+@@ -231,8 +236,10 @@
+ /** 媒体对象（音频 / 视频）：封面帧走 ImageElement.src，本字段记录可播放的源 */
+ export interface MediaInfo {
+   kind: 'audio' | 'video';
+-  /** 媒体地址：包内资源为 blob URL，外链为原始 URL；解析不到时为 null */
++  /** 媒体地址：外链为原始 URL；包内资源为 null（[doc-viewer] 播放时用 Presentation.mediaUrl 取），解析不到时也为 null */
+   src: string | null;
++  /** [doc-viewer] 包内媒体的路径（ppt/media/…），交给 Presentation.mediaUrl */
++  path?: string;
+   /** 来自 r:link 的外部链接 */
+   external?: boolean;
+   /** 媒体 MIME，便于将来交给 <video>/<audio> */
+diff -ruN a/packages/core/src/worker.ts b/packages/core/src/worker.ts
+--- a/packages/core/src/worker.ts
++++ b/packages/core/src/worker.ts
+@@ -33,8 +33,10 @@
+     const { presentation, assets } = parsePptxDeferred(view);
+ 
+     // dispose 是函数，无法结构化克隆，剥掉
+-    const { dispose, ...plain } = presentation;
++    // [doc-viewer] mediaUrl도 함수라 뗀다(Worker 해석에서는 包内媒体를 재생할 수 없다: 앱은 메인 스레드에서 해석한다)
++    const { dispose, mediaUrl, ...plain } = presentation;
+     void dispose;
++    void mediaUrl;
+ 
+     const buffers = assets.map((a) => {
+       // 复制一份出来才能作为 transferable，避免动到原 zip 内存
 diff -ruN a/packages/core/src/xml-lite.ts b/packages/core/src/xml-lite.ts
 --- a/packages/core/src/xml-lite.ts
 +++ b/packages/core/src/xml-lite.ts

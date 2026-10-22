@@ -508,8 +508,11 @@ function mediaBadge(el: ImageElement, media: MediaInfo): string {
   }
 
   const label = media.kind === 'audio' ? '音频' : '视频';
-  const note = media.src ? (media.external ? `${label}（外链）` : label) : `${label}（源不可用）`;
-  return `<g aria-hidden="true" pointer-events="none"><title>${esc(note)}</title>${ring}${glyph}</g>`;
+  const note = media.src || media.path ? (media.external ? `${label}（外链）` : label) : `${label}（源不可用）`;
+  // [doc-viewer] 앱이 이 자리에 재생기를 얹도록 매체 정보와 요소 전체 크기의 투명 사각형을 둔다(그려진 화면 위치를 재려고).
+  const info = esc(JSON.stringify({ kind: media.kind, path: media.path, mime: media.mime, src: media.src, external: media.external }));
+  const area = `<rect width="${r(el.w)}" height="${r(el.h)}" fill="none"/>`;
+  return `<g aria-hidden="true" pointer-events="none" data-media="${info}">${area}<title>${esc(note)}</title>${ring}${glyph}</g>`;
 }
 
 /** 真实播放器：<video> 用封面帧做 poster，<audio> 贴底显示以免盖住封面 */
