@@ -27,6 +27,8 @@ const STRINGS = {
     zoomReset: '원래 크기 (Ctrl+0)',
     closeTab: '닫기 (Ctrl+W)',
     closeOthers: '다른 탭 닫기',
+    reopenClosed: '닫은 탭 다시 열기',
+    reopenFailed: '닫은 탭을 다시 열지 못했습니다(파일이 옮겨졌거나 지워졌습니다)',
     splitRight: '오른쪽으로 나누기',
     splitDown: '아래로 나누기',
     emptyHint: '왼쪽에서 폴더를 열어 문서를 고르거나, 문서를 여기에 끌어다 놓으세요.',
@@ -69,6 +71,8 @@ const STRINGS = {
     zoomReset: 'Actual size (Ctrl+0)',
     closeTab: 'Close (Ctrl+W)',
     closeOthers: 'Close other tabs',
+    reopenClosed: 'Reopen closed tab',
+    reopenFailed: 'Could not reopen the closed tab (the file was moved or deleted)',
     splitRight: 'Split right',
     splitDown: 'Split down',
     emptyHint: 'Open a folder on the left and pick a document, or drop documents here.',
@@ -215,11 +219,16 @@ function findLeaf(pane, node = layout, parent = null) {
  * 아니면 그 칸 자리를 새 가지로 바꾼다(한쪽을 위아래로 나누기). target이 가졌던 몫을 반씩 나눈다.
  */
 function splitPane(target, side) {
+  return splitNode(findLeaf(target).node, side);
+}
+
+/** 나무의 node(칸 또는 가지) 자리를 side 쪽으로 나눠 새 칸을 만든다(splitPane, 닫은 칸 되살리기). */
+function splitNode(node, side) {
   const dir = side === 'left' || side === 'right' ? 'row' : 'column';
   const after = side === 'right' || side === 'bottom';
   const pane = createPane();
   const leaf = { pane };
-  const { node, parent } = findLeaf(target);
+  const parent = findParent(node);
   if (parent?.dir === dir) {
     const index = parent.children.indexOf(node);
     const half = parent.sizes[index] / 2;
@@ -227,12 +236,35 @@ function splitPane(target, side) {
     parent.children.splice(index + (after ? 1 : 0), 0, leaf);
     parent.sizes.splice(index + (after ? 1 : 0), 0, half);
   } else {
-    const branch = { dir, children: after ? [{ pane: target }, leaf] : [leaf, { pane: target }], sizes: [0.5, 0.5] };
+    const branch = { dir, children: after ? [node, leaf] : [leaf, node], sizes: [0.5, 0.5] };
     if (parent) parent.children[parent.children.indexOf(node)] = branch;
     else layout = branch;
   }
   applyLayout();
   return pane;
+}
+
+/** node가 아직 나무 안에 있는지(닫은 칸을 되살릴 기준 자리가 그 뒤 합쳐져 사라졌을 수 있다) */
+const inLayout = (node) => node === layout || findParent(node) !== null;
+
+/**
+ * 닫은 칸을 되살릴 기준 자리를 나무에 다시 둔다. 같은 방향 바깥 가지에 펼쳐져 사라진 가지면, 그 자식들이 아직 그대로
+ * 이어 있을 때 다시 하나로 묶는다(예: 위 칸을 닫아 row[C, D]가 바깥 row에 펼쳐진 뒤 위 칸을 되살릴 때). 못 두면 false.
+ */
+function reviveAnchor(anchor) {
+  if (inLayout(anchor)) return true;
+  const spread = anchor.spread;
+  if (!spread || !inLayout(spread.into)) return false;
+  const { into, children } = spread;
+  const start = into.children.indexOf(children[0]);
+  if (start < 0 || children.some((child, i) => into.children[start + i] !== child)) return false;
+  const sizes = into.sizes.slice(start, start + children.length);
+  const share = sizes.reduce((sum, size) => sum + size, 0);
+  Object.assign(anchor, { children, sizes: sizes.map((size) => size / share) });
+  delete anchor.spread;
+  into.children.splice(start, children.length, anchor);
+  into.sizes.splice(start, children.length, share);
+  return true;
 }
 
 /**
@@ -250,6 +282,9 @@ function removePane(pane) {
   parent.sizes.splice(index, 1);
   const heir = Math.max(0, index - 1);
   parent.sizes[heir] += share;
+  // 닫은 탭을 다시 열 때(Ctrl+Shift+T) 이 칸을 같은 자리에 되살리도록, 몫을 받은 형제와 그 형제에서 본 방향을 남긴다.
+  const before = index > heir;
+  pane.gone = { anchor: parent.children[heir], side: parent.dir === 'row' ? (before ? 'right' : 'left') : before ? 'bottom' : 'top' };
   const firstPane = (tree) => (tree.pane ? tree.pane : firstPane(tree.children[0]));
   const next = firstPane(parent.children[heir]);
   if (parent.children.length === 1) replaceNode(parent, parent.children[0]);
@@ -267,6 +302,8 @@ function replaceNode(old, replacement) {
   const index = grand.children.indexOf(old);
   if (replacement.dir && replacement.dir === grand.dir) {
     const share = grand.sizes[index];
+    // 펼쳐진 가지가 닫은 칸을 되살릴 기준 자리일 수 있어, 어디로 펼쳐졌는지 남긴다(reviveAnchor가 다시 묶는다).
+    replacement.spread = { into: grand, children: [...replacement.children] };
     grand.children.splice(index, 1, ...replacement.children);
     grand.sizes.splice(index, 1, ...replacement.sizes.map((size) => size * share));
   } else grand.children[index] = replacement;
@@ -422,11 +459,14 @@ function restoreLayout(saved, made = new Map(), depth = 0) {
  */
 function openTab(opened, view = null, select = true, pane = focused) {
   const existing = tabs.find((tab) => tab.id === opened.id);
-  if (existing) return select && activate(existing);
+  if (existing) {
+    if (select) activate(existing);
+    return existing;
+  }
   // 내용으로 가린 형식이 확장자보다 앞서고, 확장자로도 모르는 글자 파일은 첫 글자로 가린 형식을 쓴다.
   const fmt = opened.contentFmt ?? formatOf(opened.name) ?? opened.textFmt;
   if (!fmt) {
-    invoke('close_document', { id: opened.id });
+    invoke('close_document', { id: opened.id, remember: false }); // 열지 못한 문서는 다시 열기 목록에 두지 않는다
     toast(t.unsupported);
     return;
   }
@@ -485,6 +525,7 @@ function openTab(opened, view = null, select = true, pane = focused) {
   tabs.push(tab);
   if (select) activate(tab);
   else saveSession();
+  return tab;
 }
 
 function createFrame(tab) {
@@ -596,12 +637,57 @@ function closeTab(tab) {
     document.body.classList.remove('dragging-tab');
     dropMark.hidden = true;
   }
+  rememberClosed(tab, index);
   tabs.splice(tabs.indexOf(tab), 1);
   tab.frame.remove();
   tab.button.remove();
   invoke('close_document', { id: tab.id });
   afterLeave(pane, index);
   saveSession();
+}
+
+// ---- 닫은 탭 다시 열기(Ctrl+Shift+T): 브라우저처럼 가장 최근에 닫은 탭부터, 닫을 때의 칸·탭 줄 자리·보던 상태로 연다.
+// 그 칸이 마지막 탭과 함께 사라졌으면 몫을 받았던 옆자리를 같은 방향으로 다시 나눈다(최대 4칸, 못 나누면 초점 칸).
+// 파일은 Rust가 닫은 탭 번호로 기억한다(CLOSED_KEEP과 같은 개수).
+
+const CLOSED_KEEP = 20;
+const closedTabs = [];
+
+function rememberClosed(tab, index) {
+  viewerOf(tab)?.flushPosition?.(); // 모아 두던 읽던 위치를 바로 받는다
+  closedTabs.push({ id: tab.id, pane: tab.pane, index, view: viewState(tab) });
+  if (closedTabs.length > CLOSED_KEEP) closedTabs.shift();
+}
+
+/** 닫힌 칸이 다시 만들어졌으면 그 칸으로 이어 간다(같은 칸에서 닫은 탭 여럿을 한 칸에 되살리게). */
+function livePane(pane) {
+  while (pane.reborn) pane = pane.reborn;
+  return pane;
+}
+
+async function reopenClosedTab() {
+  const entry = closedTabs.pop();
+  if (!entry) return;
+  let opened;
+  try {
+    opened = await invoke('reopen_document', { id: entry.id });
+  } catch {
+    toast(t.reopenFailed);
+    return;
+  }
+  // 그 사이 같은 파일을 다시 열어 두었으면 그 탭을 보이기만 한다(새 칸을 만들면 빈 칸이 남는다).
+  const already = tabs.find((tab) => tab.id === opened.id);
+  if (already) return activate(already);
+  let pane = livePane(entry.pane);
+  if (!panes.includes(pane)) {
+    const gone = pane.gone;
+    if (gone && panes.length < MAX_PANES && reviveAnchor(gone.anchor)) {
+      pane.reborn = splitNode(gone.anchor, gone.side);
+      pane = pane.reborn;
+    } else pane = focused;
+  }
+  const tab = openTab(opened, entry.view, true, pane);
+  if (tab && tab.pane === pane) moveTab(tab, pane, entry.index);
 }
 
 /**
@@ -653,6 +739,7 @@ function tabActions(tab) {
       : []),
     { label: t.closeTab.replace(/ \(.*\)$/, ''), hint: 'Ctrl+W', run: () => closeTab(tab) },
     { label: t.closeOthers, run: () => tabsOf(tab.pane).filter((other) => other !== tab).forEach(closeTab) },
+    ...(closedTabs.length ? [{ label: t.reopenClosed, hint: 'Ctrl+Shift+T', run: reopenClosedTab }] : []),
   ];
 }
 
@@ -692,17 +779,20 @@ function moveTabDrag(e) {
   showDropMark(drag.target);
 }
 
-/** 포인터 아래의 놓을 곳: { pane, index }(탭 줄·다른 칸 가운데) 또는 { pane, side }(가장자리에 새 칸) */
-function dropTarget(x, y) {
+/**
+ * 포인터 아래의 놓을 곳: { pane, index }(탭 줄·다른 칸 가운데) 또는 { pane, side }(가장자리에 새 칸).
+ * tab은 끄는 탭이고, 새로 여는 파일(사이드바·Windows 탐색기에서 끌어옴)이면 null이다: 그때는 어느 칸 가운데든 그 칸에 연다.
+ */
+function dropTarget(x, y, tab = drag?.tab ?? null) {
   for (const pane of panes) {
     const bar = pane.bar.getBoundingClientRect();
     const rect = pane.el.getBoundingClientRect();
     if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) continue;
     // 탭 줄(비어 있으면 높이가 0이라 위쪽 TAB_BAR_PX를 탭 줄로 본다)
     if (y <= rect.top + Math.max(bar.height, TAB_BAR_PX)) {
-      const others = tabsOf(pane).filter((tab) => tab !== drag.tab);
-      const index = others.filter((tab) => {
-        const r = tab.button.getBoundingClientRect();
+      const others = tabsOf(pane).filter((other) => other !== tab);
+      const index = others.filter((other) => {
+        const r = other.button.getBoundingClientRect();
         return x > r.left + r.width / 2;
       }).length;
       return { pane, index };
@@ -716,8 +806,8 @@ function dropTarget(x, y) {
       ['top', ry],
       ['bottom', 1 - ry],
     ].reduce((nearest, candidate) => (candidate[1] < nearest[1] ? candidate : nearest));
-    if (distance < SPLIT_EDGE && canSplit(drag.tab, pane)) return { pane, side };
-    return pane !== drag.tab.pane ? { pane, index: Infinity } : null;
+    if (distance < SPLIT_EDGE && (tab ? canSplit(tab, pane) : panes.length < MAX_PANES)) return { pane, side };
+    return !tab || pane !== tab.pane ? { pane, index: Infinity } : null;
   }
   return null;
 }
@@ -734,7 +824,7 @@ function showDropMark(target) {
     dropMark.className = 'drop-mark area';
   } else {
     // 탭 줄의 끼울 자리에 세로 막대
-    const others = tabsOf(target.pane).filter((tab) => tab !== drag.tab);
+    const others = tabsOf(target.pane).filter((tab) => tab !== drag?.tab);
     const bar = target.pane.bar.getBoundingClientRect();
     const ref = others[target.index]?.button.getBoundingClientRect();
     const last = others.at(-1)?.button.getBoundingClientRect();
@@ -763,8 +853,82 @@ function endTabDrag(e) {
   else if (target) moveTab(current.tab, target.pane, target.index);
 }
 
+/**
+ * 새로 연 문서들을 놓을 곳에 둔다. 가장자리면 그쪽에 새 칸을 하나 만들어 모두 그 칸에 열고, 칸이면 그 칸(탭 줄이면 그 자리)에 연다.
+ * 이미 연 문서면 그 탭을 옮긴다. 놓을 곳이 없으면 초점 칸에 연다.
+ */
+function placeOpened(list, target) {
+  if (target && !panes.includes(target.pane)) target = null;
+  const made = target?.side && panes.length < MAX_PANES ? splitPane(target.pane, target.side) : null;
+  const pane = made ?? target?.pane ?? focused;
+  let index = target?.index ?? Infinity;
+  for (const opened of list) {
+    const existing = tabs.find((tab) => tab.id === opened.id);
+    // 이미 연 문서: 다른 칸이나 탭 줄의 자리로 옮긴다(같은 칸 가운데면 그 탭을 보이기만 한다).
+    if (existing) existing.pane === pane && index === Infinity ? activate(existing) : moveTab(existing, pane, index);
+    else {
+      const tab = openTab(opened, null, true, pane);
+      if (tab && index !== Infinity) moveTab(tab, pane, index);
+    }
+    if (index !== Infinity) index++;
+  }
+  // 열 수 있는 문서가 없어 새 칸이 비었으면 거둔다.
+  if (made && !tabsOf(made).length) removePane(made);
+}
+
+// 사이드바의 파일을 문서 자리로 끌어 놓기: 탭 끌기와 같은 놓을 곳(가장자리면 나누기)을 쓴다. 누르기만 하면 지금처럼 초점 칸에 연다.
+let fileDrag = null;
+
+function startFileDrag(entry, row, e) {
+  if (e.button !== 0) return;
+  fileDrag = { entry, row, x: e.clientX, y: e.clientY, started: false, target: null };
+  row.setPointerCapture(e.pointerId);
+}
+
+function moveFileDrag(e) {
+  if (!fileDrag) return;
+  if (!fileDrag.started) {
+    if (Math.hypot(e.clientX - fileDrag.x, e.clientY - fileDrag.y) < DRAG_START_PX) return;
+    fileDrag.started = true;
+    document.body.classList.add('dragging-tab');
+    fileDrag.row.classList.add('dragging');
+  }
+  fileDrag.target = dropTarget(e.clientX, e.clientY, null);
+  showDropMark(fileDrag.target);
+}
+
+async function endFileDrag(e) {
+  const current = fileDrag;
+  if (!current) return;
+  fileDrag = null;
+  if (current.row.hasPointerCapture(e.pointerId)) current.row.releasePointerCapture(e.pointerId);
+  document.body.classList.remove('dragging-tab');
+  current.row.classList.remove('dragging');
+  dropMark.hidden = true;
+  if (!current.started) return;
+  dragJustEnded = true;
+  setTimeout(() => (dragJustEnded = false), 0);
+  const target = e.type === 'pointerup' ? current.target : null;
+  if (!target) return;
+  try {
+    placeOpened([await invoke('open_file', { path: current.entry.path })], target);
+  } catch {
+    toast(t.folderFailed);
+  }
+}
+
+// Windows 탐색기에서 끌어오는 파일: Rust가 끄는 자리(drop-over)와 놓은 자리(documents의 값)를 알려 준다.
+appWindow.listen('drop-over', ({ payload }) => showDropMark(dropTarget(payload.x, payload.y, null)));
+appWindow.listen('drop-leave', () => (dropMark.hidden = true));
+
 // ---- 지난번 상태: 열린 탭과 탭마다 보던 상태를 Rust가 앱 설정 폴더에 적어 둔다(경로는 Rust만 안다).
 // 칸 번호(pane)와 그 칸에서 보이던 탭(shown)도 함께 적고, 칸 배치(나눔 나무)는 설정(layout)에 둔다.
+
+/** 탭을 다시 열 때 쓸 보던 상태. 되살린 확대를 아직 적용하지 않은 탭(불러오지 않았거나 그리는 중)은 그 값을 그대로 둔다. */
+function viewState(tab) {
+  const { mode, fit, zoom, savedZoom, page, scroll } = tab;
+  return { mode, fit, zoom: savedZoom !== 1 ? savedZoom : zoom, page, scroll };
+}
 
 let sessionTimer = null;
 /** 탭 상태를 적는다. 자주 바뀌므로 묶어서 적고, now면 바로 적는다(창을 닫을 때). */
@@ -773,16 +937,7 @@ function saveSession(now = false) {
   const write = () => {
     const state = tabs.map((tab) => ({
       id: tab.id,
-      view: {
-        mode: tab.mode,
-        fit: tab.fit,
-        // 되살린 확대를 아직 적용하지 않은 탭(불러오지 않았거나 그리는 중)은 그 값을 그대로 둔다.
-        zoom: tab.savedZoom !== 1 ? tab.savedZoom : tab.zoom,
-        page: tab.page,
-        scroll: tab.scroll,
-        pane: panes.indexOf(tab.pane),
-        shown: tab.pane.active === tab,
-      },
+      view: { ...viewState(tab), pane: panes.indexOf(tab.pane), shown: tab.pane.active === tab },
     }));
     return invoke('save_session', { tabs: state, active: active?.id ?? null });
   };
@@ -852,9 +1007,13 @@ function showToolbar() {
   zoomLabel.textContent = `${Math.round(tab.zoom * 100)}%`;
 }
 
-/** 실행 인자·끌어다 놓기·두 번째 실행으로 들어온 문서를 탭으로 연다. */
-async function takeDocuments() {
-  for (const opened of await invoke('take_documents')) openTab(opened);
+/** 실행 인자·끌어다 놓기·두 번째 실행으로 들어온 문서를 탭으로 연다. 창에 끌어다 놓았으면 놓은 자리(at)에 맞춰 칸을 고르거나 나눈다. */
+async function takeDocuments(event) {
+  const at = event?.payload;
+  dropMark.hidden = true;
+  const list = await invoke('take_documents');
+  if (at) placeOpened(list, dropTarget(at.x, at.y, null));
+  else for (const opened of list) openTab(opened);
 }
 
 // ---- 렌더러 알림(web/src/main.js의 report). 같은 출처 iframe이 parent.viewerHost.report(json, 그 창)을 부른다.
@@ -1015,6 +1174,7 @@ function onKey(e) {
   const key = e.key.toLowerCase();
   if (ctrl && key === 'o') pickFolder();
   else if (ctrl && key === 'tab') cycleTab(e.shiftKey ? -1 : 1);
+  else if (ctrl && e.shiftKey && key === 't') reopenClosedTab();
   else if (ctrl && key === 'w' && active) closeTab(active);
   else if (ctrl && key === '\\' && active) splitTab(active);
   else if (ctrl && key === 'f' && active) viewer()?.openSearch();
@@ -1103,7 +1263,11 @@ function entryItem(entry) {
     row.addEventListener('click', () => toggle(item.getAttribute('aria-expanded') !== 'true'));
     if (expanded.has(entry.path)) toggle(true);
   } else {
-    row.addEventListener('click', () => openEntry(entry));
+    row.addEventListener('click', () => !dragJustEnded && openEntry(entry));
+    row.addEventListener('pointerdown', (e) => startFileDrag(entry, row, e));
+    row.addEventListener('pointermove', moveFileDrag);
+    row.addEventListener('pointerup', endFileDrag);
+    row.addEventListener('pointercancel', endFileDrag);
   }
   row.addEventListener('contextmenu', (e) => {
     e.preventDefault();
