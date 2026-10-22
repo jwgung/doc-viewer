@@ -114,6 +114,7 @@ Android의 `buildWebViewer` 작업은 `web/vendor/`도 입력으로 보므로 �
 |---|---|
 | pptx를 열 때 슬라이드의 동영상·소리마다 blob URL을 만들었다. 동영상은 수십 MB일 수 있는데 재생하지 않아도 사본이 생긴다. 해석할 때는 패키지 안 경로(`MediaInfo.path`)와 MIME만 두고, 재생할 때 `Presentation.mediaUrl(media)`로 blob URL을 만든다(같은 매체는 캐시). 외부 링크는 원래 주소를 돌려준다. | `types.ts` `MediaInfo.path`·`Presentation.mediaUrl`, `pptx/parser.ts` `parseMedia`·`buildPresentation` |
 | 재생 표시(`mediaBadge`)는 그림만 그려 앱이 그 자리에 재생기를 얹을 수 없었다. 표시 묶음에 매체 정보(`data-media`, JSON: kind·path·mime·src·external)와 요소 전체 크기의 투명 사각형을 넣어, 앱이 그려진 화면 위치를 재서 재생 단추·`<video>`/`<audio>`를 얹는다(앱 `web/src/media-player.js`). 업스트림의 `media: 'player'`(foreignObject 재생기)는 `media.src`가 있을 때만 쓰므로 패키지 안 매체에는 더 이상 쓰이지 않는다(앱은 쓰지 않는다). | `render/svg.ts` `mediaBadge` |
+| `Presentation`에 함수 `mediaUrl`이 생겨 Worker 해석(`parseInWorker`)이 결과를 보낼 때 구조화 복제에 실패한다. `dispose`처럼 떼어 낸다. Worker로 해석하면 패키지 안 매체는 재생할 수 없다(앱은 메인 스레드에서 해석한다). | `worker.ts` |
 
 ### 패키지 진입점
 

@@ -21,8 +21,8 @@ export function attachMediaPlayers(pageEl, resolveUrl) {
   pageEl.appendChild(layer);
   // 쪽 칸이 아직 배치 전이면(크기 0) 다음 프레임에 잰다.
   const place = (tries) => {
-    const page = pageEl.getBoundingClientRect();
     if (!pageEl.isConnected || !layer.isConnected) return;
+    const page = pageEl.getBoundingClientRect();
     if (!page.width || !page.height) {
       if (tries > 0) requestAnimationFrame(() => place(tries - 1));
       return;
@@ -57,6 +57,24 @@ function guard(el) {
   for (const type of STOP_EVENTS) el.addEventListener(type, (e) => e.stopPropagation(), { passive: true });
 }
 
+/**
+ * 자리 안 내용을 바꾼다. 키보드로 누른 단추를 바꾸면 초점을 새 내용으로 옮기고(Tab으로 다시 찾지 않게),
+ * 자리보다 넓은 재생 막대·안내가 쪽 가장자리에서 잘리지 않게 쪽 안으로 밀어 넣는다(.page는 overflow: hidden).
+ */
+function fill(slot, el) {
+  const hadFocus = slot.contains(document.activeElement);
+  slot.replaceChildren(el);
+  if (hadFocus) el.focus();
+  requestAnimationFrame(() => {
+    const page = slot.closest('.page')?.getBoundingClientRect();
+    if (!page || !el.isConnected) return;
+    const box = el.getBoundingClientRect();
+    const MARGIN = 4;
+    const shift = box.left < page.left + MARGIN ? page.left + MARGIN - box.left : box.right > page.right - MARGIN ? page.right - MARGIN - box.right : 0;
+    el.style.translate = shift ? `${shift}px 0` : '';
+  });
+}
+
 function showButton(slot, info, resolveUrl) {
   const button = document.createElement('button');
   button.type = 'button';
@@ -64,7 +82,7 @@ function showButton(slot, info, resolveUrl) {
   button.setAttribute('aria-label', info.kind === 'audio' ? t.mediaPlayAudio : t.mediaPlayVideo);
   guard(button);
   button.addEventListener('click', () => play(slot, info, resolveUrl));
-  slot.replaceChildren(button);
+  fill(slot, button);
 }
 
 function showNotice(slot, info, resolveUrl, message) {
@@ -75,7 +93,7 @@ function showNotice(slot, info, resolveUrl, message) {
   guard(notice);
   // 안내를 누르면 닫고 재생 단추로 돌아간다.
   notice.addEventListener('click', () => showButton(slot, info, resolveUrl));
-  slot.replaceChildren(notice);
+  fill(slot, notice);
 }
 
 function play(slot, info, resolveUrl) {
@@ -104,7 +122,7 @@ function play(slot, info, resolveUrl) {
   media.addEventListener('error', () => showNotice(slot, info, resolveUrl, t.mediaFailed), { once: true });
   guard(media);
   media.src = url;
-  slot.replaceChildren(media);
+  fill(slot, media);
   // Android WebView는 사용자 동작으로 부른 play()만 소리 있는 재생을 허락한다(autoplay 속성만으로는 멈춘 채 뜬다).
   // 누른 처리기 안에서 바로 부른다. 막히면 재생기 단추로 다시 누르면 된다.
   media.play()?.catch(() => {});

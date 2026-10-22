@@ -910,7 +910,6 @@ body.searching #doc {
   -webkit-user-select: none;
 }
 
-
 /* 문서 안 동영상·소리(media-player.js). 자리는 쪽 기준 백분율이라 쪽 칸 크기를 따라간다. */
 .media-layer {
   position: absolute;
