@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Doc Viewer — open PDF, HWP, Word, Excel and PowerPoint offline</title>
+<meta name="description" content="A free, offline desktop viewer for PDF, Hangul (HWP/HWPX), Word, Excel and PowerPoint files. Windows, macOS and Linux. Your files never leave your computer.">
+<link rel="icon" href="assets/favicon.png">
+<link rel="alternate" hreflang="ko" href="https://jwgung.github.io/doc-viewer/ko/">
+<link rel="alternate" hreflang="en" href="https://jwgung.github.io/doc-viewer/">
+<meta property="og:title" content="Doc Viewer">
+<meta property="og:description" content="Open PDF, HWP, Word, Excel and PowerPoint files offline — Windows, macOS, Linux.">
+<meta property="og:image" content="https://jwgung.github.io/doc-viewer/screenshots/en/main.png">
+<link rel="stylesheet" href="assets/site.css">
+<script>
+  // Korean browsers go to the Korean page once, unless the visitor picked English (?lang=en or the language link).
+  try {
+    const params = new URLSearchParams(location.search);
+    if (params.get('lang') === 'en') localStorage.setItem('lang', 'en');
+    const lang = localStorage.getItem('lang');
+    if (lang === 'ko' || (!lang && /^ko\b/i.test(navigator.language))) location.replace('ko/');
+  } catch { /* storage blocked: stay on this page */ }
+</script>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="./"><img src="assets/icon.png" alt="">Doc Viewer</a>
+    <nav class="links">
+      <a href="#features">Features</a>
+      <a href="#download">Download</a>
+      <a href="privacy/">Privacy</a>
+      <a href="https://github.com/jwgung/doc-viewer">GitHub</a>
+      <a href="ko/" onclick="try{localStorage.setItem('lang','ko')}catch{}">한국어</a>
+    </nav>
+  </header>
+
+  <section class="hero">
+    <h1>Every document, one light viewer.</h1>
+    <p class="lead">Open PDF, Hangul (HWP/HWPX), Word, Excel and PowerPoint files on Windows, macOS and Linux — fully offline. No account, no Office, no uploads.</p>
+    <div class="buttons">
+      <a class="btn primary" href="https://github.com/jwgung/doc-viewer/releases/latest" data-download="auto"
+         data-label-windows="Download for Windows" data-label-macos="Download for macOS" data-label-linux="Download for Linux"><span>Download</span></a>
+      <a class="btn" href="#download">All platforms</a>
+    </div>
+    <p class="small">Free · Latest <a href="https://github.com/jwgung/doc-viewer/releases/latest" data-version>release</a> · <a href="https://github.com/jwgung/doc-viewer">Source on GitHub</a></p>
+    <div class="shot"><img src="screenshots/en/main.png" alt="Doc Viewer with a folder explorer and document tabs" width="1920" height="1200"></div>
+  </section>
+</div>
+
+<section class="block soft" id="features">
+  <div class="wrap">
+    <h2>Built for reading, not fiddling</h2>
+    <p class="sub">Everything is rendered inside the app. Your files never leave your computer.</p>
+    <div class="grid">
+      <div class="card"><div class="icon">📄</div><h3>Many formats, one app</h3><p>PDF, HWP/HWPX, DOC/DOCX, XLS/XLSX/CSV, PPT/PPTX, Markdown, text and more — even with a wrong extension.</p></div>
+      <div class="card"><div class="icon">🪟</div><h3>Split view</h3><p>Drag a tab or a file to any edge to split the window into up to four panes. Resize by dragging the dividers.</p></div>
+      <div class="card"><div class="icon">🗂️</div><h3>Folder explorer + tabs</h3><p>Open a folder and keep many documents open. Rename, move to trash or reveal files from the sidebar.</p></div>
+      <div class="card"><div class="icon">🔁</div><h3>Pick up where you left off</h3><p>Tabs, pages, zoom and your split layout come back next time. <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> reopens closed tabs.</p></div>
+      <div class="card"><div class="icon">🎬</div><h3>Media in slides</h3><p>Videos and audio embedded in PPTX play right on the slide.</p></div>
+      <div class="card"><div class="icon">🔒</div><h3>Private by design</h3><p>No server, no account, no telemetry. It works without an internet connection.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="block">
+  <div class="wrap">
+    <h2>See it in action</h2>
+    <p class="sub">Drag a tab or a file to an edge to split the window.</p>
+    <div class="shot" style="max-width:960px"><img src="screenshots/en/split-drag.gif" alt="Dragging a tab and a file to split the window" width="960" height="600" loading="lazy"></div>
+    <div class="gallery" style="margin-top:32px">
+      <figure><img src="screenshots/en/split.jpg" alt="Four documents in a 2×2 split" loading="lazy"><figcaption>PDF, slides, HWP and a spreadsheet side by side</figcaption></figure>
+      <figure><img src="screenshots/en/dark.png" alt="Dark theme with a Hangul document" loading="lazy"><figcaption>Dark theme follows your system</figcaption></figure>
+      <figure><img src="screenshots/en/slides.jpg" alt="Slides one page at a time" loading="lazy"><figcaption>Slides one page at a time — the mouse wheel flips pages</figcaption></figure>
+    </div>
+  </div>
+</section>
+
+<section class="block soft" id="download">
+  <div class="wrap">
+    <h2>Download</h2>
+    <p class="sub">The app is not code-signed yet, so your system may warn you the first time. Here is how to open it.</p>
+    <div class="os">
+      <div class="card">
+        <h3>Windows 10 / 11</h3>
+        <p>Installer (recommended) or MSI package.</p>
+        <a class="btn primary" href="https://github.com/jwgung/doc-viewer/releases/latest" data-download="windows">Setup (.exe)</a>
+        <a class="btn" href="https://github.com/jwgung/doc-viewer/releases/latest" data-download="windows-msi">.msi</a>
+        <p class="note">If SmartScreen appears: <b>More info → Run anyway</b>. On older Windows 10 without WebView2, the installer downloads it once.</p>
+      </div>
+      <div class="card">
+        <h3>macOS</h3>
+        <p>One file for Apple silicon and Intel Macs.</p>
+        <a class="btn primary" href="https://github.com/jwgung/doc-viewer/releases/latest" data-download="macos">Disk image (.dmg)</a>
+        <p class="note">Not notarized yet: right-click the app → <b>Open</b>, or allow it in <i>System Settings → Privacy &amp; Security</i>.</p>
+      </div>
+      <div class="card">
+        <h3>Linux</h3>
+        <p>Ubuntu 22.04 or newer and similar distributions.</p>
+        <a class="btn primary" href="https://github.com/jwgung/doc-viewer/releases/latest" data-download="linux">.deb</a>
+        <a class="btn" href="https://github.com/jwgung/doc-viewer/releases/latest" data-download="linux-appimage">AppImage</a>
+        <p class="note">For the AppImage, make it executable (<code>chmod +x</code>) and run it.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="block">
+  <div class="wrap narrow">
+    <h2>Supported formats</h2>
+    <div class="table-scroll">
+      <table>
+        <tr><th>Kind</th><th>Extensions</th></tr>
+        <tr><td>PDF</td><td>pdf</td></tr>
+        <tr><td>Hangul (HWP)</td><td>hwp, hwpx, hwt</td></tr>
+        <tr><td>Word</td><td>doc, docx, docm, dot, dotx, dotm</td></tr>
+        <tr><td>Excel</td><td>xls, xlsx, xlsm, xlt, xltx, xltm, csv, tsv</td></tr>
+        <tr><td>PowerPoint</td><td>ppt, pptx, pptm, pps, ppsx, pot, potx</td></tr>
+        <tr><td>Text &amp; data</td><td>md, txt, log, json, xml, toml, yaml and other text files</td></tr>
+      </table>
+    </div>
+
+    <h2 style="margin-top:48px">FAQ</h2>
+    <details><summary>Are my documents uploaded anywhere?</summary><p>No. Doc Viewer has no server. Files are read from your disk and rendered inside the app.</p></details>
+    <details><summary>Can I edit documents?</summary><p>No — it is a viewer, focused on opening documents quickly and accurately.</p></details>
+    <details><summary>Why does a document look slightly different from Office or Hangul?</summary><p>Rendering is done by open-source engines, and fonts embedded in documents are not used yet (system fonts are used instead). Please <a href="https://github.com/jwgung/doc-viewer/issues">open an issue</a> with a sample file.</p></details>
+    <details><summary>Is there a mobile version?</summary><p>An Android app is being prepared for Google Play.</p></details>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span>Doc Viewer · <a href="mailto:jwgung@gmail.com">jwgung@gmail.com</a></span>
+    <span><a href="privacy/">Privacy Policy</a> · <a href="https://github.com/jwgung/doc-viewer">GitHub</a> · <a href="ko/" onclick="try{localStorage.setItem('lang','ko')}catch{}">한국어</a></span>
+  </div>
+</footer>
+<script src="assets/download.js"></script>
+</body>
+</html>
