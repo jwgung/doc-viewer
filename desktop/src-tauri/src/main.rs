@@ -262,10 +262,19 @@ fn list_folder(path: String, extensions: Vec<String>, docs: State<Documents>) ->
 }
 
 /// 고른 폴더 아래(폴더 자신은 빼고)의 항목. 이름 바꾸기·지우기·탐색기에서 보기가 고른 폴더 밖을 건드리지 못하게 한다.
+/// 이름 바꾸기·지우기 대상. 부모 폴더만 실제 경로로 풀고 이름은 그대로 붙인다: 바로가기(심볼릭 링크·정션)를 고르면
+/// 링크가 가리키는 파일이 아니라 링크 자체를 바꾸거나 지운다.
 fn entry_path(docs: &Documents, path: &str) -> Result<PathBuf, String> {
     let root = docs.folder.lock().unwrap().clone().ok_or("no folder")?;
     let root = dunce::canonicalize(&root).map_err(|e| e.to_string())?;
-    is_within(&root, Path::new(path)).filter(|p| *p != root).ok_or_else(|| "outside folder".into())
+    let path = Path::new(path);
+    let name = path.file_name().ok_or("invalid")?;
+    let parent = is_within(&root, path.parent().ok_or("invalid")?).ok_or("outside folder")?;
+    let entry = parent.join(name);
+    if entry.symlink_metadata().is_err() {
+        return Err("not found".into());
+    }
+    Ok(entry)
 }
 
 /// 이름 바꾸기·지우기로 바뀐 항목과 그 안의 파일을 연 탭 번호들
@@ -289,12 +298,16 @@ fn rename_entry(path: String, name: String, docs: State<Documents>) -> Result<Ch
         return Err("invalid".into());
     }
     let to = from.parent().ok_or("invalid")?.join(name);
-    // 대소문자만 바꾸는 경우(Windows는 같은 파일로 본다)는 막지 않는다.
-    if to.exists() && !to.to_string_lossy().eq_ignore_ascii_case(&from.to_string_lossy()) {
+    // 대소문자만 바꾸는 경우(Windows는 같은 파일로 본다. É→é처럼 영문 밖 글자 포함)는 막지 않는다.
+    let same_entry = || {
+        let from_name = from.file_name().map(|n| n.to_string_lossy().to_lowercase());
+        from_name.as_deref() == Some(name.to_lowercase().as_str())
+            && dunce::canonicalize(&to).ok() == dunce::canonicalize(&from).ok()
+    };
+    if to.symlink_metadata().is_ok() && !same_entry() {
         return Err("exists".into());
     }
     std::fs::rename(&from, &to).map_err(|e| e.to_string())?;
-    let to = dunce::canonicalize(&to).unwrap_or(to);
     let mut open = docs.open.lock().unwrap();
     let mut ids = Vec::new();
     for (id, p) in open.iter_mut().filter(|(_, p)| p.starts_with(&from)) {
@@ -516,6 +529,26 @@ mod tests {
         assert!(is_within(&root, &root.join("sub")).is_some());
         assert!(is_within(&root, &root.join("sub/../a.docx")).is_some());
         assert!(is_within(&root.join("sub"), &root.join("sub/../a.docx")).is_none());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn entry_path_keeps_links_and_stays_inside() {
+        let root = std::env::temp_dir().join(format!("doc-viewer-entry-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        std::fs::write(root.join("sub/real.pdf"), b"x").unwrap();
+        std::os::unix::fs::symlink(root.join("sub/real.pdf"), root.join("link.pdf")).unwrap();
+        let docs = Documents::default();
+        *docs.folder.lock().unwrap() = Some(root.clone());
+        let canonical = dunce::canonicalize(&root).unwrap();
+        // 링크를 고르면 링크가 대상이다(가리키는 sub/real.pdf가 아니라).
+        assert_eq!(entry_path(&docs, &root.join("link.pdf").to_string_lossy()).unwrap(), canonical.join("link.pdf"));
+        assert_eq!(entry_path(&docs, &root.join("sub/real.pdf").to_string_lossy()).unwrap(), canonical.join("sub/real.pdf"));
+        assert!(entry_path(&docs, &root.to_string_lossy()).is_err(), "고른 폴더 자체는 안 된다");
+        assert!(entry_path(&docs, &root.join("sub/..").to_string_lossy()).is_err());
+        assert!(entry_path(&docs, &root.join("missing.pdf").to_string_lossy()).is_err());
         std::fs::remove_dir_all(root).unwrap();
     }
 

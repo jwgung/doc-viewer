@@ -96,13 +96,18 @@ export class PagedViewer {
     // 화면 크기가 바뀌면(회전 등) 쪽 크기를 다시 맞춘다. 연속 스크롤·화면 가득은 칸 크기를 CSS 비율이 따라가므로,
     // 폭이 달라진 쪽만 그 폭으로 다시 그린다(PDF 그림 해상도·글자 층 위치가 그린 폭에 묶여 있다).
     // 검색 중 높이만 바뀐 것(키보드가 열리고 닫힘)은 무시한다: 다시 그리면 검색 강조와 스크롤 위치를 잃는다.
+    // 숨겨진 동안(윈도우 셸의 보이지 않는 탭: 폭 0)은 무시하고, 다시 보일 때 원래 폭이면 다시 그리지 않는다.
     let lastWidth = innerWidth;
+    let lastHeight = innerHeight;
     addEventListener(
       'resize',
       debounce(() => {
+        if (innerWidth === 0 || innerHeight === 0) return;
         const widthChanged = innerWidth !== lastWidth;
+        const heightChanged = innerHeight !== lastHeight;
         lastWidth = innerWidth;
-        if (!widthChanged && document.body.classList.contains('searching')) return;
+        lastHeight = innerHeight;
+        if (!widthChanged && (!heightChanged || document.body.classList.contains('searching'))) return;
         if (this.mode !== 'scroll' || this.fit === 'page') this.render();
         else this.redrawResized?.();
       }, 200),
@@ -420,8 +425,9 @@ export class PagedViewer {
           drawing--;
           pump();
         }
-        // 줄여서 한 화면에 쪽이 많이 보이면 그만큼 더 남겨 둔다(보이는 쪽을 지웠다 다시 그리지 않게).
-        if (wanted.size <= Math.min(KEEP_RENDERED_MAX, Math.ceil(KEEP_RENDERED / Math.min(1, this.shrink) ** 2))) return;
+        // 줄여서 한 화면에 쪽이 많이 보이면 그만큼 더 남겨 두고(보이는 쪽을 지웠다 다시 그리지 않게),
+        // 키우면 쪽마다 그림이 커지므로 그만큼 덜 남긴다(두 쪽은 남겨 넘길 때 빈 쪽이 보이지 않게).
+        if (wanted.size <= Math.min(KEEP_RENDERED_MAX, Math.max(2, Math.ceil(KEEP_RENDERED / this.shrink ** 2)))) return;
         const farthest = [...wanted].sort((a, b) => Math.abs(b - index) - Math.abs(a - index))[0];
         wanted.delete(farthest);
         pages[farthest].replaceChildren();

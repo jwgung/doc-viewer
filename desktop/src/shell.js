@@ -747,24 +747,27 @@ function endTabDrag(e) {
 // 칸 번호(pane)와 그 칸에서 보이던 탭(shown)도 함께 적고, 칸 배치(나눔 나무)는 설정(layout)에 둔다.
 
 let sessionTimer = null;
-function saveSession() {
+/** 탭 상태를 적는다. 자주 바뀌므로 묶어서 적고, now면 바로 적는다(창을 닫을 때). */
+function saveSession(now = false) {
   clearTimeout(sessionTimer);
-  sessionTimer = setTimeout(() => {
+  const write = () => {
     const state = tabs.map((tab) => ({
       id: tab.id,
       view: {
         mode: tab.mode,
         fit: tab.fit,
-        // 아직 불러오지 않은 탭은 되살린 상태를 그대로 둔다.
-        zoom: tab.frame.src ? tab.zoom : tab.savedZoom,
+        // 되살린 확대를 아직 적용하지 않은 탭(불러오지 않았거나 그리는 중)은 그 값을 그대로 둔다.
+        zoom: tab.savedZoom !== 1 ? tab.savedZoom : tab.zoom,
         page: tab.page,
         scroll: tab.scroll,
         pane: panes.indexOf(tab.pane),
         shown: tab.pane.active === tab,
       },
     }));
-    invoke('save_session', { tabs: state, active: active?.id ?? null });
-  }, 300);
+    return invoke('save_session', { tabs: state, active: active?.id ?? null });
+  };
+  if (now) return write();
+  sessionTimer = setTimeout(write, 300);
 }
 
 async function restoreSession() {
@@ -913,6 +916,8 @@ const ZOOM_STEP = 1.25;
 const WHEEL_ZOOM_RATE = 0.0015;
 
 function setZoom(value, focusX, focusY) {
+  // 첫 쪽을 그리기 전에는 렌더러가 쪽 있는 문서인지 아직 모른다(쪽 없는 문서처럼 CSS 확대가 걸려 풀리지 않는다).
+  if (!active || active.loading) return;
   const applied = viewer()?.setZoom(value, focusX, focusY);
   if (!applied) return;
   active.zoom = applied;
@@ -928,7 +933,9 @@ function onWheel(e) {
   if (tab) focusPane(tab.pane);
   if (!active) return;
   const dy = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? e.deltaY * WHEEL_LINE_PX : e.deltaY;
-  setZoom(active.zoom * Math.exp(-dy * WHEEL_ZOOM_RATE), e.clientX, e.clientY);
+  // 문서 안에서 온 휠이면 마우스 자리를 기준으로, 셸(상단바·탐색기)에서 온 휠이면 문서 가운데를 기준으로 키운다.
+  const inDoc = e.view !== window;
+  setZoom(active.zoom * Math.exp(-dy * WHEEL_ZOOM_RATE), inDoc ? e.clientX : undefined, inDoc ? e.clientY : undefined);
 }
 
 $('zoom-in').addEventListener('click', () => active && setZoom(active.zoom * ZOOM_STEP));
@@ -1318,6 +1325,11 @@ focusPane(panes[0]);
 showExplorer(loadPref('explorer') ?? true);
 showToolbar();
 appWindow.listen('documents', takeDocuments);
+// 창을 닫을 때: 탭마다 묶어 두던 읽던 위치를 바로 받고, 탭 상태를 미루지 않고 적은 뒤 닫는다.
+appWindow.onCloseRequested(async () => {
+  for (const tab of tabs) viewerOf(tab)?.flushPosition?.();
+  await saveSession(true);
+});
 showFolder(await invoke('current_folder'));
 await restoreSession();
 await takeDocuments();
