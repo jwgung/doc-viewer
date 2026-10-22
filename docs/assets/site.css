@@ -1,4 +1,4 @@
-/* Doc Viewer site: one stylesheet for the landing pages (en, ko) and the privacy policy. */
+/* Doc Viewer site: stylesheet for the landing pages (en, ko). The privacy page keeps its own inline style. */
 :root {
   --bg: #ffffff;
   --bg-soft: #f4f6fb;
@@ -126,9 +126,3 @@ footer { border-top: 1px solid var(--line); padding: 28px 0 40px; color: var(--m
 footer .wrap { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 footer a { color: var(--muted); }
 
-/* privacy page */
-.doc h2 { font-size: 1.6em; line-height: 1.3; margin: 32px 0 4px; }
-.doc h3 { margin-top: 2em; }
-.doc hr { border: 0; border-top: 1px solid var(--line); margin: 48px 0; }
-.doc p, .doc li { overflow-wrap: anywhere; }
-.toc { display: flex; gap: 12px; margin: 8px 0 0; }
