@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "셸 창이 쓰는 권한. 앱 명령과 문서 알림(event listen)만 쓴다.",
+  "windows": ["*"],
+  "permissions": ["core:default"]
+}
