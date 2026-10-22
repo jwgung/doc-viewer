@@ -89,17 +89,21 @@ fn file_name(path: &Path) -> String {
 
 /// 문서에 번호를 붙인다. 이미 연 파일이면 그 번호를 돌려줘 셸이 그 탭으로 간다.
 fn register(app: &AppHandle, path: PathBuf) -> Opened {
+    register_as(app, path, true)
+}
+
+/// 문서에 탭 번호를 붙인다. reuse면 이미 연 파일은 그 번호를 돌려주고(셸은 그 탭으로 간다), 아니면 복사본으로 새 번호를 붙인다
+/// (탭 복제: 같은 파일을 탭 여럿이 따로 보고, 하나를 닫아도 다른 탭은 계속 읽힌다).
+fn register_as(app: &AppHandle, path: PathBuf, reuse: bool) -> Opened {
     let path = dunce::canonicalize(&path).unwrap_or(path);
     let docs = app.state::<Documents>();
     let mut open = docs.open.lock().unwrap();
-    let id = match open.iter().find(|(_, p)| **p == path) {
-        Some((id, _)) => *id,
-        None => {
-            let id = docs.next_id.fetch_add(1, Ordering::Relaxed) + 1;
-            open.insert(id, path.clone());
-            id
-        }
-    };
+    let existing = if reuse { open.iter().find(|(_, p)| **p == path).map(|(id, _)| *id) } else { None };
+    let id = existing.unwrap_or_else(|| {
+        let id = docs.next_id.fetch_add(1, Ordering::Relaxed) + 1;
+        open.insert(id, path.clone());
+        id
+    });
     let detected = detect::detect(&path);
     Opened { id, src: format!("{DOC_ORIGIN}/{id}"), name: file_name(&path), content_fmt: detected.content, text_fmt: detected.text }
 }
@@ -233,6 +237,13 @@ fn close_document(id: u64, remember: Option<bool>, docs: State<Documents>) {
     }
 }
 
+/// 탭을 복제한다: 같은 파일을 새 번호로 연다(보던 상태는 셸이 넘긴다).
+#[tauri::command]
+fn duplicate_document(app: AppHandle, id: u64) -> Result<Opened, String> {
+    let path = app.state::<Documents>().open.lock().unwrap().get(&id).cloned().ok_or("not open")?;
+    Ok(register_as(&app, path, false))
+}
+
 /// 닫은 탭을 다시 연다(Ctrl+Shift+T). 새 번호로 등록한다. 그 사이 파일이 없어졌으면 오류.
 #[tauri::command]
 fn reopen_document(app: AppHandle, id: u64) -> Result<Opened, String> {
@@ -245,7 +256,8 @@ fn reopen_document(app: AppHandle, id: u64) -> Result<Opened, String> {
     if !path.is_file() {
         return Err("missing".into());
     }
-    Ok(register(&app, path))
+    // 같은 파일이 다른 탭에 열려 있어도(탭 복제) 닫았던 탭을 따로 되살린다.
+    Ok(register_as(&app, path, false))
 }
 
 /// 폴더 고르기(대화상자가 끝날 때까지 기다리므로 async, 주 스레드 밖). 고른 폴더는 다음 실행 때도 연다.
@@ -284,15 +296,17 @@ fn save_session(app: AppHandle, tabs: Vec<TabState>, active: Option<u64>, docs: 
 fn restore_session(app: AppHandle) -> Restored {
     let session: Session =
         config_file(&app, SESSION_FILE).and_then(|f| std::fs::read(f).ok()).and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
-    let active_path = session.active.and_then(|i| session.tabs.get(i)).map(|tab| tab.path.clone());
     let mut active = None;
+    // 같은 파일을 탭 여럿에 띄워 두었으면(탭 복제) 탭마다 따로 번호를 붙여 모두 되살린다.
+    let mut seen = std::collections::HashSet::new();
     let tabs = session
         .tabs
         .into_iter()
-        .filter(|tab| tab.path.is_file())
-        .map(|tab| {
-            let opened = register(&app, tab.path.clone());
-            if Some(&tab.path) == active_path.as_ref() {
+        .enumerate()
+        .filter(|(_, tab)| tab.path.is_file())
+        .map(|(index, tab)| {
+            let opened = register_as(&app, tab.path.clone(), seen.insert(tab.path.clone()));
+            if session.active == Some(index) {
                 active = Some(opened.id);
             }
             RestoredTab { opened, view: tab.view }
@@ -499,6 +513,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             take_documents,
             reopen_document,
+            duplicate_document,
             close_document,
             save_session,
             restore_session,

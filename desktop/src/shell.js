@@ -28,6 +28,8 @@ const STRINGS = {
     closeTab: '닫기 (Ctrl+W)',
     closeOthers: '다른 탭 닫기',
     reopenClosed: '닫은 탭 다시 열기',
+    duplicateTab: '탭 복제',
+    duplicateFailed: '탭을 복제하지 못했습니다',
     reopenFailed: '닫은 탭을 다시 열지 못했습니다(파일이 옮겨졌거나 지워졌습니다)',
     splitRight: '오른쪽으로 나누기',
     splitDown: '아래로 나누기',
@@ -72,6 +74,8 @@ const STRINGS = {
     closeTab: 'Close (Ctrl+W)',
     closeOthers: 'Close other tabs',
     reopenClosed: 'Reopen closed tab',
+    duplicateTab: 'Duplicate tab',
+    duplicateFailed: 'Could not duplicate the tab',
     reopenFailed: 'Could not reopen the closed tab (the file was moved or deleted)',
     splitRight: 'Split right',
     splitDown: 'Split down',
@@ -648,7 +652,7 @@ function closeTab(tab) {
 
 // ---- 닫은 탭 다시 열기(Ctrl+Shift+T): 브라우저처럼 가장 최근에 닫은 탭부터, 닫을 때의 칸·탭 줄 자리·보던 상태로 연다.
 // 그 칸이 마지막 탭과 함께 사라졌으면 몫을 받았던 옆자리를 같은 방향으로 다시 나눈다(최대 4칸, 못 나누면 초점 칸).
-// 파일은 Rust가 닫은 탭 번호로 기억한다(CLOSED_KEEP과 같은 개수).
+// 파일은 Rust가 닫은 탭 번호로 기억한다(CLOSED_KEEP과 같은 개수). 같은 파일이 다른 탭에 열려 있어도 닫았던 탭을 따로 되살린다.
 
 const CLOSED_KEEP = 20;
 const closedTabs = [];
@@ -675,9 +679,6 @@ async function reopenClosedTab() {
     toast(t.reopenFailed);
     return;
   }
-  // 그 사이 같은 파일을 다시 열어 두었으면 그 탭을 보이기만 한다(새 칸을 만들면 빈 칸이 남는다).
-  const already = tabs.find((tab) => tab.id === opened.id);
-  if (already) return activate(already);
   let pane = livePane(entry.pane);
   if (!panes.includes(pane)) {
     const gone = pane.gone;
@@ -737,6 +738,8 @@ function tabActions(tab) {
           'separator',
         ]
       : []),
+    { label: t.duplicateTab, run: () => duplicateTab(tab, { pane: tab.pane, index: tabsOf(tab.pane).indexOf(tab) + 1 }) },
+    'separator',
     { label: t.closeTab.replace(/ \(.*\)$/, ''), hint: 'Ctrl+W', run: () => closeTab(tab) },
     { label: t.closeOthers, run: () => tabsOf(tab.pane).filter((other) => other !== tab).forEach(closeTab) },
     ...(closedTabs.length ? [{ label: t.reopenClosed, hint: 'Ctrl+Shift+T', run: reopenClosedTab }] : []),
@@ -775,7 +778,10 @@ function moveTabDrag(e) {
     document.body.classList.add('dragging-tab'); // 문서 iframe이 포인터를 가로채지 않게
     drag.tab.button.classList.add('dragging');
   }
-  drag.target = dropTarget(e.clientX, e.clientY);
+  // Ctrl을 누른 채 놓으면 옮기지 않고 복제한다: 새로 여는 문서처럼 제 칸 가운데·가장자리에도 놓을 수 있다.
+  drag.copy = e.ctrlKey;
+  document.body.classList.toggle('copying-tab', drag.copy);
+  drag.target = dropTarget(e.clientX, e.clientY, drag.copy ? null : drag.tab);
   showDropMark(drag.target);
 }
 
@@ -847,9 +853,11 @@ function endTabDrag(e) {
   if (!current.started) return;
   dragJustEnded = true;
   setTimeout(() => (dragJustEnded = false), 0);
+  document.body.classList.remove('copying-tab');
   // 끄는 사이 놓을 칸이 사라졌으면(Ctrl+W) 아무것도 하지 않는다.
   const target = e.type === 'pointerup' && panes.includes(current.target?.pane) ? current.target : null;
-  if (target?.side) splitTab(current.tab, target.side, target.pane);
+  if (target && e.ctrlKey) duplicateTab(current.tab, target);
+  else if (target?.side) splitTab(current.tab, target.side, target.pane);
   else if (target) moveTab(current.tab, target.pane, target.index);
 }
 
@@ -874,6 +882,25 @@ function placeOpened(list, target) {
   }
   // 열 수 있는 문서가 없어 새 칸이 비었으면 거둔다.
   if (made && !tabsOf(made).length) removePane(made);
+}
+
+/**
+ * 탭을 복제한다: 같은 파일을 새 탭(새 문서 번호)으로, 보던 쪽·확대·보기 방식 그대로 연다. 복제본은 따로 넘기고 확대한다.
+ * target은 놓을 곳({ pane, index } 또는 { pane, side }: 가장자리면 그쪽에 새 칸, 4칸이면 그 칸).
+ */
+async function duplicateTab(tab, target) {
+  let opened;
+  try {
+    opened = await invoke('duplicate_document', { id: tab.id });
+  } catch {
+    toast(t.duplicateFailed);
+    return;
+  }
+  viewerOf(tab)?.flushPosition?.(); // 원본이 모아 두던 읽던 위치까지 넘긴다
+  if (!panes.includes(target.pane)) target = { pane: focused, index: Infinity };
+  const pane = target.side && panes.length < MAX_PANES ? splitPane(target.pane, target.side) : target.pane;
+  const copy = openTab(opened, viewState(tab), true, pane);
+  if (copy && target.index !== undefined && target.index !== Infinity) moveTab(copy, pane, target.index);
 }
 
 // 사이드바의 파일을 문서 자리로 끌어 놓기: 탭 끌기와 같은 놓을 곳(가장자리면 나누기)을 쓴다. 누르기만 하면 지금처럼 초점 칸에 연다.

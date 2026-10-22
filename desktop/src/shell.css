@@ -614,6 +614,11 @@ body.dragging-tab iframe {
   opacity: 0.5;
 }
 
+/* Ctrl을 누른 채 탭을 끌면 복제(놓는 곳에 복사본) */
+body.copying-tab {
+  cursor: copy;
+}
+
 .drop-mark {
   position: fixed;
   z-index: 20;
