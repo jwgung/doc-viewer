@@ -248,6 +248,26 @@ function splitNode(node, side) {
 const inLayout = (node) => node === layout || findParent(node) !== null;
 
 /**
+ * 닫은 칸을 되살릴 기준 자리를 나무에 다시 둔다. 같은 방향 바깥 가지에 펼쳐져 사라진 가지면, 그 자식들이 아직 그대로
+ * 이어 있을 때 다시 하나로 묶는다(예: 위 칸을 닫아 row[C, D]가 바깥 row에 펼쳐진 뒤 위 칸을 되살릴 때). 못 두면 false.
+ */
+function reviveAnchor(anchor) {
+  if (inLayout(anchor)) return true;
+  const spread = anchor.spread;
+  if (!spread || !inLayout(spread.into)) return false;
+  const { into, children } = spread;
+  const start = into.children.indexOf(children[0]);
+  if (start < 0 || children.some((child, i) => into.children[start + i] !== child)) return false;
+  const sizes = into.sizes.slice(start, start + children.length);
+  const share = sizes.reduce((sum, size) => sum + size, 0);
+  Object.assign(anchor, { children, sizes: sizes.map((size) => size / share) });
+  delete anchor.spread;
+  into.children.splice(start, children.length, anchor);
+  into.sizes.splice(start, children.length, share);
+  return true;
+}
+
+/**
  * 빈 칸을 없앤다(칸이 하나면 그대로 둔다). 그 몫은 앞 형제(왼쪽·위, 맨 앞이면 뒤 형제)가 받고, 초점도 그 자리로 옮긴다.
  * 자식이 하나 남은 가지는 풀어 준다.
  */
@@ -282,6 +302,8 @@ function replaceNode(old, replacement) {
   const index = grand.children.indexOf(old);
   if (replacement.dir && replacement.dir === grand.dir) {
     const share = grand.sizes[index];
+    // 펼쳐진 가지가 닫은 칸을 되살릴 기준 자리일 수 있어, 어디로 펼쳐졌는지 남긴다(reviveAnchor가 다시 묶는다).
+    replacement.spread = { into: grand, children: [...replacement.children] };
     grand.children.splice(index, 1, ...replacement.children);
     grand.sizes.splice(index, 1, ...replacement.sizes.map((size) => size * share));
   } else grand.children[index] = replacement;
@@ -444,7 +466,7 @@ function openTab(opened, view = null, select = true, pane = focused) {
   // 내용으로 가린 형식이 확장자보다 앞서고, 확장자로도 모르는 글자 파일은 첫 글자로 가린 형식을 쓴다.
   const fmt = opened.contentFmt ?? formatOf(opened.name) ?? opened.textFmt;
   if (!fmt) {
-    invoke('close_document', { id: opened.id });
+    invoke('close_document', { id: opened.id, remember: false }); // 열지 못한 문서는 다시 열기 목록에 두지 않는다
     toast(t.unsupported);
     return;
   }
@@ -633,8 +655,7 @@ const closedTabs = [];
 
 function rememberClosed(tab, index) {
   viewerOf(tab)?.flushPosition?.(); // 모아 두던 읽던 위치를 바로 받는다
-  const { mode, fit, zoom, savedZoom, page, scroll } = tab;
-  closedTabs.push({ id: tab.id, pane: tab.pane, index, view: { mode, fit, zoom: savedZoom !== 1 ? savedZoom : zoom, page, scroll } });
+  closedTabs.push({ id: tab.id, pane: tab.pane, index, view: viewState(tab) });
   if (closedTabs.length > CLOSED_KEEP) closedTabs.shift();
 }
 
@@ -654,10 +675,13 @@ async function reopenClosedTab() {
     toast(t.reopenFailed);
     return;
   }
+  // 그 사이 같은 파일을 다시 열어 두었으면 그 탭을 보이기만 한다(새 칸을 만들면 빈 칸이 남는다).
+  const already = tabs.find((tab) => tab.id === opened.id);
+  if (already) return activate(already);
   let pane = livePane(entry.pane);
   if (!panes.includes(pane)) {
     const gone = pane.gone;
-    if (gone && inLayout(gone.anchor) && panes.length < MAX_PANES) {
+    if (gone && panes.length < MAX_PANES && reviveAnchor(gone.anchor)) {
       pane.reborn = splitNode(gone.anchor, gone.side);
       pane = pane.reborn;
     } else pane = focused;
@@ -900,6 +924,12 @@ appWindow.listen('drop-leave', () => (dropMark.hidden = true));
 // ---- 지난번 상태: 열린 탭과 탭마다 보던 상태를 Rust가 앱 설정 폴더에 적어 둔다(경로는 Rust만 안다).
 // 칸 번호(pane)와 그 칸에서 보이던 탭(shown)도 함께 적고, 칸 배치(나눔 나무)는 설정(layout)에 둔다.
 
+/** 탭을 다시 열 때 쓸 보던 상태. 되살린 확대를 아직 적용하지 않은 탭(불러오지 않았거나 그리는 중)은 그 값을 그대로 둔다. */
+function viewState(tab) {
+  const { mode, fit, zoom, savedZoom, page, scroll } = tab;
+  return { mode, fit, zoom: savedZoom !== 1 ? savedZoom : zoom, page, scroll };
+}
+
 let sessionTimer = null;
 /** 탭 상태를 적는다. 자주 바뀌므로 묶어서 적고, now면 바로 적는다(창을 닫을 때). */
 function saveSession(now = false) {
@@ -907,16 +937,7 @@ function saveSession(now = false) {
   const write = () => {
     const state = tabs.map((tab) => ({
       id: tab.id,
-      view: {
-        mode: tab.mode,
-        fit: tab.fit,
-        // 되살린 확대를 아직 적용하지 않은 탭(불러오지 않았거나 그리는 중)은 그 값을 그대로 둔다.
-        zoom: tab.savedZoom !== 1 ? tab.savedZoom : tab.zoom,
-        page: tab.page,
-        scroll: tab.scroll,
-        pane: panes.indexOf(tab.pane),
-        shown: tab.pane.active === tab,
-      },
+      view: { ...viewState(tab), pane: panes.indexOf(tab.pane), shown: tab.pane.active === tab },
     }));
     return invoke('save_session', { tabs: state, active: active?.id ?? null });
   };

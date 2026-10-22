@@ -222,11 +222,14 @@ fn take_documents(docs: State<Documents>) -> Vec<Opened> {
     std::mem::take(&mut *docs.pending.lock().unwrap())
 }
 
-/// 탭을 닫았다. 그 문서 주소는 더 이상 읽히지 않고, 다시 열 수 있게 파일만 남겨 둔다.
+/// 탭을 닫았다. 그 문서 주소는 더 이상 읽히지 않고, 다시 열 수 있게 파일만 남겨 둔다
+/// (remember가 false면 남기지 않는다: 형식을 몰라 열지 못한 문서).
 #[tauri::command]
-fn close_document(id: u64, docs: State<Documents>) {
+fn close_document(id: u64, remember: Option<bool>, docs: State<Documents>) {
     if let Some(path) = docs.open.lock().unwrap().remove(&id) {
-        remember_closed(&mut docs.closed.lock().unwrap(), id, path);
+        if remember != Some(false) {
+            remember_closed(&mut docs.closed.lock().unwrap(), id, path);
+        }
     }
 }
 
@@ -237,7 +240,7 @@ fn reopen_document(app: AppHandle, id: u64) -> Result<Opened, String> {
     let path = {
         let mut closed = docs.closed.lock().unwrap();
         let index = closed.iter().position(|(closed_id, _)| *closed_id == id).ok_or("not closed")?;
-        closed.remove(index).map(|(_, path)| path).ok_or("not closed")?
+        closed.remove(index).expect("찾은 자리").1
     };
     if !path.is_file() {
         return Err("missing".into());
@@ -354,6 +357,10 @@ fn rename_entry(path: String, name: String, docs: State<Documents>) -> Result<Ch
         *p = to.join(p.strip_prefix(&from).unwrap());
         ids.push(*id);
     }
+    // 닫아 둔 탭도 새 경로를 따라가게 한다(다시 열기가 옛 경로를 찾지 않게).
+    for (_, p) in docs.closed.lock().unwrap().iter_mut().filter(|(_, p)| p.starts_with(&from)) {
+        *p = to.join(p.strip_prefix(&from).unwrap());
+    }
     Ok(Changed { path: to.to_string_lossy().into_owned(), ids })
 }
 
@@ -389,6 +396,8 @@ async fn trash_entry(window: WebviewWindow, path: String, title: String, message
     for id in &ids {
         open.remove(id);
     }
+    // 휴지통으로 간 파일은 다시 열기 목록에서도 뺀다(같은 경로에 새로 생긴 다른 파일을 열지 않게).
+    docs.closed.lock().unwrap().retain(|(_, p)| !p.starts_with(&target));
     Ok(Some(Changed { path, ids }))
 }
 
