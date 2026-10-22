@@ -215,9 +215,26 @@ body:not(.paged) .paged-only,
   display: flex;
   flex-direction: column;
   flex: none;
-  width: 260px;
+  width: var(--explorer-width, 260px);
   overflow: hidden;
   background: var(--sidebar);
+  transition: margin-left 0.2s ease;
+}
+
+/* 숨길 때는 왼쪽으로 밀어 넣는다(폭은 그대로 두어 안의 목록이 접히며 줄바꿈되지 않게). 다 들어간 뒤에야 감춰 탭 이동에서 빠진다. */
+#explorer.collapsed {
+  margin-left: calc(var(--explorer-width, 260px) * -1);
+  visibility: hidden;
+  transition:
+    margin-left 0.2s ease,
+    visibility 0s 0.2s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #explorer,
+  #explorer.collapsed {
+    transition: none;
+  }
 }
 
 /* 사이드바 경계선: 선은 1px이지만 잡을 수 있는 폭은 넓게, 올리거나 끄는 동안 강조색 */
@@ -237,7 +254,7 @@ body:not(.paged) .paged-only,
 }
 
 .resizer:hover,
-body.resizing .resizer {
+.resizer.held {
   background: var(--accent);
   box-shadow: 0 0 0 1px var(--accent);
 }
@@ -245,6 +262,10 @@ body.resizing .resizer {
 body.resizing {
   cursor: col-resize;
   user-select: none;
+}
+
+body.resizing.rows {
+  cursor: row-resize;
 }
 
 body.resizing iframe {
@@ -443,10 +464,51 @@ body.resizing iframe {
 /* ---- 문서 탭 */
 
 .docs {
+  position: relative;
   display: flex;
   flex: 1;
+  min-width: 0;
+}
+
+/* 칸: 탭 줄 + 문서 자리. 자리와 크기는 나눔 나무에서 계산해 넣는다(shell.js applyLayout). */
+.pane {
+  position: absolute;
+  display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
+}
+
+/* 칸 사이 경계선: 칸 위에 겹쳐 놓는다(칸 요소를 옮기지 않으려고 칸들을 절대 위치로 둔다). */
+.split-resizer {
+  position: absolute;
+  z-index: 2;
+}
+
+/* 세로·가로 경계선이 만나는 곳에서는 세로 경계선(더 바깥 가지일 때가 많다)을 잡는다. */
+.split-resizer.vertical {
+  z-index: 3;
+  translate: -0.5px 0;
+}
+
+.split-resizer.horizontal {
+  height: 1px;
+  translate: 0 -0.5px;
+  cursor: row-resize;
+}
+
+.split-resizer.horizontal::before {
+  inset: -4px 0;
+}
+
+/* 나눈 화면에서 초점이 없는 칸의 보이는 탭은 강조색 대신 회색 선 */
+.docs.split .pane:not(.focused) .tab.active {
+  box-shadow: inset 0 2px var(--border);
+}
+
+.docs > .empty {
+  position: absolute;
+  inset: 0;
 }
 
 .tabs {
@@ -530,10 +592,41 @@ body.resizing iframe {
   background: var(--pressed);
 }
 
-main {
+.frames {
   position: relative;
   flex: 1;
   min-height: 0;
+}
+
+/* ---- 탭 끌기 */
+
+body.dragging-tab {
+  cursor: grabbing;
+  user-select: none;
+}
+
+body.dragging-tab iframe {
+  pointer-events: none;
+}
+
+.tab.dragging {
+  opacity: 0.5;
+}
+
+.drop-mark {
+  position: fixed;
+  z-index: 20;
+  pointer-events: none;
+}
+
+.drop-mark.line {
+  background: var(--accent);
+}
+
+.drop-mark.area {
+  box-sizing: border-box;
+  border: 2px solid var(--accent);
+  background: var(--accent-soft);
 }
 
 iframe {
