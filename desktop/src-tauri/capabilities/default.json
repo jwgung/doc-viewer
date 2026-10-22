@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "셸 창이 쓰는 권한. 앱 명령과 문서 알림(event listen), 닫기 전에 상태를 적은 뒤 창을 닫는 것(onCloseRequested)만 쓴다.",
+  "description": "셸 창이 쓰는 권한. core 기본 묶음(앱 명령·문서 알림 event listen 등)과, 닫기 전에 상태를 적은 뒤 창을 닫는 것(onCloseRequested의 destroy).",
   "windows": ["*"],
   "permissions": ["core:default", "core:window:allow-destroy"]
 }

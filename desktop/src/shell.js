@@ -451,7 +451,7 @@ function setZoom(value, focusX, focusY) {
   showToolbar();
 }
 
-/** Ctrl+휠: 마우스 아래 자리를 기준으로 키운다. 터치패드 오므리기도 Ctrl+휠로 온다. */
+/** Ctrl+휠: 문서 안에서는 마우스 아래 자리, 셸(상단바·탐색기) 위에서는 문서 가운데를 기준으로 키운다. 터치패드 오므리기도 Ctrl+휠로 온다. */
 function onWheel(e) {
   if (!e.ctrlKey) return;
   e.preventDefault(); // 문서가 없어도 WebView 전체 확대는 막는다.

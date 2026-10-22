@@ -290,6 +290,7 @@ fn invalid_name(name: &str) -> bool {
 }
 
 /// 탐색기 항목 이름 바꾸기(같은 폴더 안). 그 파일(폴더면 그 안)을 연 탭은 새 경로를 따라간다.
+/// 바로가기는 링크 자체의 이름만 바뀌고, 링크로 연 탭(가리키는 파일 경로로 열린다)은 그대로 둔다.
 #[tauri::command]
 fn rename_entry(path: String, name: String, docs: State<Documents>) -> Result<Changed, String> {
     let from = entry_path(&docs, &path)?;
