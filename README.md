@@ -1,57 +1,125 @@
+<div align="center">
+
 # Doc Viewer
 
-PDF·한글(hwp·hwpx)·Word·Excel·PowerPoint 문서를 인터넷 없이 보는 데스크톱 문서 뷰어입니다. Windows·macOS·Linux에서 씁니다.
-문서는 컴퓨터 밖으로 나가지 않습니다. 서버 변환이나 상용 엔진을 쓰지 않고, 앱 안의 웹 렌더러가 직접 그립니다.
+**Open PDF, Hangul (HWP/HWPX), Word, Excel and PowerPoint files — offline, on Windows, macOS and Linux.**
 
-Android 앱은 [doc-viewer-mobile](https://github.com/jwgung/doc-viewer-mobile)에 있습니다. 두 앱은 같은 웹 렌더러(`web/`)를 씁니다.
+[![Release](https://img.shields.io/github/v/release/jwgung/doc-viewer?label=download&sort=semver)](https://github.com/jwgung/doc-viewer/releases/latest)
+[![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-blue)](#download)
+[![CI](https://github.com/jwgung/doc-viewer/actions/workflows/ci.yml/badge.svg)](https://github.com/jwgung/doc-viewer/actions/workflows/ci.yml)
 
-## 내려받기
+**English** · [한국어](README.ko.md)
 
-[Releases](https://github.com/jwgung/doc-viewer/releases)에서 운영체제에 맞는 파일을 받습니다.
+<img src="docs/screenshots/en/main.png" alt="Doc Viewer with a folder explorer and document tabs" width="860">
 
-| 운영체제 | 파일 | 처음 열 때 |
+</div>
+
+Doc Viewer is a lightweight, read-only document viewer. It renders everything inside the app — no cloud conversion, no account, no Office installation. **Your files never leave your computer.**
+
+## Highlights
+
+- 📄 **Many formats, one app** — PDF, HWP/HWPX (Hangul), DOC/DOCX, XLS/XLSX/CSV, PPT/PPTX, Markdown, plain text and more.
+- 🗂️ **Folder explorer + tabs** — open a folder, click a file, keep many documents open. Rename, move to trash or reveal files right from the sidebar.
+- 🪟 **Split view (up to 4 panes)** — drag a tab or a file to any edge of a document to split. Resize panes by dragging the dividers.
+- 🔁 **Pick up where you left off** — open tabs, pages, zoom and your split layout come back the next time you start.
+- ⌨️ **Browser-like shortcuts** — <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> reopens closed tabs, duplicate a tab to read two parts of the same document side by side.
+- 🎬 **Media in slides** — videos and audio embedded in PPTX play right on the slide.
+- 🌙 **Light and dark** — follows your system theme.
+- 🔒 **Private by design** — works fully offline; nothing is uploaded anywhere.
+
+<div align="center">
+<img src="docs/screenshots/en/split-drag.gif" alt="Dragging a tab and a file to split the window" width="860">
+<br><sub>Drag a tab or a file to an edge to split the window.</sub>
+</div>
+
+## Download
+
+Get the latest version from **[Releases](https://github.com/jwgung/doc-viewer/releases/latest)**.
+
+| OS | File | First launch |
 |---|---|---|
-| Windows 10·11 | `…-windows-setup.exe` 또는 `…-windows.msi` | 서명이 없어 SmartScreen이 막으면 '추가 정보 → 실행' |
-| macOS 11 이상 | `…-macos.dmg` (Apple 실리콘·Intel 공용) | 서명이 없어 경고가 뜨면 앱을 우클릭 → '열기' |
-| Linux (Ubuntu 22.04 이상 등) | `…-linux-amd64.deb` 또는 `…-linux-amd64.AppImage` | AppImage는 실행 권한을 주고 실행 |
+| **Windows** 10 / 11 | `…-windows-setup.exe` (or `…-windows.msi`) | The app is not code-signed yet. If SmartScreen appears, click **More info → Run anyway**. |
+| **macOS** (Apple silicon & Intel) | `…-macos.dmg` | Not notarized yet. Right-click the app → **Open**, or allow it in *System Settings → Privacy & Security*. |
+| **Linux** (Ubuntu 22.04+ and similar) | `…-linux-amd64.deb` or `…-linux-amd64.AppImage` | For the AppImage, make it executable (`chmod +x`) and run it. |
 
-Windows에 WebView2가 없으면(구형 Windows 10) 설치할 때 한 번 내려받으므로 그때만 인터넷이 필요합니다.
-macOS·Linux 판은 아직 사용자 확인 전입니다. 문제가 있으면 Issues에 알려 주세요.
+> [!NOTE]
+> On older Windows 10 without WebView2, the installer downloads it once — that is the only time an internet connection is needed.
+> The macOS and Linux builds are new; please [open an issue](https://github.com/jwgung/doc-viewer/issues) if something looks wrong.
 
-## 여는 문서
+## Supported formats
 
-- pdf, hwp, hwpx, doc, docx, xls, xlsx, csv, ppt, pptx
-- 매크로 포함·서식·슬라이드 쇼 파일(docm·dotx·xlsm·ppsx 등), 한글 서식(hwt), tsv, txt, md, 로그, json·xml·toml·yaml
-- 그 밖의 글자 파일(설정·소스 코드·자막·diff)은 텍스트로
-- 확장자가 실제 형식과 달라도 내용으로 형식을 가립니다.
-- pptx 안 동영상·소리는 누르면 그 자리에서 재생합니다(mp4·mp3처럼 WebView가 푸는 형식).
+| Kind | Extensions |
+|---|---|
+| PDF | `pdf` |
+| Hangul (HWP) | `hwp`, `hwpx`, `hwt` |
+| Word | `doc`, `docx`, `docm`, `dot`, `dotx`, `dotm` |
+| Excel | `xls`, `xlsx`, `xlsm`, `xlt`, `xltx`, `xltm`, `csv`, `tsv` |
+| PowerPoint | `ppt`, `pptx`, `pptm`, `pps`, `ppsx`, `pot`, `potx` |
+| Text & data | `md`, `txt`, `log`, `json`, `xml`, `toml`, `yaml`, and other text files (config, source code, subtitles, diffs) |
 
-## 쓰는 법
+Files with a wrong or missing extension are recognized by their content. Password-protected Office files ask for the password.
 
-- 왼쪽 폴더 탐색기에서 폴더를 열고 파일을 누르면 탭으로 열립니다. 파일을 창에 끌어다 놓아도 됩니다.
-- 화면 나누기(최대 4칸): 탭이나 파일을 문서의 위·아래·왼쪽·오른쪽 가장자리로 끌어 놓습니다. 칸 사이 경계선을 끌어 크기를 바꿉니다.
-- 같은 문서를 여러 탭에: 탭 우클릭 '탭 복제', 또는 Ctrl(macOS는 Option)을 누른 채 탭을 끌어 놓기.
-- 닫은 탭 다시 열기: Ctrl+Shift+T.
-- 확대·축소: Ctrl+휠, Ctrl+= / Ctrl+-, Ctrl+0. 한 쪽씩·두 쪽씩 보기에서는 휠로 쪽을 넘깁니다.
-- 탐색기 우클릭으로 이름 바꾸기(F2)·휴지통(Del)·위치 열기·경로 복사.
-- 다시 켜면 열려 있던 탭·보던 쪽·확대·나눈 화면이 되살아납니다.
+## More screenshots
 
-## 직접 빌드하기
+<table>
+<tr>
+<td width="50%"><img src="docs/screenshots/en/split.jpg" alt="Four documents in a 2×2 split"><br><sub>PDF, slides, HWP and a spreadsheet side by side</sub></td>
+<td width="50%"><img src="docs/screenshots/en/dark.png" alt="Dark theme with a Hangul document"><br><sub>Dark theme with a Hangul (HWP) document</sub></td>
+</tr>
+<tr>
+<td colspan="2"><img src="docs/screenshots/en/slides.jpg" alt="PowerPoint slide in page view"><br><sub>Slides one page at a time — the mouse wheel flips pages</sub></td>
+</tr>
+</table>
 
-필요한 것: Node.js 24, pnpm 10, Rust(stable). Linux는 `libwebkit2gtk-4.1-dev librsvg2-dev patchelf`도 필요합니다.
+## Keyboard & mouse
+
+| Action | Shortcut |
+|---|---|
+| Open folder | <kbd>Ctrl</kbd>+<kbd>O</kbd> |
+| Close tab / reopen closed tab | <kbd>Ctrl</kbd>+<kbd>W</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> |
+| Next / previous tab | <kbd>Ctrl</kbd>+<kbd>Tab</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Tab</kbd> |
+| Split right | <kbd>Ctrl</kbd>+<kbd>\\</kbd> (or drag a tab to an edge) |
+| Duplicate tab | Right-click a tab → **Duplicate tab**, or drag with <kbd>Ctrl</kbd> (<kbd>Option</kbd> on macOS) |
+| Zoom | <kbd>Ctrl</kbd>+wheel, <kbd>Ctrl</kbd>+<kbd>=</kbd> / <kbd>Ctrl</kbd>+<kbd>-</kbd>, reset with <kbd>Ctrl</kbd>+<kbd>0</kbd> |
+| Find / print | <kbd>Ctrl</kbd>+<kbd>F</kbd> / <kbd>Ctrl</kbd>+<kbd>P</kbd> |
+| Rename / move to trash (sidebar) | <kbd>F2</kbd> / <kbd>Del</kbd> |
+
+On macOS, use <kbd>⌘</kbd> instead of <kbd>Ctrl</kbd> for most shortcuts. Switching tabs stays <kbd>Ctrl</kbd>+<kbd>Tab</kbd>, and wheel zoom stays <kbd>Ctrl</kbd>+wheel (trackpad pinch also works).
+
+## FAQ
+
+**Do my documents get uploaded anywhere?**
+No. Doc Viewer has no server. Files are read from your disk and rendered inside the app.
+
+**Can I edit documents?**
+No — Doc Viewer is a viewer. It is meant to open things quickly and accurately.
+
+**Some layouts look slightly different from Office/Hangul.**
+Rendering is done by open-source engines, so complex documents may differ a little. Fonts embedded in documents are not used yet; your system fonts are used instead. Issues with sample files are very welcome.
+
+**Is there a mobile version?**
+An Android version lives in a separate repository.
+
+## Build from source
+
+Requirements: Node.js 24, pnpm 10, Rust (stable). On Linux also `libwebkit2gtk-4.1-dev librsvg2-dev patchelf`.
 
 ```bash
 pnpm --dir web install
 pnpm --dir desktop install
 cd desktop
-pnpm tauri dev      # 개발 실행
-pnpm tauri build    # 설치 파일
+pnpm tauri dev      # run in development
+pnpm tauri build    # build installers for your OS
 ```
 
-## 구조
+Project layout:
 
-- `web/`: 공용 웹 렌더러(pdf.js, rhwp, web-ppt 사본 등). Android 앱과 같은 코드입니다.
-- `desktop/`: Tauri 셸. 탭·폴더 탐색기·분할 화면 같은 화면은 `desktop/src/`, 파일 읽기·형식 판별·문서 내주기(`doc` 스킴)는 `desktop/src-tauri/`.
-- 배포: `v*` 태그를 올리면 Release 워크플로가 세 운영체제 설치 파일을 만들어 Release에 붙입니다.
+- `web/` — the document renderer (pdf.js, rhwp, a patched copy of web-ppt, and more), shared with the Android app.
+- `desktop/` — the [Tauri](https://tauri.app) shell: tabs, folder explorer and split view in `desktop/src/`; file access, format detection and the local `doc` scheme in `desktop/src-tauri/`.
+- Releases: pushing a `v*` tag builds Windows, macOS and Linux installers and attaches them to a GitHub Release.
 
-라이선스와 고지는 [NOTICE.md](NOTICE.md)를 보세요.
+## Acknowledgements
+
+Built on great open-source projects, including [pdf.js](https://github.com/mozilla/pdf.js), [rhwp](https://github.com/edwardkim/rhwp), [web-ppt](https://github.com/unStone/web-ppt) and [Tauri](https://tauri.app). Third-party licenses are bundled with the app; see [NOTICE.md](NOTICE.md).
+
+This product was developed with reference to the HWP document format specification published by Hancom Inc.
