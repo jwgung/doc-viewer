@@ -73,6 +73,17 @@ Android의 `buildWebViewer` 작업은 `web/vendor/`도 입력으로 보므로 �
 | 레이아웃의 `showMasterSp="0"`(마스터 도형 숨김)을 레이아웃 자신의 도형까지 숨기는 것으로 읽어, 제목 슬라이드 레이아웃의 배경 그림·띠·로고가 빠졌다. 슬라이드의 값은 레이아웃·마스터 도형을, 레이아웃의 값은 마스터 도형만 숨긴다. | `pptx/parser.ts` `parseSlide` |
 | EMF 글자(`EXTTEXTOUT`)의 글자 간격(dx)에 `exScale`을 곱했다. `exScale`은 페이지 단위를 0.01mm로 바꾸는 참고값(GM_COMPATIBLE에서 대개 25~30)이고 dx는 이미 논리 단위라, 글자 폭이 수십 배로 늘어 `textLength`로 눌린 검은 덩어리가 됐다(차트·표 미리보기, OLE 개체 이름 등). 곱하지 않는다. 시험 문서의 pptx·xlsx·docx EMF 중 해당 글자가 있는 12개를 전후 비교해 모두 원래 글자로 나옴을 확인. | `image/emf.ts` `extTextOut` |
 
+| GDI 기록 없이 EMF+(GDI+) 주석만 든 EMF(PowerPoint가 비트맵 그림을 EMF로 감싸 붙일 때)를 GDI로만 해석해 빈칸이었다. 이런 파일은 안의 첫 그림 객체(압축 PNG·JPEG·GIF·TIFF 또는 32·24비트 화소)를 꺼내 틀 크기로 그린다. GDI 기록이 함께 있는 이중 파일은 그대로 GDI로 그린다. 실제 보고 문서의 3.9MB·4.7MB EMF 두 개가 나옴을 확인. | `image/emf.ts` `emfPlusOnlyImage`, `emfPlusImageUri` |
+
+### 글꼴
+
+| 원인 | 고친 곳 |
+|---|---|
+| 문서 글꼴이 없을 때의 대체 글꼴을 중국어 글꼴(PingFang SC·Hiragino Sans GB·Microsoft YaHei)로 정해 두어, Windows에서 영문·숫자는 중국어 글꼴로, 한글은 다른 글꼴로 섞여 그려지고 폭이 틀어졌다. 시스템 글꼴(`sans-serif`)에 맡긴다(언어에 맞는 글꼴을 OS가 고른다). 문서가 품은 글꼴(MTX 압축 EOT)은 풀지 않는다: 큰 글꼴(맑은 고딕 6MB) 하나에 수십 초가 걸렸다(2026-10-22 결정). | `render/text-svg.ts` `FALLBACK`, `render/svg.ts` `FONT_FALLBACK`·루트 `font-family`, `image/gdi.ts` `GENERIC` |
+| 글상자 자동 맞춤을 슬라이드 → 레이아웃 → 마스터 순으로 찾을 때 `noAutofit`을 건너뛰어, 레이아웃이 '자동 맞춤 안 함'인 자리표시자가 마스터의 `normAutofit`을 물려받아 머리글이 1/3로 줄었다. 가까운 쪽의 `noAutofit`도 상속을 끊는다. | `pptx/text.ts` `parseTextBody` |
+| 자동 맞춤으로 글자를 줄여도 자간(`spc`)은 그대로 둬 글자가 포개졌다. 자간도 같은 비율로 줄인다. | `render/svg.ts` `runStyle`, `render/text-svg.ts` `measure`·`spanSvg` |
+| 크기를 바꾼 그룹(`chExt`와 `ext`가 다름) 안의 도형 글을 그룹의 확대 변환 안에서 그려 글자까지 그룹 비율로 줄었다(53%로 줄인 그룹의 8pt 글이 4pt로). PowerPoint는 도형 모양만 늘이고 줄이며 글자 크기는 그대로 둔다. 그룹 비율을 되돌린 좌표계에서 실제 크기의 글상자로 배치한다. | `render/svg.ts` `renderGroup`(누적 비율 `Ctx.groupScale`), `shapeText` |
+
 ### 열지 못하던 파일
 
 | 원인 | 고친 곳 |

@@ -841,7 +841,8 @@ function hatchPattern(id: string, hatch: number, color: string, bg: string): str
 
 // ---------------- 字体族回退 ----------------
 
-const GENERIC = `, 'Helvetica Neue', Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif`;
+// [doc-viewer] 시스템 글꼴에 맡긴다(render/text-svg.ts FALLBACK과 같은 이유)
+const GENERIC = `, sans-serif`;
 
 export function fontStack(face: string): string {
   const f = face.trim();

@@ -6,8 +6,9 @@
 import {
   BS_NULL, BS_SOLID, Gfx, ID_MAT, MM_TEXT, PS_NULL,
   RDH_RECTANGLES, RGN_AND, RGN_COPY,
-  Reader, compose, decodeAnsi, defFont, dibToDataUri,
+  Reader, base64, compose, decodeAnsi, defFont, dibToDataUri, encodePng,
 } from './gdi';
+import { tiffToPng } from './tiff';
 import type { Brush, Fnt, Mat, Pen, Pt, Rect } from './gdi';
 
 const EMF_SIG = 0x464d4520; // ' EMF'
@@ -79,6 +80,15 @@ function parse(bytes: Uint8Array, opts: MetafileOptions): string | null {
   const frameH = (rclFrame.b - rclFrame.t) * 96 / 2540;
   const outW = opts.width ?? (frameW > 0 ? frameW : vb.r - vb.l);
   const outH = opts.height ?? (frameH > 0 ? frameH : vb.b - vb.t);
+
+  // [doc-viewer] GDI 그리기 없이 EMF+ 주석만 든 파일(PowerPoint가 그림을 EMF로 감싸 붙일 때)은 GDI 해석으로는
+  // 빈칸이 된다. 안에 든 그림을 꺼내 틀 크기에 맞춰 그린다.
+  const plus = emfPlusOnlyImage(bytes);
+  if (plus) {
+    const w = vb.r - vb.l, hh = vb.b - vb.t;
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${hh}" width="${outW}" height="${outH}" preserveAspectRatio="none">`
+      + `<image href="${plus}" width="${w}" height="${hh}" preserveAspectRatio="none"/></svg>`;
+  }
 
   // EMF 默认逻辑单位 = 设备单位
   g.dc.mapMode = MM_TEXT;
@@ -432,4 +442,96 @@ function bitBlt(g: Gfx, r: Reader, bytes: Uint8Array, base: number, stretch: boo
   const href = dibToDataUri(bytes, base + offBmi, cbBmi, base + offBits, cbBits);
   if (!href) return;
   g.image({ l: xDest, t: yDest, r: xDest + cxDest, b: yDest + cyDest }, href);
+}
+
+// ---------------- [doc-viewer] EMF+ 전용 파일 ----------------
+
+const EMR_COMMENT = 70;
+const EMFPLUS_SIG = 0x2b464d45; // 'EMF+'
+const EMFPLUS_OBJECT = 0x4008;
+const OBJECT_IMAGE = 5;
+const IMAGE_BITMAP = 1;
+const BITMAP_COMPRESSED = 1;
+// [MS-EMFPLUS] PixelFormat: 32bppARGB·32bppPARGB·32bppRGB·24bppRGB
+const PIXEL_ARGB = 0x0026200a, PIXEL_PARGB = 0x000e200b, PIXEL_RGB32 = 0x00022009, PIXEL_RGB24 = 0x00021808;
+
+/**
+ * GDI 그리기 기록 없이 EMF+ 주석만 든 EMF면 그 안의 첫 그림 객체를 data URI로 돌려준다. 아니면 null.
+ * GDI 기록이 함께 있는(이중) 파일은 GDI 쪽이 같은 그림을 그리므로 건드리지 않는다.
+ * 큰 그림 객체는 여러 기록에 나뉘어(연속 표시 0x8000, 앞 4바이트는 전체 크기) 오므로 이어 붙인다.
+ */
+function emfPlusOnlyImage(bytes: Uint8Array): string | null {
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const chunks = new Map<number, Uint8Array[]>();
+  let first: number | null = null;
+  let p = 0;
+  while (p + 8 <= bytes.length) {
+    const type = dv.getUint32(p, true);
+    const size = dv.getUint32(p + 4, true);
+    if (size < 8 || p + size > bytes.length) break;
+    if (type === R.EOF) break;
+    if (type === EMR_COMMENT && size >= 16 && dv.getUint32(p + 12, true) === EMFPLUS_SIG) {
+      const end = Math.min(p + 12 + dv.getUint32(p + 8, true), p + size);
+      for (let q = p + 16; q + 12 <= end;) {
+        const rt = dv.getUint16(q, true), flags = dv.getUint16(q + 2, true);
+        const rsize = dv.getUint32(q + 4, true), dsize = dv.getUint32(q + 8, true);
+        if (rsize < 12 || q + rsize > end) break;
+        if (rt === EMFPLUS_OBJECT && ((flags >> 8) & 0x7f) === OBJECT_IMAGE) {
+          const id = flags & 0xff;
+          const skip = flags & 0x8000 ? 4 : 0;
+          const list = chunks.get(id) ?? [];
+          list.push(bytes.subarray(q + 12 + skip, q + 12 + Math.min(dsize, rsize - 12)));
+          chunks.set(id, list);
+          first ??= id;
+        }
+        q += rsize;
+      }
+    } else if (type !== R.HEADER && type !== EMR_COMMENT) {
+      return null; // GDI 기록이 있다: 보통 해석에 맡긴다
+    }
+    p += size;
+  }
+  if (first === null) return null;
+  const parts = chunks.get(first)!;
+  const data = new Uint8Array(parts.reduce((n, c) => n + c.length, 0));
+  parts.reduce((at, c) => (data.set(c, at), at + c.length), 0);
+  return emfPlusImageUri(data);
+}
+
+/** EmfPlusImage 객체 → data URI(비트맵만, 메타파일 그림은 null) */
+function emfPlusImageUri(data: Uint8Array): string | null {
+  if (data.length < 28) return null;
+  const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  if (dv.getUint32(4, true) !== IMAGE_BITMAP) return null;
+  const w = dv.getInt32(8, true), h = dv.getInt32(12, true), stride = dv.getInt32(16, true);
+  const format = dv.getUint32(20, true), kind = dv.getUint32(24, true);
+  const body = data.subarray(28);
+  if (kind === BITMAP_COMPRESSED) {
+    const sig = (body[0] << 24 | body[1] << 16 | body[2] << 8 | body[3]) >>> 0;
+    if (sig === 0x89504e47) return `data:image/png;base64,${base64(body)}`;
+    if (sig >>> 16 === 0xffd8) return `data:image/jpeg;base64,${base64(body)}`;
+    if (sig === 0x47494638) return `data:image/gif;base64,${base64(body)}`;
+    if (sig === 0x49492a00 || sig === 0x4d4d002a) {
+      const png = tiffToPng(body);
+      return png ? `data:image/png;base64,${base64(png)}` : null;
+    }
+    return null;
+  }
+  // 압축하지 않은 화소: 위에서 아래로, 한 줄 stride바이트, BGRA(32)·BGR(24)
+  const bpp = format === PIXEL_RGB24 ? 3 : format === PIXEL_ARGB || format === PIXEL_PARGB || format === PIXEL_RGB32 ? 4 : 0;
+  if (!bpp || w <= 0 || h <= 0 || stride < w * bpp || body.length < stride * h) return null;
+  const rgba = new Uint8Array(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const s = y * stride + x * bpp, d = (y * w + x) * 4;
+      const a = bpp === 4 && format !== PIXEL_RGB32 ? body[s + 3] : 255;
+      // 미리 곱한 알파(PARGB)는 되돌린다.
+      const un = format === PIXEL_PARGB && a > 0 && a < 255 ? 255 / a : 1;
+      rgba[d] = Math.min(255, body[s + 2] * un);
+      rgba[d + 1] = Math.min(255, body[s + 1] * un);
+      rgba[d + 2] = Math.min(255, body[s] * un);
+      rgba[d + 3] = a;
+    }
+  }
+  return `data:image/png;base64,${base64(encodePng(rgba, w, h))}`;
 }
