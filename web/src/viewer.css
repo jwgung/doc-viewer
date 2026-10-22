@@ -95,6 +95,16 @@ body {
   flex: none;
 }
 
+/* 키움(윈도우 셸의 확대): 쪽이 화면보다 넓어지면 가로로도 스크롤하고, 마우스로 옮길 수 있게 스크롤 막대를 보인다. */
+#doc[data-mode='scroll'][data-zoomed] .page {
+  margin-left: 8px;
+}
+
+html:has(#doc[data-zoomed]),
+#doc[data-zoomed] {
+  scrollbar-width: thin;
+}
+
 .page > svg,
 .page > canvas {
   display: block;
@@ -141,6 +151,21 @@ body.searching .flip-stage {
 .flip-stage > .page {
   margin: 0;
   flex: none;
+}
+
+/* 한 쪽씩·두 쪽씩을 키우면 쪽이 화면보다 커지므로 가로·세로로 스크롤한다. 넘친 쪽의 왼쪽·위가 잘리지 않게 safe로 가운데 둔다. */
+#doc[data-mode='page'][data-zoomed],
+#doc[data-mode='spread'][data-zoomed] {
+  overflow: auto;
+}
+
+#doc[data-zoomed] .flip-stage {
+  justify-content: safe center;
+  align-items: safe center;
+  width: max-content;
+  min-width: 100%;
+  height: auto;
+  min-height: 100%;
 }
 
 /* 한 쪽씩·두 쪽씩 + 화면 가득: 쪽이 화면보다 길면 세로로 스크롤한다. */

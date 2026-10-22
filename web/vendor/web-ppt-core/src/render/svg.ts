@@ -21,6 +21,8 @@ interface Ctx {
   textMode: 'html' | 'svg';
   media: 'badge' | 'player';
   hidden: ReadonlySet<number> | null;
+  /** [doc-viewer] 감싼 그룹들의 누적 확대 비율(x, y). 글은 이 비율로 줄이지 않는다(shapeText). */
+  groupScale?: readonly [number, number];
 }
 
 export interface RenderOptions {
@@ -81,7 +83,8 @@ export function renderSlideToSvg(pres: Presentation, slide: Slide, opts: RenderO
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" ` +
     `viewBox="0 0 ${r(pres.width)} ${r(pres.height)}" ` +
-    `font-family="Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif">` +
+    // [doc-viewer] 시스템 글꼴에 맡긴다(text-svg.ts FALLBACK과 같은 이유)
+    `font-family="sans-serif">` +
     notes +
     `<defs>${styleTag}${ctx.defs.join('')}</defs>` +
     bg + body + '</svg>'
@@ -468,7 +471,7 @@ function renderShape(el: ShapeElement, ctx: Ctx): string {
 
     if (d3) inner += bevelOverlay(el, d3, solidBase, ctx);
   }
-  if (el.text) inner += renderText(el.text, el.w, el.h, ctx);
+  if (el.text) inner += shapeText(el.text, el.w, el.h, ctx);
   return wrapEl(el, inner, ctx);
 }
 
@@ -568,7 +571,9 @@ function renderImage(el: ImageElement, ctx: Ctx): string {
 
 function renderGroup(el: GroupElement, ctx: Ctx): string {
   const childXf = `scale(${r(el.scaleX || 1)} ${r(el.scaleY || 1)}) translate(${r(-el.childX)} ${r(-el.childY)})`;
-  const children = el.children.map((c) => renderEl(c, ctx)).join('');
+  const [sx, sy] = ctx.groupScale ?? [1, 1];
+  const childCtx: Ctx = { ...ctx, groupScale: [sx * (el.scaleX || 1), sy * (el.scaleY || 1)] };
+  const children = el.children.map((c) => renderEl(c, childCtx)).join('');
   return wrapEl(el, `<g transform="${flipTransform(el)} ${childXf}">${children}</g>`, ctx);
 }
 
@@ -666,7 +671,8 @@ function renderUnsupported(el: UnsupportedElement): string {
 
 const ANCHOR_CSS: Record<TextBody['anchor'], string> = { top: 'flex-start', middle: 'center', bottom: 'flex-end' };
 
-const FONT_FALLBACK = [`'PingFang SC'`, `'Hiragino Sans GB'`, `'Microsoft YaHei'`, 'sans-serif'];
+// [doc-viewer] text-svg.ts FALLBACK과 같이 시스템 글꼴에 맡긴다.
+const FONT_FALLBACK = ['sans-serif'];
 
 /**
  * 字体栈：文件指定的字体在前，通用中文回退在后。
@@ -704,7 +710,7 @@ function runStyle(run: TextRun, scale: number): string {
     if (run.underlineColor) css += `text-decoration-color:${run.underlineColor};`;
   }
   if (run.fonts.length) css += `font-family:${stack(run.fonts, FONT_FALLBACK)};`;
-  if (run.spacing) css += `letter-spacing:${r(run.spacing)}px;`;
+  if (run.spacing) css += `letter-spacing:${r(run.spacing * scale)}px;`; // [doc-viewer] 자간도 글자 크기처럼 줄인다
   if (run.caps === 'all') css += 'text-transform:uppercase;';
   else if (run.caps === 'small') css += 'font-variant:small-caps;';
   if (run.highlight) css += `background-color:${run.highlight};`;
@@ -763,6 +769,17 @@ const VERT_CSS: Record<string, string> = {
   vert270: 'writing-mode:vertical-rl;transform:rotate(180deg);',
   wordArtVert: 'writing-mode:vertical-rl;text-orientation:upright;',
 };
+
+/**
+ * [doc-viewer] 도형 글. PowerPoint는 그룹 크기를 바꿔도 도형 모양만 늘이고 줄이며 글자 크기는 그대로 둔다.
+ * 그룹의 확대 변환 안에서 그대로 그리면 글자까지 그룹 비율로 줄어(53%로 줄인 그룹의 8pt 글이 4pt로) 원본과 달랐다.
+ * 그룹 비율만큼 되돌린 좌표계에서, 실제 슬라이드 크기의 글상자로 배치한다.
+ */
+function shapeText(t: TextBody, w: number, h: number, ctx: Ctx): string {
+  const [sx, sy] = ctx.groupScale ?? [1, 1];
+  if (Math.abs(sx - 1) < 1e-3 && Math.abs(sy - 1) < 1e-3) return renderText(t, w, h, ctx);
+  return `<g transform="scale(${r(1 / sx)} ${r(1 / sy)})">${renderText(t, w * sx, h * sy, ctx)}</g>`;
+}
 
 function renderText(
   t: TextBody,

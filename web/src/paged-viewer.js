@@ -4,6 +4,7 @@
 //   spread: 두 쪽을 나란히 보여주고 두 쪽씩 넘긴다.
 // 연속 스크롤은 처음 크기보다 작게 오므려(줄이기) 여러 쪽을 한 화면에 볼 수 있다. WebView 확대는 쪽이 화면 너비에
 // 맞은 처음 크기 밑으로 줄지 않으므로, 처음 크기에서 더 오므리면 쪽 칸을 직접 줄여 한 줄에 여러 쪽을 놓는다.
+// 윈도우 셸은 WebView 확대 대신 쪽 칸을 처음 크기보다 키워(maxShrink > 1) 확대한다. 키운 크기로 다시 그려 글자가 선명하다.
 // 맞춤(fit)은 두 가지다.
 //   width: 쪽 너비를 화면 너비에 맞춘다(화면 가득). 쪽이 화면보다 길면 세로로 스크롤한다.
 //   page:  쪽 전체가 한 화면에 들어오게 줄인다(용지 맞춤).
@@ -25,6 +26,13 @@ const SWIPE_MIN_PX = 50;
 const EDGE_TAP_RATIO = 0.3;
 // 쪽을 넘길 때 새 쪽이 밀려 들어오는 시간(ms)
 const FLIP_MS = 220;
+// 한 쪽씩·두 쪽씩에서 휠을 이만큼(px) 굴리면 쪽을 넘긴다. 마우스 휠 한 칸은 보통 100px이다.
+const WHEEL_FLIP_PX = 50;
+// 넘긴 뒤 휠이 이만큼(ms) 멈춰야 다시 넘긴다(터치패드 관성으로 여러 쪽이 넘어가지 않게). 마우스 휠 한 칸은 WHEEL_REPEAT_MS 뒤 바로 넘긴다.
+const WHEEL_GAP_MS = 150;
+const WHEEL_REPEAT_MS = 250;
+// 줄 단위 휠(마우스 설정 '한 번에 여러 줄')을 픽셀로 바꾸는 값(윈도우 셸 desktop/src/shell.js의 WHEEL_LINE_PX와 같다)
+const WHEEL_LINE_PX = 40;
 const THUMB_PX = 44;
 // 처음 크기에서 줄일 수 있는 가장 작은 비율(연속 스크롤이면 한 줄에 네 쪽)
 const MIN_SHRINK = 0.25;
@@ -70,8 +78,10 @@ export class PagedViewer {
     this.fit = fit ?? (mode === 'scroll' ? 'width' : 'page');
     this.onPageChange = onPageChange;
     this.current = 0;
-    /** 연속 스크롤에서 쪽 칸을 줄인 비율(1이면 처음 크기) */
+    /** 쪽 칸을 줄인(1보다 크면 키운) 비율(1이면 처음 크기) */
     this.shrink = 1;
+    /** 키울 수 있는 상한. 앱(Android)은 확대를 WebView에 맡겨 1, 윈도우 셸은 main.js setZoom이 올린다. */
+    this.maxShrink = 1;
     /** 화면 아래를 가린 높이(발표자 노트 칸). 쪽을 맞출 때 그만큼 뺀다. */
     this.bottomInset = 0;
     /** 쪽 번호 → 그 쪽을 그리는 중인(또는 다 그린) 약속 */
@@ -86,13 +96,18 @@ export class PagedViewer {
     // 화면 크기가 바뀌면(회전 등) 쪽 크기를 다시 맞춘다. 연속 스크롤·화면 가득은 칸 크기를 CSS 비율이 따라가므로,
     // 폭이 달라진 쪽만 그 폭으로 다시 그린다(PDF 그림 해상도·글자 층 위치가 그린 폭에 묶여 있다).
     // 검색 중 높이만 바뀐 것(키보드가 열리고 닫힘)은 무시한다: 다시 그리면 검색 강조와 스크롤 위치를 잃는다.
+    // 숨겨진 동안(윈도우 셸의 보이지 않는 탭: 폭 0)은 무시하고, 다시 보일 때 원래 폭이면 다시 그리지 않는다.
     let lastWidth = innerWidth;
+    let lastHeight = innerHeight;
     addEventListener(
       'resize',
       debounce(() => {
+        if (innerWidth === 0 || innerHeight === 0) return;
         const widthChanged = innerWidth !== lastWidth;
+        const heightChanged = innerHeight !== lastHeight;
         lastWidth = innerWidth;
-        if (!widthChanged && document.body.classList.contains('searching')) return;
+        lastHeight = innerHeight;
+        if (!widthChanged && (!heightChanged || document.body.classList.contains('searching'))) return;
         if (this.mode !== 'scroll' || this.fit === 'page') this.render();
         else this.redrawResized?.();
       }, 200),
@@ -237,9 +252,10 @@ export class PagedViewer {
    * 쪽을 처음 크기보다 줄인다. 연속 스크롤은 쪽 칸을 줄이고 손가락 사이(focusY) 아래의 쪽 자리가 그대로 있게 화면을 옮긴다.
    * 한 쪽씩·두 쪽씩은 오므리는 동안 무대를 transform으로 줄이고, 손을 떼면 그 크기로 다시 배치한다(renderFlip).
    * 줄인 동안에는 WebView 확대를 막아(touch-action) 벌리기를 이쪽에서 받아 처음 크기로 되돌린다.
+   * 키울 때(maxShrink > 1)는 focusX도 제자리에 있게 가로로도 옮긴다.
    */
-  setShrink(value, focusY = innerHeight / 2) {
-    const shrink = Math.min(1, Math.max(MIN_SHRINK, value));
+  setShrink(value, focusY = innerHeight / 2, focusX = innerWidth / 2) {
+    const shrink = Math.min(this.maxShrink, Math.max(MIN_SHRINK, value));
     if (shrink === this.shrink) return;
     const anchor = this.slots?.length ? this.pageAt(focusY) : null;
     const before = anchor?.getBoundingClientRect();
@@ -247,22 +263,30 @@ export class PagedViewer {
     this.container.style.setProperty('--shrink', String(shrink));
     if (shrink < 1) this.container.dataset.shrunk = '';
     else delete this.container.dataset.shrunk;
+    if (shrink > 1) this.container.dataset.zoomed = '';
+    else delete this.container.dataset.zoomed;
     document.documentElement.style.touchAction = shrink < 1 ? 'pan-x pan-y' : '';
     const stage = this.mode === 'scroll' ? null : this.container.querySelector('.flip-stage');
     if (stage) stage.style.transform = `scale(${shrink / Number(stage.dataset.shrink ?? 1)})`;
     dispatchEvent(new CustomEvent('viewershrink', { detail: shrink })); // 앱의 '원래 크기' 버튼을 보이거나 숨긴다
     if (anchor) {
       const after = anchor.getBoundingClientRect();
-      scrollBy(0, after.top + ((focusY - before.top) / before.height) * after.height - focusY);
+      const dx = shrink > 1 || before.width > innerWidth ? after.left + ((focusX - before.left) / before.width) * after.width - focusX : 0;
+      scrollBy(dx, after.top + ((focusY - before.top) / before.height) * after.height - focusY);
     }
+  }
+
+  /** 줄이거나 키우기를 마쳤다: 바뀐 칸 크기로 다시 그린다(연속 스크롤은 폭이 달라진 쪽만). */
+  settleShrink() {
+    if (this.mode === 'scroll') this.redrawResized?.();
+    else if (Number(this.container.querySelector('.flip-stage')?.dataset.shrink) !== this.shrink) this.renderFlip();
   }
 
   /** 줄인 쪽을 처음 크기로 되돌린다(앱의 '원래 크기' 버튼). */
   resetShrink() {
     if (this.shrink === 1) return;
     this.setShrink(1);
-    if (this.mode === 'scroll') this.redrawResized?.();
-    else this.renderFlip();
+    this.settleShrink();
   }
 
   /** 화면 높이 y에 걸친 쪽 칸(없으면 가장 가까운 쪽) */
@@ -401,8 +425,9 @@ export class PagedViewer {
           drawing--;
           pump();
         }
-        // 줄여서 한 화면에 쪽이 많이 보이면 그만큼 더 남겨 둔다(보이는 쪽을 지웠다 다시 그리지 않게).
-        if (wanted.size <= Math.min(KEEP_RENDERED_MAX, Math.ceil(KEEP_RENDERED / this.shrink ** 2))) return;
+        // 줄여서 한 화면에 쪽이 많이 보이면 그만큼 더 남겨 두고(보이는 쪽을 지웠다 다시 그리지 않게),
+        // 키우면 쪽마다 그림이 커지므로 그만큼 덜 남긴다(두 쪽은 남겨 넘길 때 빈 쪽이 보이지 않게).
+        if (wanted.size <= Math.min(KEEP_RENDERED_MAX, Math.max(2, Math.ceil(KEEP_RENDERED / this.shrink ** 2)))) return;
         const farthest = [...wanted].sort((a, b) => Math.abs(b - index) - Math.abs(a - index))[0];
         wanted.delete(farthest);
         pages[farthest].replaceChildren();
@@ -473,9 +498,16 @@ export class PagedViewer {
     const animate = motion && !matchMedia('(prefers-reduced-motion: reduce)').matches;
     const old = animate ? this.container.querySelector(':scope > .flip-stage:not(.flip-leaving)') : null;
     const oldScroll = this.container.scrollTop;
+    // 키운 채 다시 배치하면(확대를 마침·창 크기 바뀜) 보던 자리(화면 가운데)를 그대로 둔다.
+    const { scrollLeft, scrollTop, scrollWidth, scrollHeight, clientWidth, clientHeight } = this.container;
+    const keep = !motion && this.shrink > 1 ? { x: (scrollLeft + clientWidth / 2) / scrollWidth, y: (scrollTop + clientHeight / 2) / scrollHeight } : null;
     this.container.replaceChildren(stage);
+    if (keep) {
+      this.container.scrollLeft = keep.x * this.container.scrollWidth - clientWidth / 2;
+      this.container.scrollTop = keep.y * this.container.scrollHeight - clientHeight / 2;
+    }
     // 위로 밀어 이전 쪽으로 왔으면 그 쪽의 끝(긴 쪽이면 아래)부터 보여 준다: 이어 읽던 자리.
-    this.container.scrollTop = motion?.y < 0 ? this.container.scrollHeight : 0;
+    else this.container.scrollTop = motion?.y < 0 ? this.container.scrollHeight : 0;
     if (old) this.slide(old, stage, motion, oldScroll);
     this.changed(this.current);
     // 다음·이전 쪽은 미리 준비할 필요가 없을 만큼 빠르므로 보이는 쪽만 그린다.
@@ -546,6 +578,7 @@ export class PagedViewer {
       { passive: true },
     );
     this.bindShrink();
+    this.bindWheel();
     addEventListener('keydown', (e) => {
       if (this.mode === 'scroll') return;
       if (e.key === 'ArrowRight' || e.key === 'PageDown') this.next();
@@ -594,10 +627,46 @@ export class PagedViewer {
         const moved = pinch.moved;
         pinch = null;
         if (!moved) return;
-        if (this.mode === 'scroll') requestAnimationFrame(() => this.redrawResized?.());
-        else if (Number(this.container.querySelector('.flip-stage')?.dataset.shrink) !== this.shrink) this.renderFlip();
+        requestAnimationFrame(() => this.settleShrink());
       },
       { passive: true },
+    );
+  }
+
+  /** 한 쪽씩·두 쪽씩: 휠(마우스·터치패드)로 쪽을 넘긴다. 쪽이 화면보다 커서 세로로 스크롤되면 끝에 닿은 뒤에 넘긴다. */
+  bindWheel() {
+    let sum = 0;
+    let last = 0;
+    /** 지금 휠 동작(WHEEL_GAP_MS보다 짧게 이어진 휠 이벤트)이 시작한 시각 */
+    let streamStart = 0;
+    let flippedAt = -Infinity;
+    addEventListener(
+      'wheel',
+      (e) => {
+        if (this.mode === 'scroll' || e.ctrlKey) return; // Ctrl+휠은 셸의 확대·축소
+        if (e.target instanceof Element && e.target.closest(`${UI_SELECTOR}, .search-bar`)) return;
+        const dy = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? e.deltaY * WHEEL_LINE_PX : e.deltaY;
+        if (!dy) return;
+        const now = performance.now();
+        if (now - last > WHEEL_GAP_MS) {
+          streamStart = now;
+          sum = 0;
+        }
+        last = now;
+        const { scrollTop, scrollHeight, clientHeight } = this.container;
+        if (dy > 0 ? scrollTop + clientHeight < scrollHeight - 1 : scrollTop > 1) return; // 쪽 안에서 스크롤
+        e.preventDefault();
+        // 넘긴 뒤 이어지는 같은 휠 동작(관성)은 무시한다. 휠이 잠깐 멈췄거나 마우스 휠 한 칸이면 다시 넘긴다.
+        const notch = Math.abs(dy) >= WHEEL_FLIP_PX && now - flippedAt > WHEEL_REPEAT_MS;
+        if (flippedAt >= streamStart && !notch) return;
+        sum += dy;
+        if (Math.abs(sum) < WHEEL_FLIP_PX) return;
+        if (sum > 0) this.next({ y: 1 });
+        else this.prev({ y: -1 });
+        sum = 0;
+        flippedAt = now;
+      },
+      { passive: false },
     );
   }
 

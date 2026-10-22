@@ -3,6 +3,7 @@
 // 형식에 맞는 렌더러만 불러와 그리고, 측정값·읽던 위치·화면 탭은 앱이 주입한 AndroidViewer 통로로 넘긴다.
 // 앱은 window.viewer.setMode('scroll' | 'page' | 'spread'), applyFit('width' | 'page'), setChrome(보임 여부),
 // setNotes(발표자 노트 보임 여부), resetShrink(), flushPosition() 등을 부른다(아래 window.viewer).
+// 윈도우 셸은 setZoom(비율)으로 확대·축소한다.
 import { PagedViewer } from './paged-viewer.js';
 import { openSheet } from './sheet.js';
 import { t } from './strings.js';
@@ -35,6 +36,11 @@ const MAX_EXPANDED_BYTES = 1024 ** 3;
 /** 압축을 풀면 너무 커서 열지 않는 문서. 최후 대안(본문 글자 뽑기)도 압축을 풀어야 하므로 건너뛴다. */
 class TooLargeError extends Error {}
 const CFB_MAGIC = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
+// 윈도우 셸 확대·축소의 범위. 쪽 없는 문서(엑셀·마크다운·텍스트)는 글자가 읽히는 만큼만 줄인다.
+const MAX_ZOOM = 4;
+const MIN_FLOW_ZOOM = 0.5;
+// 확대·축소가 이만큼(ms) 멈추면 바뀐 크기로 쪽을 다시 그린다.
+const ZOOM_SETTLE_MS = 250;
 const container = document.getElementById('doc');
 const status = document.getElementById('status');
 let fmt = null;
@@ -52,6 +58,9 @@ let outlineLoader = null;
 let notesOf = null;
 /** 발표자 노트 칸(켰을 때만 있다) */
 let notesPanel = null;
+/** 쪽 없는 문서의 확대 비율(CSS zoom) */
+let flowZoom = 1;
+let zoomTimer = null;
 
 window.viewer = {
   open: (options) => open(options),
@@ -61,6 +70,8 @@ window.viewer = {
   applyFit: (next) => viewer?.applyFit(next),
   /** 오므려 줄인 쪽을 처음 크기로(앱의 '원래 크기' 버튼). WebView 확대는 앱이 되돌린다. */
   resetShrink: () => viewer?.resetShrink?.(),
+  /** 윈도우 셸의 확대·축소(Ctrl+휠·Ctrl+±). focusX·focusY 아래의 문서 자리를 그대로 둔다. 적용된 비율을 돌려준다. */
+  setZoom: (value, focusX, focusY) => setZoom(value, focusX, focusY),
   /** 읽기 모드: 앱이 상단바를 숨기면 쪽 번호·빠른 이동 손잡이도 숨긴다. */
   setChrome: (visible) => document.body.classList.toggle('reading', !visible),
   /** 발표자 노트 칸을 켜고 끈다(앱의 '더 보기' → 발표자 노트). 노트가 없는 문서면 아무것도 하지 않는다. */
@@ -108,6 +119,32 @@ window.viewer = {
 };
 
 /**
+ * 쪽 있는 문서는 쪽 칸을 키우거나 줄이고(멈추면 그 크기로 다시 그려 선명하다), 나머지는 문서 영역을 CSS zoom으로 바꾼다.
+ * 바뀐 비율은 'shrink'로 알린다(쪽 뷰어는 viewershrink 이벤트로).
+ */
+function setZoom(value, focusX = innerWidth / 2, focusY = innerHeight / 2) {
+  if (viewer) {
+    viewer.maxShrink = MAX_ZOOM;
+    viewer.setShrink(value, focusY, focusX);
+    clearTimeout(zoomTimer);
+    zoomTimer = setTimeout(() => viewer?.settleShrink(), ZOOM_SETTLE_MS);
+    return viewer.shrink;
+  }
+  const next = Math.min(MAX_ZOOM, Math.max(MIN_FLOW_ZOOM, value));
+  if (next === flowZoom) return flowZoom;
+  // 보던 자리(세로 비율)를 그대로 둔다.
+  const root = document.documentElement;
+  const ratio = (scrollY + focusY) / root.scrollHeight;
+  flowZoom = next;
+  container.style.zoom = next === 1 ? '' : String(next);
+  if (next > 1) container.dataset.zoomed = '';
+  else delete container.dataset.zoomed;
+  scrollTo(scrollX, ratio * root.scrollHeight - focusY);
+  report('shrink', { value: next });
+  return next;
+}
+
+/**
  * 발표자 노트 칸: 화면 아래에 높이를 정해 두고 붙인다. 쪽 뷰어는 그만큼 위에서 쪽을 맞추고(setBottomInset),
  * 쪽 번호·빠른 이동 손잡이는 칸 위로 올린다(CSS --notes-height).
  */
@@ -152,9 +189,23 @@ function showNotes() {
   notesPanel.scrollTop = 0;
 }
 
+/**
+ * 윈도우 셸(desktop/)은 탭마다 viewer.html을 같은 출처 iframe으로 띄우고 부모 창에 viewerHost를 둔다.
+ * 어느 탭의 알림인지 알도록 이 창을 함께 넘긴다(AndroidViewer.report는 인자 하나만 받는다).
+ */
+function desktopHost() {
+  try {
+    const host = parent !== window ? parent.viewerHost : null;
+    return host ? { report: (payload) => host.report(payload, window) } : null;
+  } catch {
+    return null; // 다른 출처가 띄운 경우
+  }
+}
+
 function report(event, data = {}) {
   const payload = JSON.stringify({ event, fmt, ...data });
-  if (window.AndroidViewer) window.AndroidViewer.report(payload);
+  const host = window.AndroidViewer ?? desktopHost();
+  if (host) host.report(payload);
   else console.log('[viewer]', payload);
 }
 

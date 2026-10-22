@@ -316,6 +316,9 @@ export function parseTextBody(txBody: Element | null, env: TextEnv): TextBody | 
   let spAutoFit = false;
   for (const b of bodyPrs) {
     if (!b) continue;
+    // [doc-viewer] 가까운 쪽(슬라이드 → 레이아웃 → 마스터)의 noAutofit도 상속을 끊는다. 건너뛰면 마스터의
+    // normAutofit을 물려받아, 줄이지 말아야 할 머리글을 글상자에 맞춰 1/3로 줄였다.
+    if (kid(b, 'noAutofit')) break;
     if (kid(b, 'normAutofit')) { autofitEl = kid(b, 'normAutofit'); break; }
     if (kid(b, 'spAutoFit')) { spAutoFit = true; break; }
   }

@@ -1,0 +1,35 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Doc Viewer",
+  "version": "0.0.0",
+  "identifier": "dev.jwgung.docviewer",
+  "build": {
+    "frontendDist": "../dist",
+    "beforeDevCommand": "pnpm build:front",
+    "beforeBuildCommand": "pnpm build:front"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["msi", "nsis"],
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"],
+    "fileAssociations": [
+      { "ext": ["pdf"], "name": "PDF", "role": "Viewer" },
+      { "ext": ["hwp", "hwpx", "hwt"], "name": "Hangul", "role": "Viewer" },
+      { "ext": ["doc", "docx", "docm", "dot", "dotx", "dotm"], "name": "Word", "role": "Viewer" },
+      { "ext": ["xls", "xlsx", "xlsm", "xlt", "xltx", "xltm", "csv", "tsv"], "name": "Excel", "role": "Viewer" },
+      { "ext": ["ppt", "pptx", "pptm", "pps", "ppsx", "pot", "potx"], "name": "PowerPoint", "role": "Viewer" },
+      { "ext": ["md", "markdown"], "name": "Markdown", "role": "Viewer" }
+    ],
+    "windows": {
+      "webviewInstallMode": { "type": "downloadBootstrapper" },
+      "nsis": { "installerIcon": "icons/icon.ico" }
+    }
+  }
+}

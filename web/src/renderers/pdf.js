@@ -29,6 +29,11 @@ const RANGE_MIN_BYTES = 4 * 1024 * 1024;
 const RANGE_CHUNK_BYTES = 1024 * 1024;
 // 한 쪽씩·두 쪽씩 보기에서 미리 그려 둘 넘김 수
 const AHEAD_FLIPS = 2;
+/**
+ * 쪽 캔버스 하나의 최대 화소 수(약 1,680만 화소, 64MB). 크게 확대하면(윈도우 셸 최대 400%) 화면 배율대로 그린 캔버스가
+ * 수백 MB가 되거나 브라우저 캔버스 한도를 넘어 빈 쪽이 된다. 넘으면 해상도를 낮춰 그리고 CSS로 늘인다.
+ */
+const MAX_CANVAS_PIXELS = 2 ** 24;
 
 /**
  * 구간 읽기: 앱이 문서 길이를 알려 주면(파일처럼 건너뛰며 읽을 수 있는 문서) pdf.js가 필요한 구간만 받게 한다.
@@ -83,7 +88,9 @@ export async function render(bytes, container, ctx) {
   /** 그 쪽을 scale(CSS 픽셀/PDF 단위)로 캔버스에 그린다. */
   const paint = async (page, index, scale) => {
     const canvas = document.createElement('canvas');
-    const pixels = page.getViewport({ scale: scale * devicePixelRatio });
+    const css = page.getViewport({ scale });
+    const ratio = Math.min(devicePixelRatio, Math.sqrt(MAX_CANVAS_PIXELS / (css.width * css.height)));
+    const pixels = page.getViewport({ scale: scale * ratio });
     canvas.width = Math.floor(pixels.width);
     canvas.height = Math.floor(pixels.height);
     try {
@@ -184,6 +191,7 @@ export async function render(bytes, container, ctx) {
       if (outline?.length) ctx.setOutline(() => outlineItems(pdf, outline, viewer));
     })
     .catch(() => {});
-  addEventListener('pagehide', () => pdf.destroy(), { once: true });
+  // pdf.js 6의 문서 객체에는 destroy가 없어 불러오기 작업으로 정리한다.
+  addEventListener('pagehide', () => task.destroy(), { once: true });
   return { pages: pdf.numPages, bytes: size, extra: { ranged: !!input.range } };
 }

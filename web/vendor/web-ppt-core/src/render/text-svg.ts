@@ -18,7 +18,10 @@ const r = (v: number): string => (Number.isFinite(v) ? String(Math.round(v * 100
 const esc = (s: string): string =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-const FALLBACK = [`'PingFang SC'`, `'Hiragino Sans GB'`, `'Microsoft YaHei'`, 'sans-serif'];
+// [doc-viewer] 문서 글꼴이 없으면 시스템 글꼴에 맡긴다(언어에 맞는 글꼴을 OS가 고른다: Windows 맑은 고딕, Android Noto CJK).
+// 원래는 중국어 글꼴(PingFang SC·Microsoft YaHei)을 먼저 둬서, Windows에서 영문·숫자는 중국어 글꼴로, 한글은 다른 글꼴로
+// 섞여 그려지고 폭이 틀어졌다.
+const FALLBACK = ['sans-serif'];
 
 let measureCtx: CanvasRenderingContext2D | null = null;
 let measureProbed = false;
@@ -111,7 +114,7 @@ function measure(text: string, run: TextRun, scale: number): number {
   }
   g.font = `${run.i ? 'italic ' : ''}${run.b ? '700 ' : '400 '}${size}px ${fontFamily(run)}`;
   const w = g.measureText(text).width;
-  return w + (run.spacing ?? 0) * text.length;
+  return w + (run.spacing ?? 0) * scale * text.length; // [doc-viewer] 자간도 글자 크기처럼 줄인다
 }
 
 function applyCaps(text: string, run: TextRun): string {
@@ -526,7 +529,7 @@ function spanSvg(seg: Seg, scale: number, addDef: (m: string) => string, dx?: nu
   ];
   if (run.b) attrs.push('font-weight="700"');
   if (run.i) attrs.push('font-style="italic"');
-  if (run.spacing) attrs.push(`letter-spacing="${r(run.spacing)}"`);
+  if (run.spacing) attrs.push(`letter-spacing="${r(run.spacing * scale)}"`); // [doc-viewer] 자간도 글자 크기처럼 줄인다
   const deco: string[] = [];
   if (run.u) deco.push('underline');
   if (run.strike) deco.push('line-through');

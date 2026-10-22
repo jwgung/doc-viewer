@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <!-- 셸은 자기 파일과 Tauri IPC만 쓴다. 문서는 탭마다 iframe의 viewer.html(웹 렌더러)이 그린다. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src ipc: http://ipc.localhost; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>Doc Viewer</title>
+    <link rel="stylesheet" href="./src/shell.css" />
+  </head>
+  <body>
+    <header class="toolbar" role="toolbar">
+      <button type="button" id="toggle-explorer" class="icon-button" data-icon="sidebar" data-label-attr="toggleExplorer" aria-pressed="true"></button>
+      <span class="spacer"></span>
+      <span class="paged-only">
+        <button type="button" id="view-menu" class="text-button dropdown" aria-haspopup="menu" data-label-attr="viewMode"></button>
+      </span>
+      <span class="segmented doc-only" role="group" data-label-attr="zoom">
+        <button type="button" id="zoom-out" data-icon="minus" data-label-attr="zoomOut"></button>
+        <button type="button" id="zoom-reset" class="zoom-value" data-label-attr="zoomReset">100%</button>
+        <button type="button" id="zoom-in" data-icon="plus" data-label-attr="zoomIn"></button>
+      </span>
+      <span class="actions doc-only">
+        <button type="button" id="outline" class="icon-button" data-icon="outline" data-label-attr="outline" hidden></button>
+        <button type="button" id="notes" class="icon-button" data-icon="notes" data-label-attr="notes" aria-pressed="false" hidden></button>
+        <button type="button" id="search" class="icon-button" data-icon="search" data-label-attr="search"></button>
+        <button type="button" id="print" class="icon-button" data-icon="print" data-label-attr="print"></button>
+      </span>
+    </header>
+    <div class="workspace">
+      <aside id="explorer">
+        <div class="explorer-head" id="explorer-head">
+          <span id="folder-name" class="folder-name"></span>
+          <button type="button" id="refresh-folder" class="icon-button small" data-icon="refresh" data-label-attr="refresh"></button>
+          <button type="button" id="pick-folder" class="icon-button small" data-icon="openFolder" data-label-attr="changeFolder"></button>
+        </div>
+        <ul id="tree" class="tree" role="tree"></ul>
+        <div id="no-folder" class="explorer-empty">
+          <p data-label="folderHint"></p>
+          <button type="button" id="pick-folder-empty" class="text-button primary" data-icon="openFolder"><span data-label="openFolder"></span></button>
+        </div>
+      </aside>
+      <div id="explorer-resizer" class="resizer" role="separator" aria-orientation="vertical"></div>
+      <section class="docs">
+        <nav id="tabs" class="tabs" role="tablist"></nav>
+        <main id="frames">
+          <div id="empty" class="empty">
+            <p data-label="emptyHint"></p>
+          </div>
+          <div id="loading" class="loading" role="status" hidden>
+            <span class="spinner"></span>
+            <span id="loading-name" class="loading-name"></span>
+            <span data-label="opening"></span>
+          </div>
+        </main>
+      </section>
+    </div>
+    <div id="toast" role="status"></div>
+    <script type="module" src="./src/shell.js"></script>
+  </body>
+</html>

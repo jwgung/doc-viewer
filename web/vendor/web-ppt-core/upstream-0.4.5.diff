@@ -158,7 +158,34 @@ diff -ruN a/packages/core/src/chart-svg.ts b/packages/core/src/chart-svg.ts
 diff -ruN a/packages/core/src/image/emf.ts b/packages/core/src/image/emf.ts
 --- a/packages/core/src/image/emf.ts
 +++ b/packages/core/src/image/emf.ts
-@@ -368,7 +368,7 @@
+@@ -6,8 +6,9 @@
+ import {
+   BS_NULL, BS_SOLID, Gfx, ID_MAT, MM_TEXT, PS_NULL,
+   RDH_RECTANGLES, RGN_AND, RGN_COPY,
+-  Reader, compose, decodeAnsi, defFont, dibToDataUri,
++  Reader, base64, compose, decodeAnsi, defFont, dibToDataUri, encodePng,
+ } from './gdi';
++import { tiffToPng } from './tiff';
+ import type { Brush, Fnt, Mat, Pen, Pt, Rect } from './gdi';
+ 
+ const EMF_SIG = 0x464d4520; // ' EMF'
+@@ -80,6 +81,15 @@
+   const outW = opts.width ?? (frameW > 0 ? frameW : vb.r - vb.l);
+   const outH = opts.height ?? (frameH > 0 ? frameH : vb.b - vb.t);
+ 
++  // [doc-viewer] GDI 그리기 없이 EMF+ 주석만 든 파일(PowerPoint가 그림을 EMF로 감싸 붙일 때)은 GDI 해석으로는
++  // 빈칸이 된다. 안에 든 그림을 꺼내 틀 크기에 맞춰 그린다.
++  const plus = emfPlusOnlyImage(bytes);
++  if (plus) {
++    const w = vb.r - vb.l, hh = vb.b - vb.t;
++    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${hh}" width="${outW}" height="${outH}" preserveAspectRatio="none">`
++      + `<image href="${plus}" width="${w}" height="${hh}" preserveAspectRatio="none"/></svg>`;
++  }
++
+   // EMF 默认逻辑单位 = 设备单位
+   g.dc.mapMode = MM_TEXT;
+ 
+@@ -368,7 +378,7 @@
  function extTextOut(g: Gfx, r: Reader, bytes: Uint8Array, base: number, size: number, wide: boolean): void {
    r.skip(16); // Bounds
    r.u32();    // iGraphicsMode
@@ -167,7 +194,7 @@ diff -ruN a/packages/core/src/image/emf.ts b/packages/core/src/image/emf.ts
    r.f32();    // eyScale
    const ref = r.ptL();
    const chars = r.u32();
-@@ -392,8 +392,8 @@
+@@ -392,8 +402,8 @@
      const dr = new Reader(bytes, dxAt, dxAt + chars * 4);
      dx = [];
      for (let i = 0; i < chars; i++) dx.push(dr.i32());
@@ -178,6 +205,115 @@ diff -ruN a/packages/core/src/image/emf.ts b/packages/core/src/image/emf.ts
    }
    // ETO_OPAQUE = 0x0002
    const opaque = (options & 0x0002) !== 0 ? rect : null;
+@@ -433,3 +443,95 @@
+   if (!href) return;
+   g.image({ l: xDest, t: yDest, r: xDest + cxDest, b: yDest + cyDest }, href);
+ }
++
++// ---------------- [doc-viewer] EMF+ 전용 파일 ----------------
++
++const EMR_COMMENT = 70;
++const EMFPLUS_SIG = 0x2b464d45; // 'EMF+'
++const EMFPLUS_OBJECT = 0x4008;
++const OBJECT_IMAGE = 5;
++const IMAGE_BITMAP = 1;
++const BITMAP_COMPRESSED = 1;
++// [MS-EMFPLUS] PixelFormat: 32bppARGB·32bppPARGB·32bppRGB·24bppRGB
++const PIXEL_ARGB = 0x0026200a, PIXEL_PARGB = 0x000e200b, PIXEL_RGB32 = 0x00022009, PIXEL_RGB24 = 0x00021808;
++
++/**
++ * GDI 그리기 기록 없이 EMF+ 주석만 든 EMF면 그 안의 첫 그림 객체를 data URI로 돌려준다. 아니면 null.
++ * GDI 기록이 함께 있는(이중) 파일은 GDI 쪽이 같은 그림을 그리므로 건드리지 않는다.
++ * 큰 그림 객체는 여러 기록에 나뉘어(연속 표시 0x8000, 앞 4바이트는 전체 크기) 오므로 이어 붙인다.
++ */
++function emfPlusOnlyImage(bytes: Uint8Array): string | null {
++  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
++  const chunks = new Map<number, Uint8Array[]>();
++  let first: number | null = null;
++  let p = 0;
++  while (p + 8 <= bytes.length) {
++    const type = dv.getUint32(p, true);
++    const size = dv.getUint32(p + 4, true);
++    if (size < 8 || p + size > bytes.length) break;
++    if (type === R.EOF) break;
++    if (type === EMR_COMMENT && size >= 16 && dv.getUint32(p + 12, true) === EMFPLUS_SIG) {
++      const end = Math.min(p + 12 + dv.getUint32(p + 8, true), p + size);
++      for (let q = p + 16; q + 12 <= end;) {
++        const rt = dv.getUint16(q, true), flags = dv.getUint16(q + 2, true);
++        const rsize = dv.getUint32(q + 4, true), dsize = dv.getUint32(q + 8, true);
++        if (rsize < 12 || q + rsize > end) break;
++        if (rt === EMFPLUS_OBJECT && ((flags >> 8) & 0x7f) === OBJECT_IMAGE) {
++          const id = flags & 0xff;
++          const skip = flags & 0x8000 ? 4 : 0;
++          const list = chunks.get(id) ?? [];
++          list.push(bytes.subarray(q + 12 + skip, q + 12 + Math.min(dsize, rsize - 12)));
++          chunks.set(id, list);
++          first ??= id;
++        }
++        q += rsize;
++      }
++    } else if (type !== R.HEADER && type !== EMR_COMMENT) {
++      return null; // GDI 기록이 있다: 보통 해석에 맡긴다
++    }
++    p += size;
++  }
++  if (first === null) return null;
++  const parts = chunks.get(first)!;
++  const data = new Uint8Array(parts.reduce((n, c) => n + c.length, 0));
++  parts.reduce((at, c) => (data.set(c, at), at + c.length), 0);
++  return emfPlusImageUri(data);
++}
++
++/** EmfPlusImage 객체 → data URI(비트맵만, 메타파일 그림은 null) */
++function emfPlusImageUri(data: Uint8Array): string | null {
++  if (data.length < 28) return null;
++  const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
++  if (dv.getUint32(4, true) !== IMAGE_BITMAP) return null;
++  const w = dv.getInt32(8, true), h = dv.getInt32(12, true), stride = dv.getInt32(16, true);
++  const format = dv.getUint32(20, true), kind = dv.getUint32(24, true);
++  const body = data.subarray(28);
++  if (kind === BITMAP_COMPRESSED) {
++    const sig = (body[0] << 24 | body[1] << 16 | body[2] << 8 | body[3]) >>> 0;
++    if (sig === 0x89504e47) return `data:image/png;base64,${base64(body)}`;
++    if (sig >>> 16 === 0xffd8) return `data:image/jpeg;base64,${base64(body)}`;
++    if (sig === 0x47494638) return `data:image/gif;base64,${base64(body)}`;
++    if (sig === 0x49492a00 || sig === 0x4d4d002a) {
++      const png = tiffToPng(body);
++      return png ? `data:image/png;base64,${base64(png)}` : null;
++    }
++    return null;
++  }
++  // 압축하지 않은 화소: 위에서 아래로, 한 줄 stride바이트, BGRA(32)·BGR(24)
++  const bpp = format === PIXEL_RGB24 ? 3 : format === PIXEL_ARGB || format === PIXEL_PARGB || format === PIXEL_RGB32 ? 4 : 0;
++  if (!bpp || w <= 0 || h <= 0 || stride < w * bpp || body.length < stride * h) return null;
++  const rgba = new Uint8Array(w * h * 4);
++  for (let y = 0; y < h; y++) {
++    for (let x = 0; x < w; x++) {
++      const s = y * stride + x * bpp, d = (y * w + x) * 4;
++      const a = bpp === 4 && format !== PIXEL_RGB32 ? body[s + 3] : 255;
++      // 미리 곱한 알파(PARGB)는 되돌린다.
++      const un = format === PIXEL_PARGB && a > 0 && a < 255 ? 255 / a : 1;
++      rgba[d] = Math.min(255, body[s + 2] * un);
++      rgba[d + 1] = Math.min(255, body[s + 1] * un);
++      rgba[d + 2] = Math.min(255, body[s] * un);
++      rgba[d + 3] = a;
++    }
++  }
++  return `data:image/png;base64,${base64(encodePng(rgba, w, h))}`;
++}
+diff -ruN a/packages/core/src/image/gdi.ts b/packages/core/src/image/gdi.ts
+--- a/packages/core/src/image/gdi.ts
++++ b/packages/core/src/image/gdi.ts
+@@ -841,7 +841,8 @@
+ 
+ // ---------------- 字体族回退 ----------------
+ 
+-const GENERIC = `, 'Helvetica Neue', Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif`;
++// [doc-viewer] 시스템 글꼴에 맡긴다(render/text-svg.ts FALLBACK과 같은 이유)
++const GENERIC = `, sans-serif`;
+ 
+ export function fontStack(face: string): string {
+   const f = face.trim();
 diff -ruN a/packages/core/src/image/index.ts b/packages/core/src/image/index.ts
 --- a/packages/core/src/image/index.ts
 +++ b/packages/core/src/image/index.ts
@@ -2581,6 +2717,131 @@ diff -ruN a/packages/core/src/pptx/parser.ts b/packages/core/src/pptx/parser.ts
 +  };
 +  return parseShapeTree(container, env, false);
 +}
+diff -ruN a/packages/core/src/pptx/text.ts b/packages/core/src/pptx/text.ts
+--- a/packages/core/src/pptx/text.ts
++++ b/packages/core/src/pptx/text.ts
+@@ -316,6 +316,9 @@
+   let spAutoFit = false;
+   for (const b of bodyPrs) {
+     if (!b) continue;
++    // [doc-viewer] 가까운 쪽(슬라이드 → 레이아웃 → 마스터)의 noAutofit도 상속을 끊는다. 건너뛰면 마스터의
++    // normAutofit을 물려받아, 줄이지 말아야 할 머리글을 글상자에 맞춰 1/3로 줄였다.
++    if (kid(b, 'noAutofit')) break;
+     if (kid(b, 'normAutofit')) { autofitEl = kid(b, 'normAutofit'); break; }
+     if (kid(b, 'spAutoFit')) { spAutoFit = true; break; }
+   }
+diff -ruN a/packages/core/src/render/svg.ts b/packages/core/src/render/svg.ts
+--- a/packages/core/src/render/svg.ts
++++ b/packages/core/src/render/svg.ts
+@@ -21,6 +21,8 @@
+   textMode: 'html' | 'svg';
+   media: 'badge' | 'player';
+   hidden: ReadonlySet<number> | null;
++  /** [doc-viewer] 감싼 그룹들의 누적 확대 비율(x, y). 글은 이 비율로 줄이지 않는다(shapeText). */
++  groupScale?: readonly [number, number];
+ }
+ 
+ export interface RenderOptions {
+@@ -81,7 +83,8 @@
+   return (
+     `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" ` +
+     `viewBox="0 0 ${r(pres.width)} ${r(pres.height)}" ` +
+-    `font-family="Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif">` +
++    // [doc-viewer] 시스템 글꼴에 맡긴다(text-svg.ts FALLBACK과 같은 이유)
++    `font-family="sans-serif">` +
+     notes +
+     `<defs>${styleTag}${ctx.defs.join('')}</defs>` +
+     bg + body + '</svg>'
+@@ -468,7 +471,7 @@
+ 
+     if (d3) inner += bevelOverlay(el, d3, solidBase, ctx);
+   }
+-  if (el.text) inner += renderText(el.text, el.w, el.h, ctx);
++  if (el.text) inner += shapeText(el.text, el.w, el.h, ctx);
+   return wrapEl(el, inner, ctx);
+ }
+ 
+@@ -568,7 +571,9 @@
+ 
+ function renderGroup(el: GroupElement, ctx: Ctx): string {
+   const childXf = `scale(${r(el.scaleX || 1)} ${r(el.scaleY || 1)}) translate(${r(-el.childX)} ${r(-el.childY)})`;
+-  const children = el.children.map((c) => renderEl(c, ctx)).join('');
++  const [sx, sy] = ctx.groupScale ?? [1, 1];
++  const childCtx: Ctx = { ...ctx, groupScale: [sx * (el.scaleX || 1), sy * (el.scaleY || 1)] };
++  const children = el.children.map((c) => renderEl(c, childCtx)).join('');
+   return wrapEl(el, `<g transform="${flipTransform(el)} ${childXf}">${children}</g>`, ctx);
+ }
+ 
+@@ -666,7 +671,8 @@
+ 
+ const ANCHOR_CSS: Record<TextBody['anchor'], string> = { top: 'flex-start', middle: 'center', bottom: 'flex-end' };
+ 
+-const FONT_FALLBACK = [`'PingFang SC'`, `'Hiragino Sans GB'`, `'Microsoft YaHei'`, 'sans-serif'];
++// [doc-viewer] text-svg.ts FALLBACK과 같이 시스템 글꼴에 맡긴다.
++const FONT_FALLBACK = ['sans-serif'];
+ 
+ /**
+  * 字体栈：文件指定的字体在前，通用中文回退在后。
+@@ -704,7 +710,7 @@
+     if (run.underlineColor) css += `text-decoration-color:${run.underlineColor};`;
+   }
+   if (run.fonts.length) css += `font-family:${stack(run.fonts, FONT_FALLBACK)};`;
+-  if (run.spacing) css += `letter-spacing:${r(run.spacing)}px;`;
++  if (run.spacing) css += `letter-spacing:${r(run.spacing * scale)}px;`; // [doc-viewer] 자간도 글자 크기처럼 줄인다
+   if (run.caps === 'all') css += 'text-transform:uppercase;';
+   else if (run.caps === 'small') css += 'font-variant:small-caps;';
+   if (run.highlight) css += `background-color:${run.highlight};`;
+@@ -764,6 +770,17 @@
+   wordArtVert: 'writing-mode:vertical-rl;text-orientation:upright;',
+ };
+ 
++/**
++ * [doc-viewer] 도형 글. PowerPoint는 그룹 크기를 바꿔도 도형 모양만 늘이고 줄이며 글자 크기는 그대로 둔다.
++ * 그룹의 확대 변환 안에서 그대로 그리면 글자까지 그룹 비율로 줄어(53%로 줄인 그룹의 8pt 글이 4pt로) 원본과 달랐다.
++ * 그룹 비율만큼 되돌린 좌표계에서, 실제 슬라이드 크기의 글상자로 배치한다.
++ */
++function shapeText(t: TextBody, w: number, h: number, ctx: Ctx): string {
++  const [sx, sy] = ctx.groupScale ?? [1, 1];
++  if (Math.abs(sx - 1) < 1e-3 && Math.abs(sy - 1) < 1e-3) return renderText(t, w, h, ctx);
++  return `<g transform="scale(${r(1 / sx)} ${r(1 / sy)})">${renderText(t, w * sx, h * sy, ctx)}</g>`;
++}
++
+ function renderText(
+   t: TextBody,
+   w: number,
+diff -ruN a/packages/core/src/render/text-svg.ts b/packages/core/src/render/text-svg.ts
+--- a/packages/core/src/render/text-svg.ts
++++ b/packages/core/src/render/text-svg.ts
+@@ -18,7 +18,10 @@
+ const esc = (s: string): string =>
+   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+ 
+-const FALLBACK = [`'PingFang SC'`, `'Hiragino Sans GB'`, `'Microsoft YaHei'`, 'sans-serif'];
++// [doc-viewer] 문서 글꼴이 없으면 시스템 글꼴에 맡긴다(언어에 맞는 글꼴을 OS가 고른다: Windows 맑은 고딕, Android Noto CJK).
++// 원래는 중국어 글꼴(PingFang SC·Microsoft YaHei)을 먼저 둬서, Windows에서 영문·숫자는 중국어 글꼴로, 한글은 다른 글꼴로
++// 섞여 그려지고 폭이 틀어졌다.
++const FALLBACK = ['sans-serif'];
+ 
+ let measureCtx: CanvasRenderingContext2D | null = null;
+ let measureProbed = false;
+@@ -111,7 +114,7 @@
+   }
+   g.font = `${run.i ? 'italic ' : ''}${run.b ? '700 ' : '400 '}${size}px ${fontFamily(run)}`;
+   const w = g.measureText(text).width;
+-  return w + (run.spacing ?? 0) * text.length;
++  return w + (run.spacing ?? 0) * scale * text.length; // [doc-viewer] 자간도 글자 크기처럼 줄인다
+ }
+ 
+ function applyCaps(text: string, run: TextRun): string {
+@@ -526,7 +529,7 @@
+   ];
+   if (run.b) attrs.push('font-weight="700"');
+   if (run.i) attrs.push('font-style="italic"');
+-  if (run.spacing) attrs.push(`letter-spacing="${r(run.spacing)}"`);
++  if (run.spacing) attrs.push(`letter-spacing="${r(run.spacing * scale)}"`); // [doc-viewer] 자간도 글자 크기처럼 줄인다
+   const deco: string[] = [];
+   if (run.u) deco.push('underline');
+   if (run.strike) deco.push('line-through');
 diff -ruN a/packages/core/src/xml-lite.ts b/packages/core/src/xml-lite.ts
 --- a/packages/core/src/xml-lite.ts
 +++ b/packages/core/src/xml-lite.ts
