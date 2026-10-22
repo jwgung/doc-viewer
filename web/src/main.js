@@ -55,6 +55,8 @@ let notesPanel = null;
 
 window.viewer = {
   open: (options) => open(options),
+  /** 앱 화면이 가려진다(목록에서 다른 문서를 골라 이 화면이 닫히는 경우 포함): 묶어 두었던 읽던 위치를 바로 알린다. */
+  flushPosition: () => flushPosition(),
   setMode: (next) => viewer?.setMode(next),
   applyFit: (next) => viewer?.applyFit(next),
   /** 오므려 줄인 쪽을 처음 크기로(앱의 '원래 크기' 버튼). WebView 확대는 앱이 되돌린다. */
