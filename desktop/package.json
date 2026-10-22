@@ -2,7 +2,7 @@
   "name": "doc-viewer-desktop",
   "private": true,
   "type": "module",
-  "description": "윈도우에서 공용 웹 렌더러(web/)로 문서를 여는 Tauri 셸",
+  "description": "Windows·macOS·Linux에서 공용 웹 렌더러(web/)로 문서를 여는 Tauri 셸",
   "scripts": {
     "build:front": "pnpm --dir ../web build && node scripts/build-front.js",
     "dev": "tauri dev",

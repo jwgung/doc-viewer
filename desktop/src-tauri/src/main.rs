@@ -432,7 +432,10 @@ fn reveal_entry(path: String, docs: State<Documents>) -> Result<(), String> {
         use std::os::windows::process::CommandExt;
         std::process::Command::new("explorer").raw_arg(format!("/select,\"{}\"", target.display())).spawn()
     };
-    #[cfg(not(windows))]
+    // macOS는 Finder에서 그 항목을 골라 보이고, Linux는 파일 관리자로 그 폴더를 연다(항목을 고르는 표준 방법이 없다).
+    #[cfg(target_os = "macos")]
+    let result = std::process::Command::new("open").arg("-R").arg(&target).spawn();
+    #[cfg(not(any(windows, target_os = "macos")))]
     let result = std::process::Command::new("xdg-open").arg(target.parent().unwrap_or(&target)).spawn();
     result.map(|_| ()).map_err(|e| e.to_string())
 }

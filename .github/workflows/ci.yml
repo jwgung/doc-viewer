@@ -1,0 +1,49 @@
+# 웹 렌더러와 셸을 빌드하고 Rust 단위 테스트를 돌린다(Linux에서. 설치 파일은 Release 워크플로가 만든다).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: WebKitGTK 등 빌드 의존성
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.32.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: |
+            web/pnpm-lock.yaml
+            desktop/pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+      - name: 웹 렌더러·셸 의존성
+        run: |
+          pnpm --dir web install --frozen-lockfile
+          pnpm --dir desktop install --frozen-lockfile
+      - name: 프런트 빌드(웹 렌더러 + 셸)
+        working-directory: desktop
+        run: pnpm build:front
+      - name: Rust 단위 테스트
+        working-directory: desktop/src-tauri
+        run: cargo test

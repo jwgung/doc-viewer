@@ -1,0 +1,116 @@
+# v* 태그를 올리면 Windows·macOS·Linux 설치 파일(서명 없음)을 만들어 GitHub Release에 붙인다.
+# 버전은 태그 그대로(v0.1.0 → 0.1.0). msi는 숫자 버전만 받으므로 v1.0.0-beta 같은 태그는 Windows 빌드가 실패한다.
+# 손으로 실행(workflow_dispatch)하면 Release 없이 Actions 아티팩트로만 올린다(시험용, 버전 0.0.<커밋 수>).
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+# 빌드 job은 읽기만, Release를 만드는 publish job만 쓰기 권한을 받는다.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows
+            args: --bundles msi,nsis
+          - os: macos-latest
+            name: macos
+            args: --target universal-apple-darwin --bundles dmg
+          - os: ubuntu-22.04
+            name: linux
+            args: --bundles deb,appimage
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 손으로 실행할 때 커밋 수로 버전을 정한다
+          persist-credentials: false
+      - name: WebKitGTK 등 빌드 의존성
+        if: matrix.name == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.32.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: |
+            web/pnpm-lock.yaml
+            desktop/pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # macOS는 Apple 실리콘·Intel 공용(universal) 파일 하나로 만든다.
+          targets: ${{ matrix.name == 'macos' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - name: 웹 렌더러·셸 의존성
+        run: |
+          pnpm --dir web install --frozen-lockfile
+          pnpm --dir desktop install --frozen-lockfile
+      - name: 버전
+        id: version
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then version="${GITHUB_REF_NAME#v}"; else version="0.0.$(git rev-list --count HEAD)"; fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      # beforeBuildCommand가 웹 렌더러를 빌드해 desktop/dist로 모은다.
+      - name: 설치 파일 빌드
+        working-directory: desktop
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: pnpm tauri build ${{ matrix.args }} --config "{\"version\":\"$VERSION\"}"
+      - name: 산출물 이름 붙이기
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          NAME: ${{ matrix.name }}
+        run: |
+          mkdir -p out
+          bundle=desktop/src-tauri/target/release/bundle
+          stem="docviewer-${VERSION}"
+          case "$NAME" in
+            windows)
+              cp "$bundle"/msi/*.msi "out/${stem}-windows.msi"
+              cp "$bundle"/nsis/*-setup.exe "out/${stem}-windows-setup.exe" ;;
+            macos)
+              cp desktop/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg "out/${stem}-macos.dmg" ;;
+            linux)
+              cp "$bundle"/deb/*.deb "out/${stem}-linux-amd64.deb"
+              cp "$bundle"/appimage/*.AppImage "out/${stem}-linux-amd64.AppImage" ;;
+          esac
+          ls -l out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: docviewer-${{ steps.version.outputs.version }}-${{ matrix.name }}
+          path: out/*
+          if-no-files-found: error
+          retention-days: 7
+
+  # 세 운영체제 빌드가 끝난 뒤 Release를 한 번에 만든다. 한 운영체제가 실패해도 나머지는 올린다.
+  publish:
+    if: always() && github.ref_type == 'tag'
+    needs: [build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - name: GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -l out
+          [ -n "$(ls -A out)" ] || { echo "::error::만들어진 설치 파일이 없습니다."; exit 1; }
+          gh release create "$GITHUB_REF_NAME" out/* --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes

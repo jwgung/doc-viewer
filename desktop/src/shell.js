@@ -778,8 +778,8 @@ function moveTabDrag(e) {
     document.body.classList.add('dragging-tab'); // 문서 iframe이 포인터를 가로채지 않게
     drag.tab.button.classList.add('dragging');
   }
-  // Ctrl을 누른 채 놓으면 옮기지 않고 복제한다: 새로 여는 문서처럼 제 칸 가운데·가장자리에도 놓을 수 있다.
-  drag.copy = e.ctrlKey;
+  // Ctrl(macOS는 Option)을 누른 채 놓으면 옮기지 않고 복제한다: 새로 여는 문서처럼 제 칸 가운데·가장자리에도 놓을 수 있다.
+  drag.copy = e.ctrlKey || e.altKey;
   document.body.classList.toggle('copying-tab', drag.copy);
   drag.target = dropTarget(e.clientX, e.clientY, drag.copy ? null : drag.tab);
   showDropMark(drag.target);
