@@ -2,7 +2,7 @@
 // (WebView 준비와 파일 준비를 겹쳐 여는 시간을 줄인다. 검증 도구는 viewer.html?fmt=&src=로 바로 연다.)
 // 형식에 맞는 렌더러만 불러와 그리고, 측정값·읽던 위치·화면 탭은 앱이 주입한 AndroidViewer 통로로 넘긴다.
 // 앱은 window.viewer.setMode('scroll' | 'page' | 'spread'), applyFit('width' | 'page'), setChrome(보임 여부),
-// setNotes(발표자 노트 보임 여부), resetShrink()를 부른다.
+// setNotes(발표자 노트 보임 여부), resetShrink(), flushPosition() 등을 부른다(아래 window.viewer).
 import { PagedViewer } from './paged-viewer.js';
 import { openSheet } from './sheet.js';
 import { t } from './strings.js';
@@ -178,7 +178,7 @@ function reportPosition(position) {
   positionTimer = setTimeout(flushPosition, 500);
 }
 
-/** 기다리던 위치 알림을 바로 보낸다(문서를 닫기 직전). */
+/** 기다리던 위치 알림을 바로 보낸다(문서를 닫거나 앱 화면이 가려지기 직전). */
 function flushPosition() {
   clearTimeout(positionTimer);
   if (pendingPosition) report('position', pendingPosition);
