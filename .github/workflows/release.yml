@@ -54,6 +54,11 @@ jobs:
         with:
           # macOS는 Apple 실리콘·Intel 공용(universal) 파일 하나로 만든다.
           targets: ${{ matrix.name == 'macos' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      # 다음 빌드부터 Rust 의존성 컴파일을 건너뛴다(Windows는 첫 빌드가 특히 느리다).
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+          key: ${{ matrix.name }}
       - name: 웹 렌더러·셸 의존성
         run: |
           pnpm --dir web install --frozen-lockfile

@@ -12,8 +12,11 @@ const INLINED = { jszip: ['pako'], '@web-ppt/core': ['fflate'] };
 // 패키지 안의 다른 라이선스 파일을 함께 고지해야 하는 것(pdf.js가 싣는 그림 디코더 wasm: OpenJPEG, PDFium JBIG2)
 const EXTRA_FILES = { 'pdfjs-dist': ['wasm/LICENSE_OPENJPEG', 'wasm/LICENSE_PDFJS_OPENJPEG', 'wasm/LICENSE_JBIG2', 'wasm/LICENSE_PDFJS_JBIG2'] };
 
+// 경로는 '/'로 맞춰 다룬다(Windows 빌드는 모듈 경로와 path.join 결과가 '\\'로 온다).
+const slashes = (path) => path.replaceAll('\\', '/');
+
 function packageDirOf(id) {
-  const path = id.replace(/^\0/, '').split('?')[0];
+  const path = slashes(id.replace(/^\0/, '').split('?')[0]);
   const marker = '/node_modules/';
   const at = path.lastIndexOf(marker);
   if (at < 0) return null;
@@ -35,8 +38,13 @@ function collect(id) {
 /** parentDir 패키지 기준으로 inner 패키지가 설치된 디렉터리를 찾는다(exports가 package.json을 막아도 동작). */
 function installedDir(parentDir, inner) {
   let dir = dirname(createRequire(join(parentDir, 'package.json')).resolve(inner));
-  while (!dir.endsWith(`/node_modules/${inner}`)) dir = dirname(dir);
-  return dir;
+  while (!slashes(dir).endsWith(`/node_modules/${inner}`)) {
+    const up = dirname(dir);
+    // 드라이브·루트까지 올라가도 못 찾으면 멈춘다(예전에는 Windows에서 여기서 끝없이 돌았다).
+    if (up === dir) throw new Error(`라이선스를 모을 ${inner} 설치 폴더를 찾지 못했습니다(${parentDir})`);
+    dir = up;
+  }
+  return slashes(dir);
 }
 
 function render() {
