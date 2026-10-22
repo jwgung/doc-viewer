@@ -92,13 +92,28 @@ fn register(app: &AppHandle, path: PathBuf) -> Opened {
 }
 
 /// 셸 밖에서 들어온 문서를 셸에 넘긴다: 쌓아 두고 알린다(셸이 아직 뜨는 중이면 뜬 뒤 take_documents로 가져간다).
-fn deliver(app: &AppHandle, paths: impl IntoIterator<Item = PathBuf>) {
+/// 끌어다 놓은 자리(창 안 CSS 픽셀). 셸은 이 자리로 놓을 칸·나눌 방향을 정한다.
+#[derive(Serialize, Clone, Copy)]
+struct DropAt {
+    x: f64,
+    y: f64,
+}
+
+impl DropAt {
+    fn from(window: &tauri::Window, position: &tauri::PhysicalPosition<f64>) -> Self {
+        let scale = window.scale_factor().unwrap_or(1.0);
+        Self { x: position.x / scale, y: position.y / scale }
+    }
+}
+
+/// 문서를 셸에 넘긴다. at은 창에 끌어다 놓은 자리(실행 인자·두 번째 실행이면 None: 초점 칸에 연다).
+fn deliver(app: &AppHandle, paths: impl IntoIterator<Item = PathBuf>, at: Option<DropAt>) {
     let opened: Vec<Opened> = paths.into_iter().filter(|p| p.is_file()).map(|p| register(app, p)).collect();
     if opened.is_empty() {
         return;
     }
     app.state::<Documents>().pending.lock().unwrap().extend(opened);
-    let _ = app.emit_to(MAIN_WINDOW, "documents", ());
+    let _ = app.emit_to(MAIN_WINDOW, "documents", at);
     if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
         let _ = window.unminimize();
         let _ = window.set_focus();
@@ -431,7 +446,7 @@ fn main() {
                     let _ = window.set_focus();
                 }
             }
-            deliver(app, paths);
+            deliver(app, paths, None);
         }))
         .plugin(tauri_plugin_dialog::init())
         // 창 크기·위치·최대화를 기억해 다음에 그대로 연다.
@@ -455,10 +470,18 @@ fn main() {
             trash_entry,
             reveal_entry
         ])
-        // 끌어다 놓은 파일을 모두 탭으로 연다.
+        // 끌어다 놓은 파일을 모두 탭으로 연다. 끄는 동안 자리를 알려 셸이 놓을 곳(칸·나눌 방향)을 미리 보여 준다.
         .on_window_event(|window, event| {
-            if let WindowEvent::DragDrop(DragDropEvent::Drop { paths, .. }) = event {
-                deliver(window.app_handle(), paths.clone());
+            let WindowEvent::DragDrop(drag) = event else { return };
+            match drag {
+                DragDropEvent::Over { position } => {
+                    let _ = window.emit_to(MAIN_WINDOW, "drop-over", DropAt::from(window, position));
+                }
+                DragDropEvent::Drop { paths, position } => deliver(window.app_handle(), paths.clone(), Some(DropAt::from(window, position))),
+                DragDropEvent::Leave => {
+                    let _ = window.emit_to(MAIN_WINDOW, "drop-leave", ());
+                }
+                _ => {}
             }
         })
         .setup(|app| {

@@ -422,7 +422,10 @@ function restoreLayout(saved, made = new Map(), depth = 0) {
  */
 function openTab(opened, view = null, select = true, pane = focused) {
   const existing = tabs.find((tab) => tab.id === opened.id);
-  if (existing) return select && activate(existing);
+  if (existing) {
+    if (select) activate(existing);
+    return existing;
+  }
   // 내용으로 가린 형식이 확장자보다 앞서고, 확장자로도 모르는 글자 파일은 첫 글자로 가린 형식을 쓴다.
   const fmt = opened.contentFmt ?? formatOf(opened.name) ?? opened.textFmt;
   if (!fmt) {
@@ -485,6 +488,7 @@ function openTab(opened, view = null, select = true, pane = focused) {
   tabs.push(tab);
   if (select) activate(tab);
   else saveSession();
+  return tab;
 }
 
 function createFrame(tab) {
@@ -692,17 +696,20 @@ function moveTabDrag(e) {
   showDropMark(drag.target);
 }
 
-/** 포인터 아래의 놓을 곳: { pane, index }(탭 줄·다른 칸 가운데) 또는 { pane, side }(가장자리에 새 칸) */
-function dropTarget(x, y) {
+/**
+ * 포인터 아래의 놓을 곳: { pane, index }(탭 줄·다른 칸 가운데) 또는 { pane, side }(가장자리에 새 칸).
+ * tab은 끄는 탭이고, 새로 여는 파일(사이드바·Windows 탐색기에서 끌어옴)이면 null이다: 그때는 어느 칸 가운데든 그 칸에 연다.
+ */
+function dropTarget(x, y, tab = drag?.tab ?? null) {
   for (const pane of panes) {
     const bar = pane.bar.getBoundingClientRect();
     const rect = pane.el.getBoundingClientRect();
     if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) continue;
     // 탭 줄(비어 있으면 높이가 0이라 위쪽 TAB_BAR_PX를 탭 줄로 본다)
     if (y <= rect.top + Math.max(bar.height, TAB_BAR_PX)) {
-      const others = tabsOf(pane).filter((tab) => tab !== drag.tab);
-      const index = others.filter((tab) => {
-        const r = tab.button.getBoundingClientRect();
+      const others = tabsOf(pane).filter((other) => other !== tab);
+      const index = others.filter((other) => {
+        const r = other.button.getBoundingClientRect();
         return x > r.left + r.width / 2;
       }).length;
       return { pane, index };
@@ -716,8 +723,8 @@ function dropTarget(x, y) {
       ['top', ry],
       ['bottom', 1 - ry],
     ].reduce((nearest, candidate) => (candidate[1] < nearest[1] ? candidate : nearest));
-    if (distance < SPLIT_EDGE && canSplit(drag.tab, pane)) return { pane, side };
-    return pane !== drag.tab.pane ? { pane, index: Infinity } : null;
+    if (distance < SPLIT_EDGE && (tab ? canSplit(tab, pane) : panes.length < MAX_PANES)) return { pane, side };
+    return !tab || pane !== tab.pane ? { pane, index: Infinity } : null;
   }
   return null;
 }
@@ -734,7 +741,7 @@ function showDropMark(target) {
     dropMark.className = 'drop-mark area';
   } else {
     // 탭 줄의 끼울 자리에 세로 막대
-    const others = tabsOf(target.pane).filter((tab) => tab !== drag.tab);
+    const others = tabsOf(target.pane).filter((tab) => tab !== drag?.tab);
     const bar = target.pane.bar.getBoundingClientRect();
     const ref = others[target.index]?.button.getBoundingClientRect();
     const last = others.at(-1)?.button.getBoundingClientRect();
@@ -762,6 +769,73 @@ function endTabDrag(e) {
   if (target?.side) splitTab(current.tab, target.side, target.pane);
   else if (target) moveTab(current.tab, target.pane, target.index);
 }
+
+/**
+ * 새로 연 문서들을 놓을 곳에 둔다. 가장자리면 그쪽에 새 칸을 하나 만들어 모두 그 칸에 열고, 칸이면 그 칸(탭 줄이면 그 자리)에 연다.
+ * 이미 연 문서면 그 탭을 옮긴다. 놓을 곳이 없으면 초점 칸에 연다.
+ */
+function placeOpened(list, target) {
+  if (target && !panes.includes(target.pane)) target = null;
+  const made = target?.side && panes.length < MAX_PANES ? splitPane(target.pane, target.side) : null;
+  const pane = made ?? target?.pane ?? focused;
+  let index = target?.index ?? Infinity;
+  for (const opened of list) {
+    const existing = tabs.find((tab) => tab.id === opened.id);
+    if (existing) moveTab(existing, pane, index);
+    else {
+      const tab = openTab(opened, null, true, pane);
+      if (tab && index !== Infinity) moveTab(tab, pane, index);
+    }
+    if (index !== Infinity) index++;
+  }
+  // 열 수 있는 문서가 없어 새 칸이 비었으면 거둔다.
+  if (made && !tabsOf(made).length) removePane(made);
+}
+
+// 사이드바의 파일을 문서 자리로 끌어 놓기: 탭 끌기와 같은 놓을 곳(가장자리면 나누기)을 쓴다. 누르기만 하면 지금처럼 초점 칸에 연다.
+let fileDrag = null;
+
+function startFileDrag(entry, row, e) {
+  if (e.button !== 0) return;
+  fileDrag = { entry, row, x: e.clientX, y: e.clientY, started: false, target: null };
+  row.setPointerCapture(e.pointerId);
+}
+
+function moveFileDrag(e) {
+  if (!fileDrag) return;
+  if (!fileDrag.started) {
+    if (Math.hypot(e.clientX - fileDrag.x, e.clientY - fileDrag.y) < DRAG_START_PX) return;
+    fileDrag.started = true;
+    document.body.classList.add('dragging-tab');
+    fileDrag.row.classList.add('dragging');
+  }
+  fileDrag.target = dropTarget(e.clientX, e.clientY, null);
+  showDropMark(fileDrag.target);
+}
+
+async function endFileDrag(e) {
+  const current = fileDrag;
+  if (!current) return;
+  fileDrag = null;
+  if (current.row.hasPointerCapture(e.pointerId)) current.row.releasePointerCapture(e.pointerId);
+  document.body.classList.remove('dragging-tab');
+  current.row.classList.remove('dragging');
+  dropMark.hidden = true;
+  if (!current.started) return;
+  dragJustEnded = true;
+  setTimeout(() => (dragJustEnded = false), 0);
+  const target = e.type === 'pointerup' ? current.target : null;
+  if (!target) return;
+  try {
+    placeOpened([await invoke('open_file', { path: current.entry.path })], target);
+  } catch {
+    toast(t.folderFailed);
+  }
+}
+
+// Windows 탐색기에서 끌어오는 파일: Rust가 끄는 자리(drop-over)와 놓은 자리(documents의 값)를 알려 준다.
+appWindow.listen('drop-over', ({ payload }) => showDropMark(dropTarget(payload.x, payload.y, null)));
+appWindow.listen('drop-leave', () => (dropMark.hidden = true));
 
 // ---- 지난번 상태: 열린 탭과 탭마다 보던 상태를 Rust가 앱 설정 폴더에 적어 둔다(경로는 Rust만 안다).
 // 칸 번호(pane)와 그 칸에서 보이던 탭(shown)도 함께 적고, 칸 배치(나눔 나무)는 설정(layout)에 둔다.
@@ -853,8 +927,13 @@ function showToolbar() {
 }
 
 /** 실행 인자·끌어다 놓기·두 번째 실행으로 들어온 문서를 탭으로 연다. */
-async function takeDocuments() {
-  for (const opened of await invoke('take_documents')) openTab(opened);
+/** Rust가 넘긴 문서를 연다. 창에 끌어다 놓았으면 놓은 자리(at)에 맞춰 칸을 고르거나 나눈다. */
+async function takeDocuments(event) {
+  const at = event?.payload;
+  dropMark.hidden = true;
+  const list = await invoke('take_documents');
+  if (at) placeOpened(list, dropTarget(at.x, at.y, null));
+  else for (const opened of list) openTab(opened);
 }
 
 // ---- 렌더러 알림(web/src/main.js의 report). 같은 출처 iframe이 parent.viewerHost.report(json, 그 창)을 부른다.
@@ -1103,7 +1182,11 @@ function entryItem(entry) {
     row.addEventListener('click', () => toggle(item.getAttribute('aria-expanded') !== 'true'));
     if (expanded.has(entry.path)) toggle(true);
   } else {
-    row.addEventListener('click', () => openEntry(entry));
+    row.addEventListener('click', () => !dragJustEnded && openEntry(entry));
+    row.addEventListener('pointerdown', (e) => startFileDrag(entry, row, e));
+    row.addEventListener('pointermove', moveFileDrag);
+    row.addEventListener('pointerup', endFileDrag);
+    row.addEventListener('pointercancel', endFileDrag);
   }
   row.addEventListener('contextmenu', (e) => {
     e.preventDefault();

@@ -609,7 +609,8 @@ body.dragging-tab iframe {
   pointer-events: none;
 }
 
-.tab.dragging {
+.tab.dragging,
+.tree-row.dragging {
   opacity: 0.5;
 }
 
