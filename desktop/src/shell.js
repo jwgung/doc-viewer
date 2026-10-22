@@ -27,6 +27,8 @@ const STRINGS = {
     zoomReset: '원래 크기 (Ctrl+0)',
     closeTab: '닫기 (Ctrl+W)',
     closeOthers: '다른 탭 닫기',
+    reopenClosed: '닫은 탭 다시 열기',
+    reopenFailed: '닫은 탭을 다시 열지 못했습니다(파일이 옮겨졌거나 지워졌습니다)',
     splitRight: '오른쪽으로 나누기',
     splitDown: '아래로 나누기',
     emptyHint: '왼쪽에서 폴더를 열어 문서를 고르거나, 문서를 여기에 끌어다 놓으세요.',
@@ -69,6 +71,8 @@ const STRINGS = {
     zoomReset: 'Actual size (Ctrl+0)',
     closeTab: 'Close (Ctrl+W)',
     closeOthers: 'Close other tabs',
+    reopenClosed: 'Reopen closed tab',
+    reopenFailed: 'Could not reopen the closed tab (the file was moved or deleted)',
     splitRight: 'Split right',
     splitDown: 'Split down',
     emptyHint: 'Open a folder on the left and pick a document, or drop documents here.',
@@ -215,11 +219,16 @@ function findLeaf(pane, node = layout, parent = null) {
  * 아니면 그 칸 자리를 새 가지로 바꾼다(한쪽을 위아래로 나누기). target이 가졌던 몫을 반씩 나눈다.
  */
 function splitPane(target, side) {
+  return splitNode(findLeaf(target).node, side);
+}
+
+/** 나무의 node(칸 또는 가지) 자리를 side 쪽으로 나눠 새 칸을 만든다(splitPane, 닫은 칸 되살리기). */
+function splitNode(node, side) {
   const dir = side === 'left' || side === 'right' ? 'row' : 'column';
   const after = side === 'right' || side === 'bottom';
   const pane = createPane();
   const leaf = { pane };
-  const { node, parent } = findLeaf(target);
+  const parent = findParent(node);
   if (parent?.dir === dir) {
     const index = parent.children.indexOf(node);
     const half = parent.sizes[index] / 2;
@@ -227,13 +236,16 @@ function splitPane(target, side) {
     parent.children.splice(index + (after ? 1 : 0), 0, leaf);
     parent.sizes.splice(index + (after ? 1 : 0), 0, half);
   } else {
-    const branch = { dir, children: after ? [{ pane: target }, leaf] : [leaf, { pane: target }], sizes: [0.5, 0.5] };
+    const branch = { dir, children: after ? [node, leaf] : [leaf, node], sizes: [0.5, 0.5] };
     if (parent) parent.children[parent.children.indexOf(node)] = branch;
     else layout = branch;
   }
   applyLayout();
   return pane;
 }
+
+/** node가 아직 나무 안에 있는지(닫은 칸을 되살릴 기준 자리가 그 뒤 합쳐져 사라졌을 수 있다) */
+const inLayout = (node) => node === layout || findParent(node) !== null;
 
 /**
  * 빈 칸을 없앤다(칸이 하나면 그대로 둔다). 그 몫은 앞 형제(왼쪽·위, 맨 앞이면 뒤 형제)가 받고, 초점도 그 자리로 옮긴다.
@@ -250,6 +262,9 @@ function removePane(pane) {
   parent.sizes.splice(index, 1);
   const heir = Math.max(0, index - 1);
   parent.sizes[heir] += share;
+  // 닫은 탭을 다시 열 때(Ctrl+Shift+T) 이 칸을 같은 자리에 되살리도록, 몫을 받은 형제와 그 형제에서 본 방향을 남긴다.
+  const before = index > heir;
+  pane.gone = { anchor: parent.children[heir], side: parent.dir === 'row' ? (before ? 'right' : 'left') : before ? 'bottom' : 'top' };
   const firstPane = (tree) => (tree.pane ? tree.pane : firstPane(tree.children[0]));
   const next = firstPane(parent.children[heir]);
   if (parent.children.length === 1) replaceNode(parent, parent.children[0]);
@@ -600,12 +615,55 @@ function closeTab(tab) {
     document.body.classList.remove('dragging-tab');
     dropMark.hidden = true;
   }
+  rememberClosed(tab, index);
   tabs.splice(tabs.indexOf(tab), 1);
   tab.frame.remove();
   tab.button.remove();
   invoke('close_document', { id: tab.id });
   afterLeave(pane, index);
   saveSession();
+}
+
+// ---- 닫은 탭 다시 열기(Ctrl+Shift+T): 브라우저처럼 가장 최근에 닫은 탭부터, 닫을 때의 칸·탭 줄 자리·보던 상태로 연다.
+// 그 칸이 마지막 탭과 함께 사라졌으면 몫을 받았던 옆자리를 같은 방향으로 다시 나눈다(최대 4칸, 못 나누면 초점 칸).
+// 파일은 Rust가 닫은 탭 번호로 기억한다(CLOSED_KEEP과 같은 개수).
+
+const CLOSED_KEEP = 20;
+const closedTabs = [];
+
+function rememberClosed(tab, index) {
+  viewerOf(tab)?.flushPosition?.(); // 모아 두던 읽던 위치를 바로 받는다
+  const { mode, fit, zoom, savedZoom, page, scroll } = tab;
+  closedTabs.push({ id: tab.id, pane: tab.pane, index, view: { mode, fit, zoom: savedZoom !== 1 ? savedZoom : zoom, page, scroll } });
+  if (closedTabs.length > CLOSED_KEEP) closedTabs.shift();
+}
+
+/** 닫힌 칸이 다시 만들어졌으면 그 칸으로 이어 간다(같은 칸에서 닫은 탭 여럿을 한 칸에 되살리게). */
+function livePane(pane) {
+  while (pane.reborn) pane = pane.reborn;
+  return pane;
+}
+
+async function reopenClosedTab() {
+  const entry = closedTabs.pop();
+  if (!entry) return;
+  let opened;
+  try {
+    opened = await invoke('reopen_document', { id: entry.id });
+  } catch {
+    toast(t.reopenFailed);
+    return;
+  }
+  let pane = livePane(entry.pane);
+  if (!panes.includes(pane)) {
+    const gone = pane.gone;
+    if (gone && inLayout(gone.anchor) && panes.length < MAX_PANES) {
+      pane.reborn = splitNode(gone.anchor, gone.side);
+      pane = pane.reborn;
+    } else pane = focused;
+  }
+  const tab = openTab(opened, entry.view, true, pane);
+  if (tab && tab.pane === pane) moveTab(tab, pane, entry.index);
 }
 
 /**
@@ -657,6 +715,7 @@ function tabActions(tab) {
       : []),
     { label: t.closeTab.replace(/ \(.*\)$/, ''), hint: 'Ctrl+W', run: () => closeTab(tab) },
     { label: t.closeOthers, run: () => tabsOf(tab.pane).filter((other) => other !== tab).forEach(closeTab) },
+    ...(closedTabs.length ? [{ label: t.reopenClosed, hint: 'Ctrl+Shift+T', run: reopenClosedTab }] : []),
   ];
 }
 
@@ -781,7 +840,8 @@ function placeOpened(list, target) {
   let index = target?.index ?? Infinity;
   for (const opened of list) {
     const existing = tabs.find((tab) => tab.id === opened.id);
-    if (existing) moveTab(existing, pane, index);
+    // 이미 연 문서: 다른 칸이나 탭 줄의 자리로 옮긴다(같은 칸 가운데면 그 탭을 보이기만 한다).
+    if (existing) existing.pane === pane && index === Infinity ? activate(existing) : moveTab(existing, pane, index);
     else {
       const tab = openTab(opened, null, true, pane);
       if (tab && index !== Infinity) moveTab(tab, pane, index);
@@ -926,8 +986,7 @@ function showToolbar() {
   zoomLabel.textContent = `${Math.round(tab.zoom * 100)}%`;
 }
 
-/** 실행 인자·끌어다 놓기·두 번째 실행으로 들어온 문서를 탭으로 연다. */
-/** Rust가 넘긴 문서를 연다. 창에 끌어다 놓았으면 놓은 자리(at)에 맞춰 칸을 고르거나 나눈다. */
+/** 실행 인자·끌어다 놓기·두 번째 실행으로 들어온 문서를 탭으로 연다. 창에 끌어다 놓았으면 놓은 자리(at)에 맞춰 칸을 고르거나 나눈다. */
 async function takeDocuments(event) {
   const at = event?.payload;
   dropMark.hidden = true;
@@ -1094,6 +1153,7 @@ function onKey(e) {
   const key = e.key.toLowerCase();
   if (ctrl && key === 'o') pickFolder();
   else if (ctrl && key === 'tab') cycleTab(e.shiftKey ? -1 : 1);
+  else if (ctrl && e.shiftKey && key === 't') reopenClosedTab();
   else if (ctrl && key === 'w' && active) closeTab(active);
   else if (ctrl && key === '\\' && active) splitTab(active);
   else if (ctrl && key === 'f' && active) viewer()?.openSearch();

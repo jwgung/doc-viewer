@@ -6,7 +6,7 @@
 mod detect;
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     fs::File,
     io::{Read, Seek, SeekFrom},
     path::{Path, PathBuf},
@@ -48,6 +48,19 @@ struct Documents {
     pending: Mutex<Vec<Opened>>,
     /// 사용자가 고른 폴더. 탐색기는 이 아래만 읽고 연다.
     folder: Mutex<Option<PathBuf>>,
+    /// 최근에 닫은 탭(번호 → 파일, 오래된 것부터). Ctrl+Shift+T로 다시 열 때 셸은 번호만 알므로 파일을 여기 남겨 둔다.
+    closed: Mutex<VecDeque<(u64, PathBuf)>>,
+}
+
+/// 다시 열 수 있게 남겨 두는 닫은 탭 수(셸의 닫은 탭 목록과 같다)
+const CLOSED_KEEP: usize = 20;
+
+/// 닫은 탭을 남겨 둔다. CLOSED_KEEP개를 넘으면 가장 오래된 것을 버린다.
+fn remember_closed(closed: &mut VecDeque<(u64, PathBuf)>, id: u64, path: PathBuf) {
+    closed.push_back((id, path));
+    while closed.len() > CLOSED_KEEP {
+        closed.pop_front();
+    }
 }
 
 /// 셸(src/shell.js)에 넘기는 문서: 탭 번호, 렌더러가 읽을 주소, 파일 이름과 내용으로 가린 형식.
@@ -91,7 +104,6 @@ fn register(app: &AppHandle, path: PathBuf) -> Opened {
     Opened { id, src: format!("{DOC_ORIGIN}/{id}"), name: file_name(&path), content_fmt: detected.content, text_fmt: detected.text }
 }
 
-/// 셸 밖에서 들어온 문서를 셸에 넘긴다: 쌓아 두고 알린다(셸이 아직 뜨는 중이면 뜬 뒤 take_documents로 가져간다).
 /// 끌어다 놓은 자리(창 안 CSS 픽셀). 셸은 이 자리로 놓을 칸·나눌 방향을 정한다.
 #[derive(Serialize, Clone, Copy)]
 struct DropAt {
@@ -106,7 +118,8 @@ impl DropAt {
     }
 }
 
-/// 문서를 셸에 넘긴다. at은 창에 끌어다 놓은 자리(실행 인자·두 번째 실행이면 None: 초점 칸에 연다).
+/// 셸 밖에서 들어온 문서를 셸에 넘긴다: 쌓아 두고 알린다(셸이 아직 뜨는 중이면 뜬 뒤 take_documents로 가져간다).
+/// at은 창에 끌어다 놓은 자리(실행 인자·두 번째 실행이면 None: 초점 칸에 연다).
 fn deliver(app: &AppHandle, paths: impl IntoIterator<Item = PathBuf>, at: Option<DropAt>) {
     let opened: Vec<Opened> = paths.into_iter().filter(|p| p.is_file()).map(|p| register(app, p)).collect();
     if opened.is_empty() {
@@ -209,10 +222,27 @@ fn take_documents(docs: State<Documents>) -> Vec<Opened> {
     std::mem::take(&mut *docs.pending.lock().unwrap())
 }
 
-/// 탭을 닫았다. 그 문서 주소는 더 이상 읽히지 않는다.
+/// 탭을 닫았다. 그 문서 주소는 더 이상 읽히지 않고, 다시 열 수 있게 파일만 남겨 둔다.
 #[tauri::command]
 fn close_document(id: u64, docs: State<Documents>) {
-    docs.open.lock().unwrap().remove(&id);
+    if let Some(path) = docs.open.lock().unwrap().remove(&id) {
+        remember_closed(&mut docs.closed.lock().unwrap(), id, path);
+    }
+}
+
+/// 닫은 탭을 다시 연다(Ctrl+Shift+T). 새 번호로 등록한다. 그 사이 파일이 없어졌으면 오류.
+#[tauri::command]
+fn reopen_document(app: AppHandle, id: u64) -> Result<Opened, String> {
+    let docs = app.state::<Documents>();
+    let path = {
+        let mut closed = docs.closed.lock().unwrap();
+        let index = closed.iter().position(|(closed_id, _)| *closed_id == id).ok_or("not closed")?;
+        closed.remove(index).map(|(_, path)| path).ok_or("not closed")?
+    };
+    if !path.is_file() {
+        return Err("missing".into());
+    }
+    Ok(register(&app, path))
 }
 
 /// 폴더 고르기(대화상자가 끝날 때까지 기다리므로 async, 주 스레드 밖). 고른 폴더는 다음 실행 때도 연다.
@@ -459,6 +489,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             take_documents,
+            reopen_document,
             close_document,
             save_session,
             restore_session,
@@ -581,6 +612,17 @@ mod tests {
         assert!(!only_case_changes(&root.join("sub/REAL.pdf"), &root.join("sub/real.pdf")));
         assert!(!only_case_changes(&root.join("sub/real.pdf"), &root.join("link.pdf")));
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn closed_tabs_keep_only_the_latest() {
+        let mut closed = VecDeque::new();
+        for id in 0..(CLOSED_KEEP as u64 + 5) {
+            remember_closed(&mut closed, id, PathBuf::from(format!("{id}.pdf")));
+        }
+        assert_eq!(closed.len(), CLOSED_KEEP);
+        assert_eq!(closed.front().unwrap().0, 5);
+        assert_eq!(closed.back().unwrap().0, CLOSED_KEEP as u64 + 4);
     }
 
     #[test]
