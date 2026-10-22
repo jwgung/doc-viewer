@@ -28,7 +28,7 @@ const STRINGS = {
     closeTab: '닫기 (Ctrl+W)',
     closeOthers: '다른 탭 닫기',
     splitRight: '오른쪽으로 나누기',
-    moveToOtherPane: '다른 칸으로 옮기기',
+    splitDown: '아래로 나누기',
     emptyHint: '왼쪽에서 폴더를 열어 문서를 고르거나, 문서를 여기에 끌어다 놓으세요.',
     unsupported: '지원하지 않는 형식의 파일입니다.',
     folderFailed: '폴더를 읽지 못했습니다.',
@@ -70,7 +70,7 @@ const STRINGS = {
     closeTab: 'Close (Ctrl+W)',
     closeOthers: 'Close other tabs',
     splitRight: 'Split right',
-    moveToOtherPane: 'Move to other pane',
+    splitDown: 'Split down',
     emptyHint: 'Open a folder on the left and pick a document, or drop documents here.',
     unsupported: 'This file type is not supported.',
     folderFailed: "Couldn't read the folder.",
@@ -158,14 +158,23 @@ const viewerOf = (tab) => tab?.frame.contentWindow?.viewer;
 const viewer = () => viewerOf(active);
 const tabOfWindow = (win) => tabs.find((tab) => tab.frame.contentWindow === win);
 
-// ---- 칸(pane): 좌우 두 칸까지. 칸마다 탭 줄·문서 자리·로딩 화면이 있고 보이는 탭(active)이 하나다.
-// 상단바·단축키는 마지막으로 누른 칸(focused)에 적용한다. 두 칸 사이 경계선을 끌어 폭을 바꾼다.
+// ---- 칸(pane): 최대 MAX_PANES칸. 칸마다 탭 줄·문서 자리·로딩 화면이 있고 보이는 탭(active)이 하나다.
+// 상단바·단축키는 마지막으로 누른 칸(focused)에 적용한다.
+// 배치는 나눔 나무(layout)로 둔다: 잎은 칸, 가지는 같은 방향(row: 좌우, column: 위아래)으로 나란한 자식들과 그 몫(sizes).
+// 칸 요소는 늘 #docs 바로 아래에 두고 나무에서 계산한 자리에 절대 위치로 놓는다. 나누거나 합칠 때 칸 요소를 다른 부모로
+// 옮기면 그 안의 iframe이 처음부터 다시 읽히기 때문이다. 칸 사이 경계선을 끌어 몫을 바꾸고, 두 번 누르면 고르게 나눈다.
+
+const MAX_PANES = 4;
+/** 칸 하나가 가지 안에서 가질 수 있는 가장 작은 몫 */
+const MIN_PANE_SHARE = 0.15;
 
 const docs = $('docs');
 /** @type {Array<{ el: HTMLElement, bar: HTMLElement, frames: HTMLElement, loading: HTMLElement, active: object | null }>} */
 const panes = [];
 let focused = null;
-let splitResizer = null;
+/** @type {{ pane: object } | { dir: 'row' | 'column', children: Array<object>, sizes: number[] } | null} */
+let layout = null;
+const splitResizers = [];
 
 function createPane() {
   const pane = { el: document.createElement('section'), bar: document.createElement('nav'), frames: document.createElement('main'), active: null };
@@ -186,28 +195,87 @@ function createPane() {
   pane.el.append(pane.bar, pane.frames);
   // 칸 안(탭 줄·빈 자리)을 누르면 그 칸이 초점 칸이 된다. 문서(iframe) 안을 누른 것은 createFrame이 알린다.
   pane.el.addEventListener('pointerdown', () => focusPane(pane), true);
-  if (panes.length) {
-    splitResizer = createSplitResizer();
-    docs.append(splitResizer, pane.el);
-  } else docs.appendChild(pane.el);
+  docs.appendChild(pane.el);
   panes.push(pane);
-  applySplitRatio();
   return pane;
 }
 
-/** 빈 칸을 없앤다(칸이 하나면 그대로 둔다). */
+/** 나무에서 칸의 잎과 그 부모 가지를 찾는다. */
+function findLeaf(pane, node = layout, parent = null) {
+  if (node.pane) return node.pane === pane ? { node, parent } : null;
+  for (const child of node.children) {
+    const found = findLeaf(pane, child, node);
+    if (found) return found;
+  }
+  return null;
+}
+
+/**
+ * target 칸의 side(left·right·top·bottom) 쪽에 새 칸을 만든다. 같은 방향 가지 안이면 형제로 끼우고(세 칸 나란히),
+ * 아니면 그 칸 자리를 새 가지로 바꾼다(한쪽을 위아래로 나누기). target이 가졌던 몫을 반씩 나눈다.
+ */
+function splitPane(target, side) {
+  const dir = side === 'left' || side === 'right' ? 'row' : 'column';
+  const after = side === 'right' || side === 'bottom';
+  const pane = createPane();
+  const leaf = { pane };
+  const { node, parent } = findLeaf(target);
+  if (parent?.dir === dir) {
+    const index = parent.children.indexOf(node);
+    const half = parent.sizes[index] / 2;
+    parent.sizes[index] = half;
+    parent.children.splice(index + (after ? 1 : 0), 0, leaf);
+    parent.sizes.splice(index + (after ? 1 : 0), 0, half);
+  } else {
+    const branch = { dir, children: after ? [{ pane: target }, leaf] : [leaf, { pane: target }], sizes: [0.5, 0.5] };
+    if (parent) parent.children[parent.children.indexOf(node)] = branch;
+    else layout = branch;
+  }
+  applyLayout();
+  return pane;
+}
+
+/** 빈 칸을 없앤다(칸이 하나면 그대로 둔다). 그 몫은 바로 옆 형제가 받고, 자식이 하나 남은 가지는 풀어 준다. */
 function removePane(pane) {
   if (panes.length < 2) return;
   panes.splice(panes.indexOf(pane), 1);
   pane.el.remove();
-  splitResizer?.remove();
-  splitResizer = null;
-  docs.classList.remove('split');
+  const { node, parent } = findLeaf(pane);
+  const index = parent.children.indexOf(node);
+  const share = parent.sizes[index];
+  parent.children.splice(index, 1);
+  parent.sizes.splice(index, 1);
+  parent.sizes[Math.max(0, index - 1)] += share;
+  if (parent.children.length === 1) replaceNode(parent, parent.children[0]);
   if (focused === pane) focusPane(panes[0]);
-  applySplitRatio();
+  applyLayout();
 }
 
-const otherPane = (pane) => panes.find((candidate) => candidate !== pane);
+/** 나무에서 old 자리를 replacement로 바꾼다. 같은 방향 가지 안에 같은 방향 가지가 들어가면 하나로 펼친다. */
+function replaceNode(old, replacement) {
+  const grand = findParent(old);
+  if (!grand) {
+    layout = replacement;
+    return;
+  }
+  const index = grand.children.indexOf(old);
+  if (replacement.dir && replacement.dir === grand.dir) {
+    const share = grand.sizes[index];
+    grand.children.splice(index, 1, ...replacement.children);
+    grand.sizes.splice(index, 1, ...replacement.sizes.map((size) => size * share));
+  } else grand.children[index] = replacement;
+}
+
+function findParent(target, node = layout) {
+  if (node.pane) return null;
+  if (node.children.includes(target)) return node;
+  for (const child of node.children) {
+    const found = findParent(target, child);
+    if (found) return found;
+  }
+  return null;
+}
+
 const tabsOf = (pane) => tabs.filter((tab) => tab.pane === pane);
 
 function focusPane(pane) {
@@ -229,49 +297,111 @@ function showPaneLoading(pane) {
   if (tab) pane.loading.querySelector('.loading-name').textContent = tab.name;
 }
 
-// 두 칸의 폭 비율(왼쪽 칸 몫). 경계선을 끌어 바꾸고 다음에도 쓴다.
-const MIN_PANE_RATIO = 0.2;
-let splitRatio = loadPref('splitRatio') ?? 0.5;
-
-function applySplitRatio() {
+/**
+ * 나무대로 칸을 놓고 경계선을 다시 단다(#docs 안의 비율로 두므로 창 크기가 바뀌어도 따라간다).
+ * save가 false면 배치를 적지 않는다(시작할 때: 지난번 배치를 되살리기 전에 덮어쓰지 않게).
+ */
+function applyLayout(save = true) {
   docs.classList.toggle('split', panes.length > 1);
-  if (panes.length < 2) {
-    panes[0].el.style.flex = '';
-    return;
-  }
-  panes[0].el.style.flex = `${splitRatio} 1 0`;
-  panes[1].el.style.flex = `${1 - splitRatio} 1 0`;
+  for (const resizer of splitResizers.splice(0)) resizer.remove();
+  place(layout, ROOT_BOX);
+  if (save) savePref('layout', serializeLayout(layout));
 }
 
-function createSplitResizer() {
+const ROOT_BOX = { left: 0, top: 0, width: 1, height: 1 };
+const percent = (value) => `${(value * 100).toFixed(4)}%`;
+
+/** node를 box(#docs에 대한 비율)에 놓는다. move면 경계선을 새로 만들지 않고 있던 것만 옮긴다(끄는 중: 포인터를 붙든 경계선이 남아야 한다). */
+function place(node, box, move = false) {
+  if (node.pane) {
+    Object.assign(node.pane.el.style, { left: percent(box.left), top: percent(box.top), width: percent(box.width), height: percent(box.height) });
+    return;
+  }
+  const row = node.dir === 'row';
+  if (!move) node.resizers = [];
+  let offset = 0;
+  node.children.forEach((child, index) => {
+    const share = node.sizes[index];
+    const childBox = row
+      ? { left: box.left + offset * box.width, top: box.top, width: share * box.width, height: box.height }
+      : { left: box.left, top: box.top + offset * box.height, width: box.width, height: share * box.height };
+    place(child, childBox, move);
+    offset += share;
+    if (index === node.children.length - 1) return;
+    if (!move) node.resizers.push(createSplitResizer(node, index));
+    Object.assign(
+      node.resizers[index].style,
+      row
+        ? { left: percent(box.left + offset * box.width), top: percent(box.top), height: percent(box.height) }
+        : { top: percent(box.top + offset * box.height), left: percent(box.left), width: percent(box.width) },
+    );
+  });
+  node.box = box;
+}
+
+/** node 가지의 index번째와 그다음 자식 사이 경계선 */
+function createSplitResizer(node, index) {
+  const row = node.dir === 'row';
   const resizer = document.createElement('div');
-  resizer.className = 'resizer';
+  resizer.className = `resizer split-resizer ${row ? 'vertical' : 'horizontal'}`;
   resizer.setAttribute('role', 'separator');
-  resizer.setAttribute('aria-orientation', 'vertical');
+  resizer.setAttribute('aria-orientation', row ? 'vertical' : 'horizontal');
   resizer.addEventListener('pointerdown', (e) => {
     resizer.setPointerCapture(e.pointerId);
+    resizer.classList.add('held');
     document.body.classList.add('resizing');
+    document.body.classList.toggle('rows', !row);
   });
   resizer.addEventListener('pointermove', (e) => {
     if (!resizer.hasPointerCapture(e.pointerId)) return;
     const rect = docs.getBoundingClientRect();
-    splitRatio = Math.min(1 - MIN_PANE_RATIO, Math.max(MIN_PANE_RATIO, (e.clientX - rect.left) / rect.width));
-    applySplitRatio();
+    const { box } = node;
+    const position = row ? ((e.clientX - rect.left) / rect.width - box.left) / box.width : ((e.clientY - rect.top) / rect.height - box.top) / box.height;
+    // 두 이웃 칸의 몫 합은 그대로 두고 경계만 옮긴다.
+    const before = node.sizes.slice(0, index).reduce((sum, size) => sum + size, 0);
+    const pair = node.sizes[index] + node.sizes[index + 1];
+    const first = Math.min(pair - MIN_PANE_SHARE, Math.max(MIN_PANE_SHARE, position - before));
+    node.sizes[index] = first;
+    node.sizes[index + 1] = pair - first;
+    place(layout, ROOT_BOX, true);
   });
   const end = (e) => {
     if (!resizer.hasPointerCapture(e.pointerId)) return;
     resizer.releasePointerCapture(e.pointerId);
-    document.body.classList.remove('resizing');
-    savePref('splitRatio', splitRatio);
+    resizer.classList.remove('held');
+    document.body.classList.remove('resizing', 'rows');
+    savePref('layout', serializeLayout(layout));
   };
   resizer.addEventListener('pointerup', end);
   resizer.addEventListener('pointercancel', end);
   resizer.addEventListener('dblclick', () => {
-    splitRatio = 0.5;
-    applySplitRatio();
-    savePref('splitRatio', splitRatio);
+    node.sizes = node.children.map(() => 1 / node.children.length);
+    applyLayout();
   });
+  docs.appendChild(resizer);
+  splitResizers.push(resizer);
   return resizer;
+}
+
+/** 저장용: 칸은 panes 안의 번호로 적는다(탭도 칸 번호를 적는다). */
+function serializeLayout(node) {
+  return node.pane ? { pane: panes.indexOf(node.pane) } : { dir: node.dir, sizes: node.sizes, children: node.children.map(serializeLayout) };
+}
+
+/** 저장해 둔 나무를 칸을 만들며 되살린다. 모양이 이상하면 null(한 칸으로 시작). */
+function restoreLayout(saved, made = new Map()) {
+  if (!saved || typeof saved !== 'object') return null;
+  if (Number.isInteger(saved.pane)) {
+    if (made.has(saved.pane) || made.size >= MAX_PANES) return null;
+    made.set(saved.pane, true);
+    return { saved: saved.pane };
+  }
+  const { dir, sizes, children } = saved;
+  if (!['row', 'column'].includes(dir) || !Array.isArray(children) || children.length < 2 || !Array.isArray(sizes) || sizes.length !== children.length) return null;
+  const restored = children.map((child) => restoreLayout(child, made));
+  if (restored.some((child) => !child)) return null;
+  const total = sizes.reduce((sum, size) => sum + (Number(size) || 0), 0);
+  return { dir, children: restored, sizes: sizes.map((size) => (Number(size) || 0) / total || 1 / sizes.length) };
 }
 
 /**
@@ -480,28 +610,43 @@ function moveTab(tab, target, index = Infinity) {
   activate(tab);
 }
 
-/** 탭을 옆 칸으로 보낸다. 칸이 하나면 오른쪽에 새 칸을 만든다(탭이 하나뿐이면 나눌 것이 없다). */
-function splitTab(tab) {
-  if (panes.length < 2 && tabsOf(tab.pane).length < 2) return;
-  moveTab(tab, otherPane(tab.pane) ?? createPane());
+/**
+ * tab을 pane의 가장자리로 보내 새 칸을 만들 수 있는지. 칸 수가 MAX_PANES를 넘지 않아야 하고(혼자 있던 칸에서 다른 칸으로 가면
+ * 그 칸이 없어져 수가 그대로다), 제 칸을 나누려면 남길 탭이 있어야 한다.
+ */
+function canSplit(tab, pane) {
+  if (pane === tab.pane) return tabsOf(pane).length > 1 && panes.length < MAX_PANES;
+  return panes.length < MAX_PANES || tabsOf(tab.pane).length === 1;
+}
+
+/** 탭을 pane의 side 쪽 새 칸으로 보낸다(Ctrl+\는 제 칸 오른쪽). */
+function splitTab(tab, side = 'right', pane = tab.pane) {
+  if (!canSplit(tab, pane)) return;
+  moveTab(tab, splitPane(pane, side));
 }
 
 function tabActions(tab) {
-  const split = panes.length > 1;
+  const split = canSplit(tab, tab.pane);
   return [
-    { label: split ? t.moveToOtherPane : t.splitRight, hint: 'Ctrl+\\', run: () => splitTab(tab) },
-    'separator',
+    ...(split
+      ? [
+          { label: t.splitRight, hint: 'Ctrl+\\', run: () => splitTab(tab, 'right') },
+          { label: t.splitDown, run: () => splitTab(tab, 'bottom') },
+          'separator',
+        ]
+      : []),
     { label: t.closeTab.replace(/ \(.*\)$/, ''), hint: 'Ctrl+W', run: () => closeTab(tab) },
     { label: t.closeOthers, run: () => tabsOf(tab.pane).filter((other) => other !== tab).forEach(closeTab) },
   ];
 }
 
 // ---- 탭 끌기: 포인터 이벤트로 직접 한다. Windows에서 Tauri가 파일 끌어다 놓기를 받으면 웹 안의 HTML 끌어다 놓기가 막힌다.
-// 탭 줄에 놓으면 그 자리로(다른 칸이면 그 칸으로), 칸이 하나일 때 문서 오른쪽 가장자리에 놓으면 오른쪽에 새 칸을 만든다.
+// 탭 줄에 놓으면 그 자리로(다른 칸이면 그 칸으로), 문서 자리의 가장자리(위·아래·왼쪽·오른쪽)에 놓으면 그쪽에 새 칸을 만들고,
+// 다른 칸 문서 자리의 가운데에 놓으면 그 칸으로 옮긴다.
 
 const DRAG_START_PX = 6;
-/** 칸이 하나일 때 이 비율보다 오른쪽에 놓으면 나눈다 */
-const SPLIT_EDGE = 0.75;
+/** 문서 자리에서 이 비율 안쪽의 가장자리에 놓으면 나눈다 */
+const SPLIT_EDGE = 0.25;
 let drag = null;
 /** 끌기가 끝난 직후의 click(탭 고르기)을 한 번 무시한다 */
 let dragJustEnded = false;
@@ -529,14 +674,14 @@ function moveTabDrag(e) {
   showDropMark(drag.target);
 }
 
-/** 포인터 아래의 놓을 곳: { pane, index }(탭 줄) 또는 { split: true }(오른쪽 가장자리) */
+/** 포인터 아래의 놓을 곳: { pane, index }(탭 줄·다른 칸 가운데) 또는 { pane, side }(가장자리에 새 칸) */
 function dropTarget(x, y) {
   for (const pane of panes) {
     const bar = pane.bar.getBoundingClientRect();
     const rect = pane.el.getBoundingClientRect();
-    if (x < rect.left || x > rect.right) continue;
+    if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) continue;
     // 탭 줄(비어 있으면 높이가 0이라 위쪽 34px을 탭 줄로 본다)
-    if (y >= rect.top && y <= rect.top + Math.max(bar.height, 34)) {
+    if (y <= rect.top + Math.max(bar.height, 34)) {
       const others = tabsOf(pane).filter((tab) => tab !== drag.tab);
       const index = others.filter((tab) => {
         const r = tab.button.getBoundingClientRect();
@@ -544,10 +689,17 @@ function dropTarget(x, y) {
       }).length;
       return { pane, index };
     }
-    if (y > rect.top && y < rect.bottom) {
-      if (panes.length === 1 && x > rect.left + rect.width * SPLIT_EDGE && tabsOf(pane).length > 1) return { split: true };
-      if (pane !== drag.tab.pane) return { pane, index: Infinity };
-    }
+    const area = pane.frames.getBoundingClientRect();
+    const rx = (x - area.left) / area.width;
+    const ry = (y - area.top) / area.height;
+    const [side, distance] = [
+      ['left', rx],
+      ['right', 1 - rx],
+      ['top', ry],
+      ['bottom', 1 - ry],
+    ].reduce((nearest, candidate) => (candidate[1] < nearest[1] ? candidate : nearest));
+    if (distance < SPLIT_EDGE && canSplit(drag.tab, pane)) return { pane, side };
+    return pane !== drag.tab.pane ? { pane, index: Infinity } : null;
   }
   return null;
 }
@@ -556,13 +708,11 @@ function showDropMark(target) {
   dropMark.hidden = !target;
   if (!target) return;
   let rect;
-  if (target.split) {
-    const r = panes[0].frames.getBoundingClientRect();
-    rect = { left: r.left + r.width / 2, top: r.top, width: r.width / 2, height: r.height };
-    dropMark.className = 'drop-mark area';
-  } else if (target.index === Infinity && target.pane !== drag.tab.pane) {
+  if (target.side || target.index === Infinity) {
+    // 새 칸이 들어갈 반쪽, 또는 옮겨 갈 칸 전체
     const r = target.pane.frames.getBoundingClientRect();
-    rect = { left: r.left, top: r.top, width: r.width, height: r.height };
+    const half = { left: { width: r.width / 2 }, right: { left: r.left + r.width / 2, width: r.width / 2 }, top: { height: r.height / 2 }, bottom: { top: r.top + r.height / 2, height: r.height / 2 } };
+    rect = { left: r.left, top: r.top, width: r.width, height: r.height, ...half[target.side] };
     dropMark.className = 'drop-mark area';
   } else {
     // 탭 줄의 끼울 자리에 세로 막대
@@ -570,7 +720,7 @@ function showDropMark(target) {
     const bar = target.pane.bar.getBoundingClientRect();
     const ref = others[target.index]?.button.getBoundingClientRect();
     const last = others.at(-1)?.button.getBoundingClientRect();
-    const x = ref ? ref.left : last ? last.right : bar.left;
+    const x = ref ? ref.left : last ? last.right : target.pane.el.getBoundingClientRect().left;
     rect = { left: x - 1, top: target.pane.el.getBoundingClientRect().top, width: 2, height: Math.max(bar.height, 34) };
     dropMark.className = 'drop-mark line';
   }
@@ -589,12 +739,12 @@ function endTabDrag(e) {
   dragJustEnded = true;
   setTimeout(() => (dragJustEnded = false), 0);
   const target = e.type === 'pointerup' ? current.target : null;
-  if (target?.split) splitTab(current.tab);
+  if (target?.side) splitTab(current.tab, target.side, target.pane);
   else if (target) moveTab(current.tab, target.pane, target.index);
 }
 
 // ---- 지난번 상태: 열린 탭과 탭마다 보던 상태를 Rust가 앱 설정 폴더에 적어 둔다(경로는 Rust만 안다).
-// 칸 번호(pane)와 그 칸에서 보이던 탭(shown)도 함께 적어 나눈 화면을 되살린다.
+// 칸 번호(pane)와 그 칸에서 보이던 탭(shown)도 함께 적고, 칸 배치(나눔 나무)는 설정(layout)에 둔다.
 
 let sessionTimer = null;
 function saveSession() {
@@ -619,8 +769,27 @@ function saveSession() {
 
 async function restoreSession() {
   const { tabs: saved, active: activeId } = await invoke('restore_session');
-  if (saved.some(({ view }) => view?.pane === 1) && saved.some(({ view }) => (view?.pane ?? 0) === 0)) createPane();
-  for (const { opened, view } of saved) openTab(opened, view, false, panes[view?.pane ?? 0] ?? panes[0]);
+  // 나눈 배치: 저장해 둔 나무를 따르고, 없으면(좌우 두 칸만 되던 때) 칸 번호로 좌우로 놓는다.
+  const used = new Set(saved.map(({ view }) => view?.pane ?? 0));
+  let tree = restoreLayout(loadPref('layout'));
+  if (!tree && used.has(1) && used.has(0)) tree = { dir: 'row', children: [{ saved: 0 }, { saved: 1 }], sizes: [loadPref('splitRatio') ?? 0.5, 1 - (loadPref('splitRatio') ?? 0.5)] };
+  const byIndex = new Map();
+  if (tree) {
+    // 처음 만든 칸(0번)을 나무의 첫 잎으로 쓰고 나머지 잎마다 칸을 만든다.
+    const toPanes = (node) => {
+      if (node.saved !== undefined) {
+        const pane = byIndex.size === 0 ? panes[0] : createPane();
+        byIndex.set(node.saved, pane);
+        return { pane };
+      }
+      return { dir: node.dir, sizes: node.sizes, children: node.children.map(toPanes) };
+    };
+    layout = toPanes(tree);
+    applyLayout();
+  }
+  for (const { opened, view } of saved) openTab(opened, view, false, byIndex.get(view?.pane ?? 0) ?? panes[0]);
+  // 탭이 하나도 없는 칸은 없앤다.
+  for (const pane of [...panes]) if (!tabsOf(pane).length) removePane(pane);
   // 칸마다 보이던 탭을 보이고, 마지막에 초점 칸의 탭을 고른다.
   for (const pane of panes) {
     const own = tabsOf(pane);
@@ -1121,6 +1290,7 @@ setExplorerWidth(loadPref('explorerWidth') ?? 260);
 const resizer = $('explorer-resizer');
 resizer.addEventListener('pointerdown', (e) => {
   resizer.setPointerCapture(e.pointerId);
+  resizer.classList.add('held');
   document.body.classList.add('resizing');
 });
 resizer.addEventListener('pointermove', (e) => {
@@ -1129,6 +1299,7 @@ resizer.addEventListener('pointermove', (e) => {
 const endResize = (e) => {
   if (!resizer.hasPointerCapture(e.pointerId)) return;
   resizer.releasePointerCapture(e.pointerId);
+  resizer.classList.remove('held');
   document.body.classList.remove('resizing');
   savePref('explorerWidth', explorer.offsetWidth);
 };
@@ -1141,7 +1312,8 @@ resizer.addEventListener('dblclick', () => {
 
 // ---- 시작
 
-createPane();
+layout = { pane: createPane() };
+applyLayout(false);
 focusPane(panes[0]);
 showExplorer(loadPref('explorer') ?? true);
 showToolbar();
