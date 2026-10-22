@@ -844,7 +844,7 @@ const tree = $('tree');
 const expanded = new Set(loadPref('expanded') ?? []);
 
 function showExplorer(visible) {
-  explorer.hidden = !visible;
+  explorer.classList.toggle('collapsed', !visible);
   $('explorer-resizer').hidden = !visible;
   $('toggle-explorer').setAttribute('aria-pressed', String(visible));
   savePref('explorer', visible);
@@ -1110,12 +1110,12 @@ async function pickFolder() {
 $('pick-folder').addEventListener('click', pickFolder);
 $('refresh-folder').addEventListener('click', () => refreshList(tree));
 $('pick-folder-empty').addEventListener('click', pickFolder);
-$('toggle-explorer').addEventListener('click', () => showExplorer(explorer.hidden));
+$('toggle-explorer').addEventListener('click', () => showExplorer(explorer.classList.contains('collapsed')));
 
 // 사이드바 폭: 경계선 어디든 끌어서 바꾼다. 끄는 동안 문서 iframe이 마우스를 가로채지 않게 막는다.
 const MIN_EXPLORER = 180;
 function setExplorerWidth(width) {
-  explorer.style.width = `${Math.round(Math.min(Math.max(width, MIN_EXPLORER), innerWidth * 0.6))}px`;
+  explorer.style.setProperty('--explorer-width', `${Math.round(Math.min(Math.max(width, MIN_EXPLORER), innerWidth * 0.6))}px`);
 }
 setExplorerWidth(loadPref('explorerWidth') ?? 260);
 const resizer = $('explorer-resizer');

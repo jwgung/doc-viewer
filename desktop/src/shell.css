@@ -215,9 +215,26 @@ body:not(.paged) .paged-only,
   display: flex;
   flex-direction: column;
   flex: none;
-  width: 260px;
+  width: var(--explorer-width, 260px);
   overflow: hidden;
   background: var(--sidebar);
+  transition: margin-left 0.2s ease;
+}
+
+/* 숨길 때는 왼쪽으로 밀어 넣는다(폭은 그대로 두어 안의 목록이 접히며 줄바꿈되지 않게). 다 들어간 뒤에야 감춰 탭 이동에서 빠진다. */
+#explorer.collapsed {
+  margin-left: calc(var(--explorer-width, 260px) * -1);
+  visibility: hidden;
+  transition:
+    margin-left 0.2s ease,
+    visibility 0s 0.2s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #explorer,
+  #explorer.collapsed {
+    transition: none;
+  }
 }
 
 /* 사이드바 경계선: 선은 1px이지만 잡을 수 있는 폭은 넓게, 올리거나 끄는 동안 강조색 */
