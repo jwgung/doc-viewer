@@ -1,4 +1,5 @@
 import { parse, renderSlideToSvg, slideText, WrongPasswordError } from '@web-ppt/core';
+import { attachMediaPlayers } from '../media-player.js';
 import { PagedViewer } from '../paged-viewer.js';
 import { t } from '../strings.js';
 
@@ -61,6 +62,8 @@ export async function render(bytes, container, ctx) {
   const size = { width: pres.width, height: pres.height };
   const renderInto = async (index, el) => {
     el.innerHTML = renderSlideToSvg(pres, pres.slides[index], { textMode: 'html' });
+    // 동영상·소리 자리에 재생 단추를 얹는다(인쇄용 쪽은 빼고). 매체 데이터는 누를 때 만든다.
+    if (!el.classList.contains('print-page')) attachMediaPlayers(el, (info) => pres.mediaUrl?.(info) ?? null);
   };
   // pptx 슬라이드는 처음 읽을 때 해석된다(web-ppt lazy). slides.map은 모든 슬라이드를 읽어 다 해석하므로
   // 개수만 쓴다(28장 6.5MB XML 파일에서 첫 슬라이드가 그만큼 늦었다).

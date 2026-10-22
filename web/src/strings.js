@@ -31,6 +31,12 @@ const STRINGS = {
     go: '이동',
     ok: '확인',
     cancel: '취소',
+    mediaPlayVideo: '동영상 재생',
+    mediaPlayAudio: '소리 재생',
+    mediaUnsupported: '이 형식은 재생할 수 없습니다.',
+    mediaExternal: '인터넷 링크 동영상은 열 수 없습니다.',
+    mediaMissing: '문서에 동영상·소리 파일이 없습니다.',
+    mediaFailed: '재생하지 못했습니다.',
   },
 };
 
@@ -64,6 +70,12 @@ STRINGS.en = {
   go: 'Go',
   ok: 'OK',
   cancel: 'Cancel',
+  mediaPlayVideo: 'Play video',
+  mediaPlayAudio: 'Play audio',
+  mediaUnsupported: "This format can't be played.",
+  mediaExternal: "Online videos can't be opened.",
+  mediaMissing: "The video or audio file isn't in this document.",
+  mediaFailed: "Couldn't play this.",
 };
 
 // 한국어가 아니면 영어로 보인다(앱의 기본 문구와 같은 규칙).

@@ -910,3 +910,65 @@ body.searching #doc {
   -webkit-user-select: none;
 }
 
+
+/* 문서 안 동영상·소리(media-player.js). 자리는 쪽 기준 백분율이라 쪽 칸 크기를 따라간다. */
+.media-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.media-slot {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 재생 표시는 그림(SVG)에 이미 있어 단추는 그 위의 투명한 누름 자리다. 손가락으로 누르기 쉽게 44px 이상. */
+.media-play {
+  pointer-events: auto;
+  flex: none;
+  width: max(44px, min(100%, 72px));
+  height: max(44px, min(100%, 72px));
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.media-play:focus-visible {
+  outline: 3px solid #4c8dff;
+  outline-offset: 2px;
+}
+
+.media-slot video {
+  pointer-events: auto;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+
+/* 소리 아이콘은 대개 작아 재생 막대를 아이콘 가운데에 아이콘보다 넓게 띄운다. */
+.media-slot audio {
+  pointer-events: auto;
+  flex: none;
+  width: max(100%, 260px);
+  max-width: 90vw;
+}
+
+.media-notice {
+  pointer-events: auto;
+  flex: none;
+  max-width: max(100%, 200px);
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 8px;
+  background: rgba(17, 17, 17, 0.85);
+  color: #fff;
+  font: 14px/1.4 system-ui, sans-serif;
+  cursor: pointer;
+}
