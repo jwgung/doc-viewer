@@ -22,7 +22,11 @@ const COLORS = {
   toml: '#8D6E63',
   yaml: '#C2185B',
   log: '#546E7A',
+  image: '#00897B',
 };
+
+/** 형식 이름과 다른 아이콘 글자 */
+const LABELS = { image: 'IMG' };
 
 /** 흰색과 섞은 색(접힌 귀퉁이) */
 function lighten(hex, ratio) {
@@ -42,7 +46,7 @@ function svg(viewBox, inner, className) {
 /** 목록용 문서 아이콘. label은 보통 파일의 형식(fmt) 이름이다. */
 export function fileIcon(fmt) {
   const color = COLORS[fmt] ?? COLORS.txt;
-  const label = (fmt ?? '').toUpperCase().slice(0, 4);
+  const label = LABELS[fmt] ?? (fmt ?? '').toUpperCase().slice(0, 4);
   // 24×30 문서: 오른쪽 위 7만큼 접힘, 모서리 반지름 2. 글자는 접힌 귀퉁이 아래 가운데.
   const size = label.length > 3 ? 7.4 : 8.6;
   return svg(

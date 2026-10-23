@@ -37,7 +37,15 @@ const PLAIN_TEXT = [
   'text', 'nfo', 'rst', 'tex', 'bib', 'srt', 'vtt', 'diff', 'patch',
 ];
 
-const BY_EXTENSION = new Map([...KEYS.map((key) => [key, key]), ...Object.entries(VARIANTS), ...PLAIN_TEXT.map((ext) => [ext, 'txt'])]);
+/** 그림 파일(renderers/image.js). 데스크톱만 연다: 파일 연결(tauri.conf.json)에는 넣지 않아 사진 앱의 기본 앱을 가져가지 않는다. */
+const IMAGES = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'ico'];
+
+const BY_EXTENSION = new Map([
+  ...KEYS.map((key) => [key, key]),
+  ...Object.entries(VARIANTS),
+  ...PLAIN_TEXT.map((ext) => [ext, 'txt']),
+  ...IMAGES.map((ext) => [ext, 'image']),
+]);
 
 /** 폴더 탐색기에 보이는 확장자 */
 export const EXTENSIONS = [...BY_EXTENSION.keys()];

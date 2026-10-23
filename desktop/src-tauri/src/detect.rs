@@ -33,6 +33,8 @@ pub fn detect(path: &Path) -> Detected {
         compound_format(path)
     } else if head.starts_with(HWP3_MAGIC) {
         Some("hwp")
+    } else if is_image(head) {
+        Some("image")
     } else {
         None
     };
@@ -91,6 +93,18 @@ fn compound_format(path: &Path) -> Option<&'static str> {
     } else {
         None
     }
+}
+
+/// 래스터 그림 서명(png·jpeg·gif·webp·bmp). 데스크톱만 그림을 연다(Android DocFormat.detect에는 아직 없다).
+/// bmp는 'BM' 두 글자뿐이라 예약 칸(6~9바이트)이 0인지까지 본다(글자 파일에는 NUL이 없다). ico·svg는 서명이 약하거나
+/// 글자라서 확장자에 맡긴다.
+fn is_image(head: &[u8]) -> bool {
+    head.starts_with(b"\x89PNG\r\n\x1a\n")
+        || head.starts_with(&[0xFF, 0xD8, 0xFF])
+        || head.starts_with(b"GIF87a")
+        || head.starts_with(b"GIF89a")
+        || (head.starts_with(b"RIFF") && head.get(8..12) == Some(b"WEBP"))
+        || (head.starts_with(b"BM") && head.get(6..10) == Some(&[0, 0, 0, 0]))
 }
 
 /// 앞 4KB에 NUL이 없고 제어 문자가 거의 없으면 텍스트로 본다(UTF-16은 NUL이 있어 제외된다).
@@ -155,6 +169,12 @@ mod tests {
             (zip_with("d.zip", &["mimetype", "Contents/content.hpf"]), Some("hwpx")),
             (zip_with("e.zip", &["readme.txt"]), None),
             (write("f.hwp", b"HWP Document File V3.00 \x1a\x01\x02"), Some("hwp")),
+            (write("g.bin", b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR"), Some("image")),
+            (write("h.doc", b"\xFF\xD8\xFF\xE0\0\x10JFIF"), Some("image")),
+            (write("i", b"GIF89a\x01\0\x01\0"), Some("image")),
+            (write("j.bin", b"RIFF\x24\0\0\0WEBPVP8 "), Some("image")),
+            (write("k.bin", b"BM\x46\0\0\0\0\0\0\0\x36\0\0\0"), Some("image")),
+            (write("l.txt", b"BMW owners club"), None),
         ];
         for (path, expected) in cases {
             assert_eq!(detect(&path).content, expected, "{path:?}");
