@@ -508,8 +508,8 @@ function resolveCharacterFonts(
 }
 
 // doc-viewer: 글자 조각의 상태는 (문단 스타일의 글자 속성, 직접 서식) 조합으로만 정해진다. 큰 문서는 같은 조합이 수만 번
-// 나오므로 조합마다 한 번만 만든다(9MB 문서의 파싱이 1.9초 걸렸고 그 대부분이 속성 합치기였다). 두 배열 모두 문서 안에서
-// 같은 객체가 다시 쓰이고(styles.resolveStyle은 결과를 기억한다) 읽기만 하므로 객체 자체로 찾는다. 상태 객체는 조각끼리
+// 나오므로 조합마다 한 번만 만든다(속성 합치기·글꼴 해석·읽기 색 포함). 두 배열 모두 문서 안에서 같은 객체가 다시
+// 쓰이고(styles.resolveStyle은 결과를 기억한다) 읽기만 하므로 객체 자체로 찾는다. 캐시에 넣은 상태 객체는 조각끼리
 // 함께 쓰며 고치지 않는다.
 const NO_DIRECT_PROPS: DecodedProperty[] = [];
 const charStateCache = new WeakMap<DecodedProperty[], { normal: WeakMap<DecodedProperty[], CharState>; readable: WeakMap<DecodedProperty[], CharState> }>();
