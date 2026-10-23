@@ -1,0 +1,62 @@
+# 웹 렌더러(web/)는 이 저장소가 원본이다. dev에 web/ 변경이 들어오면 Android 앱 저장소(jwgung/doc-viewer-mobile)의
+# web/을 똑같이 맞추는 PR을 그 저장소 dev로 연다(이미 열려 있으면 같은 브랜치를 갱신한다). 모바일에서는 web/을 고치지 않는다.
+# 모바일 저장소는 비공개라 secret MOBILE_SYNC_TOKEN(그 저장소의 Contents·Pull requests 쓰기 권한 토큰)으로 접근한다.
+name: Sync web to mobile
+
+on:
+  push:
+    branches: [dev]
+    paths: ['web/**']
+  workflow_dispatch:
+
+concurrency:
+  group: sync-web
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      MOBILE_REPO: jwgung/doc-viewer-mobile
+      BRANCH: sync/web
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: desktop
+
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.MOBILE_REPO }}
+          ref: dev
+          path: mobile
+          token: ${{ secrets.MOBILE_SYNC_TOKEN }}
+
+      - name: web/ 맞추기
+        run: rsync -a --delete --exclude node_modules --exclude dist desktop/web/ mobile/web/
+
+      - name: PR 열기·갱신
+        working-directory: mobile
+        env:
+          GH_TOKEN: ${{ secrets.MOBILE_SYNC_TOKEN }}
+          SOURCE: ${{ github.sha }}
+        run: |
+          if [ -z "$(git status --porcelain -- web)" ]; then
+            echo "모바일 web/이 이미 같다."
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch -c "$BRANCH"
+          git add -A web
+          git commit -q -m "chore(web): sync from jwgung/doc-viewer@${SOURCE::7}" -m "Synced automatically from https://github.com/jwgung/doc-viewer/commit/$SOURCE"
+          git push -f origin "$BRANCH"
+          body="jwgung/doc-viewer의 web/을 그대로 옮긴다(원본 커밋 https://github.com/jwgung/doc-viewer/commit/$SOURCE). 이 PR은 Sync web to mobile 워크플로가 연다."
+          if [ -n "$(gh pr list --repo "$MOBILE_REPO" --head "$BRANCH" --state open --json number --jq '.[].number')" ]; then
+            gh pr edit "$BRANCH" --repo "$MOBILE_REPO" --body "$body"
+          else
+            gh pr create --repo "$MOBILE_REPO" --base dev --head "$BRANCH" --title "chore(web): sync renderer from doc-viewer" --body "$body"
+          fi

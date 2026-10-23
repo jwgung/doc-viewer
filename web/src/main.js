@@ -40,6 +40,9 @@ const CFB_MAGIC = [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1];
 // 윈도우 셸 확대·축소의 범위. 쪽 없는 문서(엑셀·마크다운·텍스트)는 글자가 읽히는 만큼만 줄인다.
 const MAX_ZOOM = 4;
 const MIN_FLOW_ZOOM = 0.5;
+// 확대·줄인 상태에서 두 번 탭으로 볼 두 탭 사이의 시간(ms)과 거리(px)
+const DOUBLE_TAP_MS = 300;
+const DOUBLE_TAP_PX = 40;
 // 확대·축소가 이만큼(ms) 멈추면 바뀐 크기로 쪽을 다시 그린다.
 const ZOOM_SETTLE_MS = 250;
 const container = document.getElementById('doc');
@@ -424,9 +427,15 @@ function restoreScroll(ratio) {
 /**
  * 문서를 한 번 탭하면 앱이 상단바를 숨기거나 다시 보인다(읽기 모드).
  * 쪽 넘기기(가장자리 탭), 화면 위 버튼·시트, 글자 선택 중인 경우는 제외한다.
+ * 손가락으로 확대했거나 줄였을 때 두 번 탭하면 앱이 처음 크기로 되돌린다('원래 크기' 버튼과 같다).
+ * 그때만 한 번 탭을 DOUBLE_TAP_MS 미뤄 두 번째 탭을 기다리고, 처음 크기에서의 탭은 바로 알린다.
  */
 function bindChromeToggle() {
   let start = null;
+  /** 두 번째 탭을 기다리는 첫 탭 { x, y, timer } */
+  let pending = null;
+  // 앱이 '원래 크기' 버튼을 띄우는 기준(ViewerActivity: 줄임 0.99 미만)과 맞춘다.
+  const zoomed = () => (visualViewport?.scale ?? 1) > 1.01 || Math.abs((viewer?.shrink ?? 1) - 1) > 0.01;
   addEventListener(
     'touchstart',
     (e) => {
@@ -446,11 +455,22 @@ function bindChromeToggle() {
       const tap = performance.now() - start.t < 400 && Math.hypot(touch.clientX - start.x, touch.clientY - start.y) < 10;
       start = null;
       if (!tap) return;
+      const { clientX: x, clientY: y } = touch;
       // 같은 탭을 쪽 뷰어가 쪽 넘기기로 썼는지는 모든 처리기가 끝난 뒤에 확인한다.
       setTimeout(() => {
         if (getSelection()?.toString()) return;
         if (PagedViewer.flippedBy === e) return;
-        report('toggleChrome');
+        const first = pending;
+        pending = null;
+        if (first) clearTimeout(first.timer);
+        if (first && Math.hypot(x - first.x, y - first.y) < DOUBLE_TAP_PX) return report('resetZoom');
+        if (first) report('toggleChrome'); // 멀리 떨어진 탭: 기다리던 첫 탭은 한 번 탭으로 확정한다
+        if (!zoomed()) return report('toggleChrome');
+        const timer = setTimeout(() => {
+          pending = null;
+          report('toggleChrome');
+        }, DOUBLE_TAP_MS);
+        pending = { x, y, timer };
       }, 0);
     },
     { passive: true },
