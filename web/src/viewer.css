@@ -544,12 +544,6 @@ body.reading .scrubber {
   max-width: 100%;
 }
 
-/* 큰 마크다운: 화면 밖 최상위 요소는 배치를 건너뛰고 어림한 높이를 쓴다(renderers/md.js LARGE_CHILDREN). */
-.markdown.large > * {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 3em;
-}
-
 /* 최후 대안: 원래 모양 없이 본문 글자만 */
 .flow.fallback {
   max-width: 760px;
