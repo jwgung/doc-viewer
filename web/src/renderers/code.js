@@ -233,6 +233,7 @@ function* buildLines(tokens, sink) {
   // 상한을 넘긴 나머지: 색 없는 글자로(줄 번호 칸만큼 들여 맞춘다)
   let plain = '';
   for (; i < tokens.length; i++) {
+    if (tokens[i][0] === 'open') continue; // 접기 표시 토큰의 글자는 접었을 때 보일 닫는 글자일 뿐, 원문이 아니다
     plain += tokens[i][1];
     if (plain.length > REST_CHUNK_CHARS) {
       sink.text(`<span class="rest">${escapeHtml(plain)}</span>`, lineCount(plain));
