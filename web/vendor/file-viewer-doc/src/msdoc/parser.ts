@@ -507,6 +507,36 @@ function resolveCharacterFonts(
   }
 }
 
+// doc-viewer: 글자 조각의 상태는 (문단 스타일의 글자 속성, 직접 서식) 조합으로만 정해진다. 큰 문서는 같은 조합이 수만 번
+// 나오므로 조합마다 한 번만 만든다(속성 합치기·글꼴 해석·읽기 색 포함). 두 배열 모두 문서 안에서 같은 객체가 다시
+// 쓰이고(styles.resolveStyle은 결과를 기억한다) 읽기만 하므로 객체 자체로 찾는다. 캐시에 넣은 상태 객체는 조각끼리
+// 함께 쓰며 고치지 않는다.
+const NO_DIRECT_PROPS: DecodedProperty[] = [];
+const charStateCache = new WeakMap<DecodedProperty[], { normal: WeakMap<DecodedProperty[], CharState>; readable: WeakMap<DecodedProperty[], CharState> }>();
+
+function charStateFor(
+  baseCharProps: DecodedProperty[],
+  directProps: DecodedProperty[],
+  styles: StyleCollection,
+  resolveFont: (fontId: number | undefined) => FontInfo | null,
+  forceReadableColors: boolean,
+): CharState {
+  let byBase = charStateCache.get(baseCharProps);
+  if (!byBase) charStateCache.set(baseCharProps, (byBase = { normal: new WeakMap(), readable: new WeakMap() }));
+  const cache = forceReadableColors ? byBase.readable : byBase.normal;
+  let state = cache.get(directProps);
+  if (!state) {
+    const directState = charPropsToState(directProps);
+    const charStyleProps = directState.charStyleId != null ? styles.resolveStyle(directState.charStyleId).charProps : [];
+    const finalProps = mergePropertyArrays(baseCharProps, charStyleProps, directProps);
+    state = charPropsToState(finalProps);
+    if (forceReadableColors && state.colorIndex === 8) state.colorIndex = 1;
+    resolveCharacterFonts(state, resolveFont, styles.header);
+    cache.set(directProps, state);
+  }
+  return state;
+}
+
 function buildCharSegments(
   range: ParagraphRange,
   paragraphText: string,
@@ -531,13 +561,7 @@ function buildCharSegments(
     const cpEnd = points[i + 1]!;
     if (cpEnd <= cpStart) continue;
     const coveringRun = overlaps.find((run) => run.cpStart <= cpStart && run.cpEnd >= cpEnd);
-    const directProps = coveringRun?.properties || [];
-    const directState = charPropsToState(directProps);
-    const charStyleProps = directState.charStyleId != null ? styles.resolveStyle(directState.charStyleId).charProps : [];
-    const finalProps = mergePropertyArrays(baseCharProps, charStyleProps, directProps);
-    const state = charPropsToState(finalProps);
-    if (forceReadableColors && state.colorIndex === 8) state.colorIndex = 1;
-    resolveCharacterFonts(state, resolveFont, styles.header);
+    const state = charStateFor(baseCharProps, coveringRun?.properties || NO_DIRECT_PROPS, styles, resolveFont, forceReadableColors);
     const localStart = cpStart - range.cpStart;
     const localEnd = cpEnd - range.cpStart;
     const text = paragraphText.slice(localStart, localEnd);

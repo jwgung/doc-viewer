@@ -357,6 +357,25 @@ function showPaneLoading(pane) {
 }
 
 /**
+ * 문서를 고르자마자 그 칸에 로딩 화면을 띄우고, 앱이 파일을 열어 형식을 가리는 동안(open) 기다린다. Windows는 파일을 처음
+ * 열 때 백신 검사 등으로 몇 초 걸릴 수 있어, 탭이 생길 때까지 아무 반응이 없으면 앱이 멈춘 것처럼 보였다.
+ * 끝나면(실패해도) 그 칸의 로딩 화면을 보이는 탭 상태대로 되돌린다.
+ */
+async function whileOpening(pane, name, open) {
+  pane.opening = (pane.opening ?? 0) + 1; // 같은 칸에서 여럿을 연달아 열면 마지막 것이 끝날 때 정리한다
+  pane.loading.hidden = false;
+  pane.loading.querySelector('.loading-name').textContent = name;
+  $('empty').hidden = true; // 탭이 하나도 없을 때의 안내 문구가 로딩 화면과 겹치지 않게
+  try {
+    return await open();
+  } finally {
+    pane.opening -= 1;
+    if (!pane.opening && panes.includes(pane)) showPaneLoading(pane);
+    if (!panes.some((each) => each.opening)) $('empty').hidden = tabs.length > 0;
+  }
+}
+
+/**
  * 나무대로 칸을 놓고 경계선을 다시 단다(#docs 안의 비율로 두므로 창 크기가 바뀌어도 따라간다).
  * save가 false면 배치를 적지 않는다(시작할 때: 지난번 배치를 되살리기 전에 덮어쓰지 않게).
  */
@@ -952,7 +971,7 @@ async function endFileDrag(e) {
   const target = e.type === 'pointerup' ? current.target : null;
   if (!target) return;
   try {
-    placeOpened([await invoke('open_file', { path: current.entry.path })], target);
+    placeOpened([await whileOpening(target.pane, current.entry.name, () => invoke('open_file', { path: current.entry.path }))], target);
   } catch {
     toast(t.folderFailed);
   }
@@ -988,6 +1007,8 @@ function saveSession(now = false) {
 
 async function restoreSession() {
   const { tabs: saved, active: activeId } = await invoke('restore_session');
+  // 되살리는 동안 사용자가 사이드바에서 연 문서가 있으면, 끝난 뒤에도 그 문서를 보이게 둔다.
+  const picked = active;
   // 나눈 배치: 저장해 둔 나무를 따르고, 없으면(좌우 두 칸만 되던 때) 칸 번호로 좌우로 놓는다.
   const used = new Set(saved.map(({ view }) => view?.pane ?? 0));
   let tree = restoreLayout(loadPref('layout'));
@@ -1020,6 +1041,7 @@ async function restoreSession() {
   }
   const tab = tabs.find((candidate) => candidate.id === activeId);
   if (tab) activate(tab);
+  if (picked && tabs.includes(picked)) activate(picked);
   // 칸 번호를 나무 순서로 새로 매겼으므로(배치는 이미 적었다) 탭의 칸 번호도 바로 적어 둘이 어긋나지 않게 한다.
   if (tree) await saveSession(true);
 }
@@ -1368,7 +1390,7 @@ function entryItem(entry) {
 
 async function openEntry(entry) {
   try {
-    openTab(await invoke('open_file', { path: entry.path }));
+    openTab(await whileOpening(focused, entry.name, () => invoke('open_file', { path: entry.path })));
   } catch {
     toast(t.folderFailed);
   }
