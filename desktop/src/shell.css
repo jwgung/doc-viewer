@@ -653,7 +653,7 @@ iframe {
   text-align: center;
 }
 
-/* 여는 중: 첫 쪽이 그려질 때까지. 금방 열리는 문서에서 깜빡이지 않게 잠깐 뒤에 나타난다. */
+/* 여는 중: 첫 쪽이 그려질 때까지. 문서를 고르자마자 바로 덮는다(서서히 나타나면 보던 문서가 흐려지며 넘어가는 것처럼 보였다). */
 .loading {
   position: absolute;
   inset: 0;
@@ -665,7 +665,6 @@ iframe {
   gap: 10px;
   background: var(--bg);
   color: var(--text-2);
-  animation: appear 0.2s 0.15s both;
 }
 
 .loading-name {
@@ -689,12 +688,6 @@ iframe {
 @keyframes spin {
   to {
     rotate: 360deg;
-  }
-}
-
-@keyframes appear {
-  from {
-    opacity: 0;
   }
 }
 
