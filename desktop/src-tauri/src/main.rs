@@ -4,6 +4,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod detect;
+mod update;
 
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -33,7 +34,7 @@ const APP_ORIGIN: &str = "http://tauri.localhost";
 #[cfg(not(windows))]
 const APP_ORIGIN: &str = "tauri://localhost";
 
-const MAIN_WINDOW: &str = "main";
+pub(crate) const MAIN_WINDOW: &str = "main";
 /// 마지막으로 연 폴더를 적어 두는 파일(앱 설정 폴더 안)
 const FOLDER_FILE: &str = "folder.txt";
 /// 닫을 때 열려 있던 탭(파일 경로와 탭마다 보던 상태)을 적어 두는 파일(앱 설정 폴더 안)
@@ -499,7 +500,7 @@ fn serve_file(path: &Path, query: &str) -> Response<Vec<u8>> {
 }
 
 fn main() {
-    tauri::Builder::default()
+    update::init(tauri::Builder::default())
         // 이미 떠 있으면 새 프로세스 대신 기존 창에 탭으로 연다. 문서 없이 실행하면 창을 앞으로 가져온다.
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
             let paths = path_args(args, Path::new(&cwd));
@@ -533,7 +534,9 @@ fn main() {
             open_file,
             rename_entry,
             trash_entry,
-            reveal_entry
+            reveal_entry,
+            update::check_update,
+            update::install_update
         ])
         // 끌어다 놓은 파일을 모두 탭으로 연다. 끄는 동안 자리를 알려 셸이 놓을 곳(칸·나눌 방향)을 미리 보여 준다.
         .on_window_event(|window, event| {
