@@ -116,7 +116,7 @@ pnpm tauri build    # 지금 운영체제용 설치 파일
 
 구조:
 
-- `web/`: 문서 렌더러(pdf.js, rhwp, web-ppt 수정 사본 등). Android 앱과 같은 코드입니다.
+- `web/`: 문서 렌더러(pdf.js, rhwp, web-ppt 수정 사본 등). Android 앱과 같은 코드입니다. 이 레포가 원본이고, `dev`에 들어온 변경은 Android 레포로 PR이 자동으로 열립니다(`.github/workflows/sync-web.yml`).
 - `desktop/`: [Tauri](https://tauri.app) 셸. 탭·폴더 탐색기·화면 나누기는 `desktop/src/`, 파일 읽기·형식 판별·문서 내주기(`doc` 스킴)는 `desktop/src-tauri/`.
 - 배포: `v*` 태그를 올리면 Windows·macOS·Linux 설치 파일을 만들어 GitHub Release에 붙입니다. 서명한 업데이트 파일과 `latest.json`도 함께 올려, 앱이 이것으로 새 버전을 알립니다.
 

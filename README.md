@@ -116,7 +116,7 @@ pnpm tauri build    # build installers for your OS
 
 Project layout:
 
-- `web/`: the document renderer (pdf.js, rhwp, a patched copy of web-ppt, and more), shared with the Android app.
+- `web/`: the document renderer (pdf.js, rhwp, a patched copy of web-ppt, and more), shared with the Android app. This repository is the source; changes merged into `dev` are synced to the Android repository by a pull request (`.github/workflows/sync-web.yml`).
 - `desktop/`: the [Tauri](https://tauri.app) shell: tabs, folder explorer and split view in `desktop/src/`; file access, format detection and the local `doc` scheme in `desktop/src-tauri/`.
 - Releases: pushing a `v*` tag builds Windows, macOS and Linux installers and attaches them to a GitHub Release, together with signed update files and `latest.json`, which the app reads to offer updates.
 
