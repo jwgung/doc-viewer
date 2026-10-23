@@ -18,8 +18,9 @@ const { chromium } = createRequire(resolve(root, '../web/package.json'))('playwr
 
 /**
  * 형식 → 연결할 확장자. 형식마다 아이콘이 다르므로 연결도 형식마다 하나다(이름이 Windows ProgID가 되므로 한 번 내보낸 뒤에는
- * 바꾸지 않는다). 스크립트·소스 코드·설정 파일은 넣지 않는다: 설치 프로그램이 연결한 확장자의 기본 앱을 이 앱으로 바꾸므로,
- * 넣으면 더블클릭이 실행 대신 보기가 된다. 그림도 사진 앱을 빼앗지 않게 넣지 않는다.
+ * 바꾸지 않는다). 스크립트·소스 코드(bat·ps1·js·py 등)와 프로그램 설정 파일(ini·cfg·conf 등)은 넣지 않는다: 설치 프로그램이
+ * 연결한 확장자의 기본 앱을 이 앱으로 바꾸므로, 넣으면 더블클릭이 실행·편집 대신 보기가 된다. json·xml·toml·yaml은 보는 일이 많은
+ * 데이터 파일이라 넣는다. 그림도 사진 앱을 빼앗지 않게 넣지 않는다.
  */
 const ASSOCIATIONS = {
   pdf: ['pdf'],
@@ -167,12 +168,13 @@ writeFileSync(
 );
 
 // msi(WiX): Tauri는 확장자마다 "제품 이름.확장자" ProgID를 만들고 아이콘을 비워 둔다. 같은 키에 아이콘을 더한다(지우면 msi가 함께 지운다).
-const wixValues = Object.entries(ASSOCIATIONS).flatMap(([fmt, exts]) =>
-  exts.map(
-    (ext, i) =>
-      `        <RegistryValue Root="HKLM" Key="Software\\Classes\\${PRODUCT}.${ext}\\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\\files\\${fmt}.ico"${fmt === 'pdf' && i === 0 ? ' KeyPath="yes"' : ''} />`,
-  ),
-);
+// 구성 요소의 KeyPath(설치 여부를 판단하는 값)는 첫 값 하나에만 둔다.
+const wixValues = Object.entries(ASSOCIATIONS)
+  .flatMap(([fmt, exts]) => exts.map((ext) => [fmt, ext]))
+  .map(
+    ([fmt, ext], i) =>
+      `        <RegistryValue Root="HKLM" Key="Software\\Classes\\${PRODUCT}.${ext}\\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\\files\\${fmt}.ico"${i === 0 ? ' KeyPath="yes"' : ''} />`,
+  );
 writeFileSync(
   resolve(tauri, 'windows/file-icons.wxs'),
   `<?xml version="1.0" encoding="utf-8"?>\n<!-- ${generated} -->\n<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">\n  <Fragment>\n    <DirectoryRef Id="INSTALLDIR">\n` +
