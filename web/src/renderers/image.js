@@ -5,6 +5,8 @@
 // 그림 크기를 바꾸고(ctx.setZoomer), 화면보다 커지면 마우스로 끌어 옮긴다(터치는 브라우저 스크롤에 맡긴다).
 // 디코드는 img.decode()로 화면 밖에서 끝낸 뒤 붙여, 아주 큰 그림도 화면을 멈추지 않는다. 깨진 그림은 decode가 실패해 오류 안내로 간다.
 
+import { imageSize, MAX_IMAGE_PIXELS } from './image-size.js';
+
 /** 맞춘 크기 대비 확대 상한. 원래 크기의 MAX_PIXEL_SCALE배가 이보다 크면 그만큼까지(큰 그림의 픽셀 확인). */
 const MAX_ZOOM = 4;
 const MAX_PIXEL_SCALE = 4;
@@ -25,7 +27,13 @@ function mimeOf(bytes) {
 }
 
 export async function render(bytes, container, ctx) {
+  // 디코드 전에 머리말의 가로×세로를 보고 너무 큰 그림은 열지 않는다(디코드하다 렌더러가 죽거나 기기가 멎는 것을 막는다).
+  const size = imageSize(bytes);
+  if (size && size.width * size.height > MAX_IMAGE_PIXELS) {
+    throw Object.assign(new Error(`그림이 너무 큽니다: ${size.width}×${size.height}`), { tooLarge: true });
+  }
   const url = URL.createObjectURL(new Blob([bytes], { type: mimeOf(bytes) }));
+  bytes = null; // Blob이 내용을 가지므로 원본 바이트는 놓아 준다(호출자가 따로 쥐고 있으면 그쪽은 어쩔 수 없다)
   const img = new Image();
   img.className = 'image-view';
   img.alt = ctx.name ?? '';
@@ -37,7 +45,7 @@ export async function render(bytes, container, ctx) {
     URL.revokeObjectURL(url);
     throw new Error('그림을 디코드하지 못했습니다');
   }
-  // 움직이는 그림은 주소가 살아 있어야 계속 재생되므로 탭이 닫힐 때까지 둔다.
+  // 움직이는 그림은 주소가 살아 있어야 계속 재생되므로 해제하지 않는다. 따로 해제하는 훅은 없고, 탭(iframe)이 사라지면 문서와 함께 정리된다.
   const stage = document.createElement('div');
   stage.className = 'image-stage';
   stage.appendChild(img);

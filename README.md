@@ -20,7 +20,7 @@ Website: https://jwgung.github.io/doc-viewer/
 
 ## Features
 
-- **Formats:** PDF, HWP/HWPX, DOC/DOCX, XLS/XLSX/CSV, PPT/PPTX, Markdown and plain text. Files with the wrong extension are detected by content.
+- **Formats:** PDF, HWP/HWPX, DOC/DOCX, XLS/XLSX/CSV, PPT/PPTX, Markdown, plain text and images. Files with the wrong extension are detected by content.
 - **Folders and tabs:** open a folder in the sidebar and keep several documents open in tabs. Rename or delete files from the sidebar.
 - **Split view:** drag a tab or a file to the edge of a document to split the window, up to four panes.
 - **Session restore:** open tabs, page, zoom and split layout come back when you restart. <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> reopens a closed tab. A tab can be duplicated to view two parts of one document.
@@ -56,6 +56,7 @@ Get the latest version from **[Releases](https://github.com/jwgung/doc-viewer/re
 | Excel | `xls`, `xlsx`, `xlsm`, `xlt`, `xltx`, `xltm`, `csv`, `tsv` |
 | PowerPoint | `ppt`, `pptx`, `pptm`, `pps`, `ppsx`, `pot`, `potx` |
 | Text & data | `md`, `txt`, `log`, `json`, `xml`, `toml`, `yaml`, and other text files (config, source code, subtitles, diffs) |
+| Images | `png`, `jpg`, `jpeg`, `gif`, `webp`, `bmp`, `svg`, `ico` (desktop only for now) |
 
 Files with a wrong or missing extension are recognized by their content. Password-protected Office files ask for the password.
 

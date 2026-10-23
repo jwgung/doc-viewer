@@ -351,12 +351,12 @@ async function open({ fmt: format, src, name = '', mode = 'scroll', fit, page = 
   } catch (error) {
     // 암호 입력을 취소했거나 너무 큰 문서면 대안 없이 안내만 한다. 그 밖의 실패는 본문 글자라도 보여 준다(최후 대안).
     const cancelled = error?.message === PASSWORD_CANCELLED;
-    const tooLarge = error instanceof TooLargeError;
+    const tooLarge = error instanceof TooLargeError || error?.tooLarge === true;
     const fallback = cancelled ? 'cancelled' : tooLarge ? 'tooLarge' : NO_FALLBACK.has(fmt) ? 'failed' : await showFallback(src).catch(() => 'failed');
     report('error', { message: String(error?.message ?? error), stack: String(error?.stack ?? '').slice(0, 1000), fallback });
     if (fallback === 'text') return;
     status.dataset.kind = 'error';
-    status.textContent = { cancelled: t.passwordRequired, encrypted: t.encryptedUnsupported, tooLarge: t.tooLargeExpanded }[fallback] ?? t.renderFailed;
+    status.textContent = { cancelled: t.passwordRequired, encrypted: t.encryptedUnsupported, tooLarge: fmt === 'image' ? t.tooLargeImage : t.tooLargeExpanded }[fallback] ?? t.renderFailed;
   }
 }
 
