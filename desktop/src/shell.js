@@ -49,6 +49,12 @@ const STRINGS = {
     pathCopied: '경로를 복사했습니다.',
     printFailed: '인쇄할 쪽을 준비하지 못했습니다.',
     printTooMany: (n) => `${n}쪽이 넘는 문서는 아직 인쇄할 수 없습니다.`,
+    updateAvailable: (version) => `새 버전 ${version}을(를) 설치할 수 있습니다.`,
+    updateNow: '지금 업데이트',
+    updateLater: '나중에',
+    updateDownloading: (percent) => (percent === null ? '새 버전을 받는 중…' : `새 버전을 받는 중… ${percent}%`),
+    updateInstalling: '설치하고 다시 시작합니다…',
+    updateFailed: '업데이트하지 못했습니다. 잠시 뒤 다시 시도해 주세요.',
   },
   en: {
     openFolder: 'Open folder',
@@ -95,6 +101,12 @@ const STRINGS = {
     pathCopied: 'Path copied.',
     printFailed: "Couldn't prepare the document for printing.",
     printTooMany: (n) => `Documents over ${n} pages can't be printed yet.`,
+    updateAvailable: (version) => `Version ${version} is available.`,
+    updateNow: 'Update now',
+    updateLater: 'Later',
+    updateDownloading: (percent) => (percent === null ? 'Downloading the update…' : `Downloading the update… ${percent}%`),
+    updateInstalling: 'Installing and restarting…',
+    updateFailed: "Couldn't update. Please try again later.",
   },
 };
 const t = STRINGS[navigator.language?.slice(0, 2)] ?? STRINGS.en;
@@ -1218,6 +1230,39 @@ function onKey(e) {
 addEventListener('keydown', onKey);
 
 let toastTimer = null;
+// ---- 앱 업데이트(src-tauri/src/update.rs). 처음 뜰 때 한 번 확인해, 새 버전이 있으면 상단바 아래 띠로 알린다.
+
+const updateBar = $('update-bar');
+const updateText = $('update-text');
+
+async function checkUpdate() {
+  const found = await invoke('check_update').catch(() => null);
+  if (!found) return;
+  updateText.textContent = t.updateAvailable(found.version);
+  updateBar.hidden = false;
+}
+
+$('update-later').addEventListener('click', () => (updateBar.hidden = true));
+$('update-now').addEventListener('click', async () => {
+  $('update-now').disabled = $('update-later').disabled = true;
+  updateText.textContent = t.updateDownloading(null);
+  const stop = await appWindow.listen('update-progress', ({ payload }) => {
+    const { downloaded, total } = payload;
+    updateText.textContent = total && downloaded >= total ? t.updateInstalling : t.updateDownloading(total ? Math.floor((downloaded / total) * 100) : null);
+  });
+  // Windows는 설치 프로그램이 앱을 바로 닫으므로, 보던 탭을 먼저 적어 둔다.
+  for (const tab of tabs) viewerOf(tab)?.flushPosition?.();
+  await saveSession(true).catch(() => {});
+  try {
+    await invoke('install_update'); // 성공하면 앱이 다시 시작한다
+  } catch {
+    stop();
+    updateBar.hidden = true;
+    $('update-now').disabled = $('update-later').disabled = false;
+    toast(t.updateFailed);
+  }
+});
+
 function toast(message) {
   const el = $('toast');
   el.textContent = message;
@@ -1556,3 +1601,4 @@ appWindow.onCloseRequested(async () => {
 showFolder(await invoke('current_folder'));
 await restoreSession();
 await takeDocuments();
+checkUpdate();

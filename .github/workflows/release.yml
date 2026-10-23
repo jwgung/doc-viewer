@@ -1,6 +1,9 @@
 # v* 태그를 올리면 Windows·macOS·Linux 설치 파일(서명 없음)을 만들어 GitHub Release에 붙인다.
 # 버전은 태그 그대로(v0.1.0 → 0.1.0). msi는 숫자 버전만 받으므로 v1.0.0-beta 같은 태그는 Windows 빌드가 실패한다.
 # 손으로 실행(workflow_dispatch)하면 Release 없이 Actions 아티팩트로만 올린다(시험용, 버전 0.0.<커밋 수>).
+# 앱 업데이트: 빌드할 때 저장소 secret의 키(TAURI_SIGNING_PRIVATE_KEY·_PASSWORD)로 업데이트 파일에 서명(.sig)하고,
+# Release에 latest.json(desktop/scripts/updater-manifest.js)을 함께 올린다. 앱은 이 파일로 새 버전을 알아본다.
+# 키를 잃으면 이미 설치된 앱에 업데이트를 보낼 수 없다(앱에 든 공개 키와 짝이 맞아야 한다).
 name: Release
 
 on:
@@ -23,7 +26,8 @@ jobs:
             args: --bundles msi,nsis
           - os: macos-latest
             name: macos
-            args: --target universal-apple-darwin --bundles dmg
+            # app: 업데이트용 묶음(.app.tar.gz)을 만든다
+            args: --target universal-apple-darwin --bundles app,dmg
           - os: ubuntu-22.04
             name: linux
             args: --bundles deb,appimage
@@ -73,6 +77,8 @@ jobs:
         working-directory: desktop
         env:
           VERSION: ${{ steps.version.outputs.version }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: pnpm tauri build ${{ matrix.args }} --config "{\"version\":\"$VERSION\"}"
       - name: 산출물 이름 붙이기
         env:
@@ -85,12 +91,18 @@ jobs:
           case "$NAME" in
             windows)
               cp "$bundle"/msi/*.msi "out/${stem}-windows.msi"
-              cp "$bundle"/nsis/*-setup.exe "out/${stem}-windows-setup.exe" ;;
+              cp "$bundle"/msi/*.msi.sig "out/${stem}-windows.msi.sig"
+              cp "$bundle"/nsis/*-setup.exe "out/${stem}-windows-setup.exe"
+              cp "$bundle"/nsis/*-setup.exe.sig "out/${stem}-windows-setup.exe.sig" ;;
             macos)
-              cp desktop/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg "out/${stem}-macos.dmg" ;;
+              mac=desktop/src-tauri/target/universal-apple-darwin/release/bundle
+              cp "$mac"/dmg/*.dmg "out/${stem}-macos.dmg"
+              cp "$mac"/macos/*.app.tar.gz "out/${stem}-macos.app.tar.gz"
+              cp "$mac"/macos/*.app.tar.gz.sig "out/${stem}-macos.app.tar.gz.sig" ;;
             linux)
               cp "$bundle"/deb/*.deb "out/${stem}-linux-amd64.deb"
-              cp "$bundle"/appimage/*.AppImage "out/${stem}-linux-amd64.AppImage" ;;
+              cp "$bundle"/appimage/*.AppImage "out/${stem}-linux-amd64.AppImage"
+              cp "$bundle"/appimage/*.AppImage.sig "out/${stem}-linux-amd64.AppImage.sig" ;;
           esac
           ls -l out
       - uses: actions/upload-artifact@v4
@@ -108,10 +120,16 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: desktop/scripts
+          persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
           path: out
           merge-multiple: true
+      - name: 업데이트 정보(latest.json)
+        run: node desktop/scripts/updater-manifest.js out "$GITHUB_REF_NAME" "$GITHUB_REPOSITORY"
       - name: GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}

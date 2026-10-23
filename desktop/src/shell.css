@@ -698,6 +698,26 @@ iframe {
   }
 }
 
+/* 새 버전 알림 띠(상단바 아래) */
+.update-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 14px;
+  background: var(--accent-soft);
+  border-bottom: 1px solid var(--border);
+}
+
+.update-bar span {
+  flex: 1;
+  min-width: 0;
+}
+
+.update-bar .text-button {
+  height: 28px;
+  padding: 0 12px;
+}
+
 #toast {
   position: fixed;
   left: 50%;
