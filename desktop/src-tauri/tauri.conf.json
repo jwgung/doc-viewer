@@ -25,7 +25,9 @@
       { "ext": ["doc", "docx", "docm", "dot", "dotx", "dotm"], "name": "Word", "role": "Viewer" },
       { "ext": ["xls", "xlsx", "xlsm", "xlt", "xltx", "xltm", "csv", "tsv"], "name": "Excel", "role": "Viewer" },
       { "ext": ["ppt", "pptx", "pptm", "pps", "ppsx", "pot", "potx"], "name": "PowerPoint", "role": "Viewer" },
-      { "ext": ["md", "markdown"], "name": "Markdown", "role": "Viewer" }
+      { "ext": ["md", "markdown"], "name": "Markdown", "role": "Viewer" },
+      { "ext": ["txt", "text", "log"], "name": "PlainText", "role": "Viewer" },
+      { "ext": ["json", "jsonc", "xml", "toml", "yaml", "yml"], "name": "StructuredText", "role": "Viewer" }
     ],
     "windows": {
       "webviewInstallMode": { "type": "downloadBootstrapper" },
