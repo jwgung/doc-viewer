@@ -464,6 +464,16 @@ fn reveal_entry(path: String, docs: State<Documents>) -> Result<(), String> {
     result.map(|_| ()).map_err(|e| e.to_string())
 }
 
+/// 진단 빌드 전용: 쪽 나누기 측정값을 바탕화면에 JSON으로 남긴다.
+#[tauri::command]
+fn save_diag(app: AppHandle, name: String, text: String) -> Result<String, String> {
+    let dir = app.path().desktop_dir().map_err(|e| e.to_string())?;
+    let safe: String = name.chars().map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).take(60).collect();
+    let path = dir.join(format!("doc-viewer-diag-{safe}.json"));
+    std::fs::write(&path, text).map_err(|e| e.to_string())?;
+    Ok(path.display().to_string())
+}
+
 /// 탐색기에서 고른 파일을 연다(고른 폴더 아래만).
 #[tauri::command]
 async fn open_file(app: AppHandle, path: String) -> Result<Opened, String> {
@@ -558,6 +568,7 @@ fn main() {
             current_folder,
             list_folder,
             open_file,
+            save_diag,
             rename_entry,
             trash_entry,
             reveal_entry,

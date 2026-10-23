@@ -62,11 +62,14 @@ export async function render(bytes, container, ctx) {
     template.innerHTML = pager.pages[index].saved;
     return template.content.textContent;
   });
+  installDiag(sizes, () => pager.done);
   await viewer.render();
   ctx.markFirstPage();
+  globalThis.__diagSave?.();
   pager.background(() => {
     sync();
     viewer.grow();
+    if (pager.done) globalThis.__diagSave?.();
     if (pager.done) {
       // 다 셌으면 이미 그린 쪽의 전체 쪽 수 필드도 고친다.
       container.querySelectorAll('[data-field="numpages"]').forEach((field) => setField(field, String(sizes.length)));
@@ -158,4 +161,49 @@ function pageCard(paper, headerHtml, footerHtml) {
     '<div class="msdoc-root doc-page-body"></div>' +
     `<div class="msdoc-root doc-page-bottom">${footerHtml}</div>`;
   return card;
+}
+
+/** 진단 빌드: 쪽 나누기 측정값과 글꼴 상태를 바탕화면 JSON으로 남긴다(셸의 save_diag). */
+function installDiag(sizes, isDone) {
+  const name = new URLSearchParams(location.search).get('name') ?? 'doc';
+  const fontProbe = (font, text) => {
+    const span = document.createElement('span');
+    span.style.cssText = `font:${font};white-space:nowrap;position:absolute;visibility:hidden`;
+    span.textContent = text;
+    document.body.appendChild(span);
+    const r = span.getBoundingClientRect();
+    span.remove();
+    return { font, w: +r.width.toFixed(2), h: +r.height.toFixed(2), available: document.fonts.check(font) };
+  };
+  const sample = 'The purpose and goal of oneM2M is to develop technical specifications';
+  let timer = 0;
+  globalThis.__diagSave = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      const diag = globalThis.__diag ?? {};
+      const report = {
+        build: 'diag/doc-pagination',
+        name,
+        done: isDone(),
+        userAgent: navigator.userAgent,
+        dpr: devicePixelRatio,
+        viewport: { w: innerWidth, h: innerHeight },
+        fonts: [
+          fontProbe("11pt 'Times New Roman', sans-serif", sample),
+          fontProbe("italic 700 9pt 'Arial', sans-serif", sample),
+          fontProbe('11pt sans-serif', sample),
+          fontProbe('11pt serif', sample),
+        ],
+        count: sizes.length,
+        longPages: sizes.map((s, i) => ({ i, ...s })).filter((s) => s.height / s.width > 2).slice(0, 50),
+        sizes: sizes.slice(0, 60),
+        pages: (diag.pages ?? []).slice(0, 120),
+        flips: (diag.flips ?? []).slice(-60),
+      };
+      parent?.__TAURI__?.core
+        ?.invoke('save_diag', { name, text: JSON.stringify(report, null, 1) })
+        .then((path) => console.log('[diag] saved', path))
+        .catch((error) => console.warn('[diag] save failed', error));
+    }, 500);
+  };
 }

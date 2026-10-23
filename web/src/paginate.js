@@ -22,8 +22,14 @@ const SLICE_MS = 12;
  * body 다음 요소(꼬리말 등)가 있으면 그 위까지, 없으면 쪽 아래 여백 위까지 채운다. 쪽이 하나 차면 내보낸다.
  * prepare(선택)는 블록을 쪽에 붙인 뒤 재기 전에 부른다(docx의 탭 간격 맞추기: 블록 하나만 배치하면 되어 가볍다).
  */
+// 진단 빌드: 쪽마다 잰 값(window.__diag.pages)
+const DIAG = (globalThis.__diag ??= { pages: [], flips: [] });
+const rectOf = (el) => { const r = el?.getBoundingClientRect(); return r ? { top: Math.round(r.top), bottom: Math.round(r.bottom), h: Math.round(r.height), w: Math.round(r.width) } : null; };
+const describe = (el) => el ? `${el.tagName}.${el.className} ${(el.textContent ?? '').slice(0, 60)}` : null;
+
 export async function* fillPages(blocks, shell, prepare = null) {
   const queue = [...blocks];
+  let pageNo = 0; // 진단: 이 fillPages가 내놓은 쪽 번호
   let current = open(shell);
   while (queue.length) {
     const block = queue.shift();
@@ -39,13 +45,29 @@ export async function* fillPages(blocks, shell, prepare = null) {
     } catch (error) {
       console.warn('블록을 나누지 못해 통째로 넘깁니다:', error);
     }
+    const record = {
+      n: DIAG.pages.length,
+      pageNo,
+      blocksLeft: queue.length,
+      limit: Math.round(current.limit),
+      room: Math.round(current.room),
+      page: rectOf(current.page),
+      body: rectOf(current.body),
+      below: rectOf(current.body.nextElementSibling),
+      top: rectOf(current.body.previousElementSibling),
+      block: { ...rectOf(block), what: describe(block), alone },
+      result: rest ? `split:${rest.length}` : alone ? 'oversize' : 'pushed',
+    };
     if (rest) {
       queue.unshift(...rest);
     } else if (!alone) {
       block.remove();
       queue.unshift(block);
     }
+    record.pageAfter = rectOf(current.page);
+    if (DIAG.pages.length < 400) DIAG.pages.push(record);
     // 나누지 못했고 빈 쪽에도 안 들어가는 블록이면 이 쪽을 용지보다 길게 둔다.
+    pageNo++;
     yield finish(current);
     current = open(shell);
   }

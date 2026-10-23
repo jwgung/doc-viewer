@@ -484,6 +484,8 @@ export class PagedViewer {
     const sizes = indexes.map((index) => this.doc.measure?.(index) ?? this.doc.sizes[index]);
     const fitWidth = this.fit === 'width' || sizes.some(({ width, height }) => height / width > LONG_PAGE_RATIO);
     this.container.dataset.fit = fitWidth ? 'width' : this.fit; // 긴 쪽이면 세로 스크롤을 연다(CSS)
+    globalThis.__diag?.flips.push({ at: Math.round(performance.now()), indexes, sizes: sizes.map((s) => ({ ...s })), estimated: indexes.map((i) => ({ ...this.doc.sizes[i] })), fitWidth, availWidth: Math.round(availWidth), availHeight: Math.round(availHeight), shrink: this.shrink, complete: this.doc.complete, count: this.doc.count });
+    globalThis.__diagSave?.();
     const slots = indexes.map((index, k) => {
       const { width, height } = sizes[k];
       const scale = (fitWidth ? availWidth / width : Math.min(availWidth / width, availHeight / height)) * this.shrink;
