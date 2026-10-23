@@ -70,4 +70,3 @@ pub async fn install_update(app: AppHandle, pending: State<'_, PendingUpdate>) -
 pub fn init<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
     builder.plugin(tauri_plugin_updater::Builder::new().build()).manage(PendingUpdate::default())
 }
-

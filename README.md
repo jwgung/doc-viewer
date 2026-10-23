@@ -43,7 +43,8 @@ Get the latest version from **[Releases](https://github.com/jwgung/doc-viewer/re
 | **Linux** (Ubuntu 22.04+ and similar) | `…-linux-amd64.deb` or `…-linux-amd64.AppImage` | For the AppImage, make it executable (`chmod +x`) and run it. |
 
 > [!NOTE]
-> On older Windows 10 without WebView2, the installer downloads it once. This is the only time an internet connection is needed.
+> On older Windows 10 without WebView2, the installer downloads it once.
+> Documents are opened offline. The app goes online only to check GitHub for a new version when it starts; if there is one, it offers **Update now**, which downloads, verifies and installs it. Without a connection the check is skipped quietly. Updates work for the Windows installers, macOS and the AppImage; for the `.deb`, download the new version yourself.
 > The macOS and Linux builds are new; please [open an issue](https://github.com/jwgung/doc-viewer/issues) if something looks wrong.
 
 ## Supported formats
@@ -117,7 +118,7 @@ Project layout:
 
 - `web/`: the document renderer (pdf.js, rhwp, a patched copy of web-ppt, and more), shared with the Android app.
 - `desktop/`: the [Tauri](https://tauri.app) shell: tabs, folder explorer and split view in `desktop/src/`; file access, format detection and the local `doc` scheme in `desktop/src-tauri/`.
-- Releases: pushing a `v*` tag builds Windows, macOS and Linux installers and attaches them to a GitHub Release.
+- Releases: pushing a `v*` tag builds Windows, macOS and Linux installers and attaches them to a GitHub Release, together with signed update files and `latest.json`, which the app reads to offer updates.
 
 ## Acknowledgements
 

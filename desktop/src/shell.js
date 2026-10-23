@@ -1230,6 +1230,14 @@ function onKey(e) {
 addEventListener('keydown', onKey);
 
 let toastTimer = null;
+function toast(message) {
+  const el = $('toast');
+  el.textContent = message;
+  el.classList.add('shown');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('shown'), 4000);
+}
+
 // ---- 앱 업데이트(src-tauri/src/update.rs). 처음 뜰 때 한 번 확인해, 새 버전이 있으면 상단바 아래 띠로 알린다.
 
 const updateBar = $('update-bar');
@@ -1243,8 +1251,14 @@ async function checkUpdate() {
 }
 
 $('update-later').addEventListener('click', () => (updateBar.hidden = true));
+/** 받는 동안 단추를 막는다. */
+function setUpdateBusy(busy) {
+  $('update-now').disabled = busy;
+  $('update-later').disabled = busy;
+}
+
 $('update-now').addEventListener('click', async () => {
-  $('update-now').disabled = $('update-later').disabled = true;
+  setUpdateBusy(true);
   updateText.textContent = t.updateDownloading(null);
   const stop = await appWindow.listen('update-progress', ({ payload }) => {
     const { downloaded, total } = payload;
@@ -1258,18 +1272,10 @@ $('update-now').addEventListener('click', async () => {
   } catch {
     stop();
     updateBar.hidden = true;
-    $('update-now').disabled = $('update-later').disabled = false;
+    setUpdateBusy(false);
     toast(t.updateFailed);
   }
 });
-
-function toast(message) {
-  const el = $('toast');
-  el.textContent = message;
-  el.classList.add('shown');
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove('shown'), 4000);
-}
 
 // ---- 폴더 탐색기: 고른 폴더 아래를 펼칠 때마다 읽는다(Rust가 그 폴더 밖은 막는다).
 
