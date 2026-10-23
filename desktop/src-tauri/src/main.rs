@@ -132,6 +132,12 @@ impl DropAt {
 
 /// 셸 밖에서 들어온 문서를 셸에 넘긴다: 쌓아 두고 알린다(셸이 아직 뜨는 중이면 뜬 뒤 take_documents로 가져간다).
 /// at은 창에 끌어다 놓은 자리(실행 인자·두 번째 실행이면 None: 초점 칸에 연다).
+/// deliver를 주 스레드 밖에서 한다(끌어다 놓기·두 번째 실행). 파일을 열어 형식을 가리는 동안 창이 멈추지 않게.
+fn deliver_later(app: &AppHandle, paths: Vec<PathBuf>, at: Option<DropAt>) {
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || deliver(&app, paths, at));
+}
+
 fn deliver(app: &AppHandle, paths: impl IntoIterator<Item = PathBuf>, at: Option<DropAt>) {
     let opened: Vec<Opened> = paths.into_iter().filter(|p| p.is_file()).map(|p| register(app, p)).collect();
     if opened.is_empty() {
@@ -247,25 +253,37 @@ fn close_document(id: u64, remember: Option<bool>, docs: State<Documents>) {
 
 /// 탭을 복제한다: 같은 파일을 새 번호로 연다(보던 상태는 셸이 넘긴다).
 #[tauri::command]
-fn duplicate_document(app: AppHandle, id: u64) -> Result<Opened, String> {
-    let path = app.state::<Documents>().open.lock().unwrap().get(&id).cloned().ok_or("not open")?;
-    Ok(register_as(&app, path, false))
+async fn duplicate_document(app: AppHandle, id: u64) -> Result<Opened, String> {
+    off_main(move || {
+        let path = app.state::<Documents>().open.lock().unwrap().get(&id).cloned().ok_or("not open")?;
+        Ok(register_as(&app, path, false))
+    })
+    .await
 }
 
 /// 닫은 탭을 다시 연다(Ctrl+Shift+T). 새 번호로 등록한다. 그 사이 파일이 없어졌으면 오류.
 #[tauri::command]
-fn reopen_document(app: AppHandle, id: u64) -> Result<Opened, String> {
-    let docs = app.state::<Documents>();
-    let path = {
-        let mut closed = docs.closed.lock().unwrap();
-        let index = closed.iter().position(|(closed_id, _)| *closed_id == id).ok_or("not closed")?;
-        closed.remove(index).expect("찾은 자리").1
-    };
-    if !path.is_file() {
-        return Err("missing".into());
-    }
-    // 같은 파일이 다른 탭에 열려 있어도(탭 복제) 닫았던 탭을 따로 되살린다.
-    Ok(register_as(&app, path, false))
+async fn reopen_document(app: AppHandle, id: u64) -> Result<Opened, String> {
+    off_main(move || {
+        let docs = app.state::<Documents>();
+        let path = {
+            let mut closed = docs.closed.lock().unwrap();
+            let index = closed.iter().position(|(closed_id, _)| *closed_id == id).ok_or("not closed")?;
+            closed.remove(index).expect("찾은 자리").1
+        };
+        if !path.is_file() {
+            return Err("missing".into());
+        }
+        // 같은 파일이 다른 탭에 열려 있어도(탭 복제) 닫았던 탭을 따로 되살린다.
+        Ok(register_as(&app, path, false))
+    })
+    .await
+}
+
+/// 파일을 여는 명령(형식 판별)을 주 스레드 밖에서 한다. 동기 명령은 주 스레드에서 돌아, Windows에서 파일을 처음 열 때
+/// 백신 검사 등으로 늦어지면 그동안 앱의 다른 일(다른 명령·창 메시지)까지 함께 기다렸다.
+async fn off_main<T: Send + 'static>(work: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(work).await.map_err(|e| e.to_string())?
 }
 
 /// 폴더 고르기(대화상자가 끝날 때까지 기다리므로 async, 주 스레드 밖). 고른 폴더는 다음 실행 때도 연다.
@@ -443,10 +461,13 @@ fn reveal_entry(path: String, docs: State<Documents>) -> Result<(), String> {
 
 /// 탐색기에서 고른 파일을 연다(고른 폴더 아래만).
 #[tauri::command]
-fn open_file(app: AppHandle, path: String, docs: State<Documents>) -> Result<Opened, String> {
-    let root = docs.folder.lock().unwrap().clone().ok_or("no folder")?;
-    let path = is_within(&root, Path::new(&path)).filter(|p| p.is_file()).ok_or("outside folder")?;
-    Ok(register(&app, path))
+async fn open_file(app: AppHandle, path: String) -> Result<Opened, String> {
+    off_main(move || {
+        let root = app.state::<Documents>().folder.lock().unwrap().clone().ok_or("no folder")?;
+        let path = is_within(&root, Path::new(&path)).filter(|p| p.is_file()).ok_or("outside folder")?;
+        Ok(register(&app, path))
+    })
+    .await
 }
 
 // ---- doc 스킴
@@ -510,7 +531,7 @@ fn main() {
                     let _ = window.set_focus();
                 }
             }
-            deliver(app, paths, None);
+            deliver_later(app, paths, None);
         }))
         .plugin(tauri_plugin_dialog::init())
         // 창 크기·위치·최대화를 기억해 다음에 그대로 연다.
@@ -545,7 +566,7 @@ fn main() {
                 DragDropEvent::Over { position } => {
                     let _ = window.emit_to(MAIN_WINDOW, "drop-over", DropAt::from(window, position));
                 }
-                DragDropEvent::Drop { paths, position } => deliver(window.app_handle(), paths.clone(), Some(DropAt::from(window, position))),
+                DragDropEvent::Drop { paths, position } => deliver_later(window.app_handle(), paths.clone(), Some(DropAt::from(window, position))),
                 DragDropEvent::Leave => {
                     let _ = window.emit_to(MAIN_WINDOW, "drop-leave", ());
                 }

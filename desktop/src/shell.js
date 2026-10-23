@@ -357,6 +357,23 @@ function showPaneLoading(pane) {
 }
 
 /**
+ * 문서를 고르자마자 그 칸에 로딩 화면을 띄우고, 앱이 파일을 열어 형식을 가리는 동안(open) 기다린다. Windows는 파일을 처음
+ * 열 때 백신 검사 등으로 몇 초 걸릴 수 있어, 탭이 생길 때까지 아무 반응이 없으면 앱이 멈춘 것처럼 보였다.
+ * 끝나면(실패해도) 그 칸의 로딩 화면을 보이는 탭 상태대로 되돌린다.
+ */
+async function whileOpening(pane, name, open) {
+  pane.loading.hidden = false;
+  pane.loading.querySelector('.loading-name').textContent = name;
+  $('empty').hidden = true; // 탭이 하나도 없을 때의 안내 문구가 로딩 화면과 겹치지 않게
+  try {
+    return await open();
+  } finally {
+    if (panes.includes(pane)) showPaneLoading(pane);
+    $('empty').hidden = tabs.length > 0;
+  }
+}
+
+/**
  * 나무대로 칸을 놓고 경계선을 다시 단다(#docs 안의 비율로 두므로 창 크기가 바뀌어도 따라간다).
  * save가 false면 배치를 적지 않는다(시작할 때: 지난번 배치를 되살리기 전에 덮어쓰지 않게).
  */
@@ -952,7 +969,7 @@ async function endFileDrag(e) {
   const target = e.type === 'pointerup' ? current.target : null;
   if (!target) return;
   try {
-    placeOpened([await invoke('open_file', { path: current.entry.path })], target);
+    placeOpened([await whileOpening(target.pane, current.entry.name, () => invoke('open_file', { path: current.entry.path }))], target);
   } catch {
     toast(t.folderFailed);
   }
@@ -1368,7 +1385,7 @@ function entryItem(entry) {
 
 async function openEntry(entry) {
   try {
-    openTab(await invoke('open_file', { path: entry.path }));
+    openTab(await whileOpening(focused, entry.name, () => invoke('open_file', { path: entry.path })));
   } catch {
     toast(t.folderFailed);
   }
