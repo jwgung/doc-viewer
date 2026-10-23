@@ -13,7 +13,8 @@ const DEFAULT_PAPER = { width: 12240, height: 15840, left: 1800, right: 1800, to
 const TWIPS_PER_PX = 15;
 
 export async function render(bytes, container, ctx) {
-  const { meta, segments } = openInWorker(bytes);
+  const source = openInWorker(bytes);
+  const { meta, segments } = source;
   const rendered = await meta;
   // 쪽 뷰어가 문서 영역을 비우고 다시 채우므로 스타일은 문서 영역 밖에 둔다.
   const style = document.createElement('style');
@@ -33,6 +34,8 @@ export async function render(bytes, container, ctx) {
   // 두 쪽씩 보기면 첫 화면에 짝 쪽까지 나눠 둔다.
   await pager.fill((ctx.startPage ?? 0) + (ctx.mode === 'spread' ? 2 : 1));
   sync();
+  // 첫 쪽도 받기 전에 워커가 실패했으면 빈 문서를 보이지 말고 실패로 끝낸다(오류 화면·본문 글자 대안 화면).
+  if (!sizes.length && source.failure) throw source.failure;
 
   /** 보관한 쪽을 요소로 되살린다. 전체 쪽 수 필드는 다 센 뒤에만 채운다. */
   const pageAt = (index) => {
@@ -81,7 +84,9 @@ export async function render(bytes, container, ctx) {
 
 /**
  * 워커에 문서를 넘겨 파싱하고 HTML을 만들게 한다. meta는 쪽을 그리기 전의 정보(CSS·구역 설정·머리말·꼬리말)이고,
- * segments는 렌더러가 나눈 쪽(쪽 나누기 단위)을 워커가 그리는 대로 앞에서부터 내놓는다.
+ * segments는 렌더러가 나눈 쪽(쪽 나누기 단위)을 워커가 그리는 대로 앞에서부터 내놓는다. 요청 하나에 답 하나인
+ * worker-client.js의 connect로는 쪽을 흘려보낼 수 없어 받은 쪽을 줄 세워 두는 작은 통로를 따로 둔다.
+ * failure는 워커가 실패했을 때의 오류다.
  */
 function openInWorker(bytes) {
   const worker = new Worker(new URL('../workers/doc-worker.js', import.meta.url), { type: 'module' });
@@ -107,6 +112,8 @@ function openInWorker(bytes) {
     wake?.();
   };
   worker.onerror = (event) => fail(new Error(event.message || '문서 워커를 시작하지 못했습니다'));
+  worker.onmessageerror = () => fail(new Error('문서 워커가 보낸 쪽을 받지 못했습니다'));
+  addEventListener('pagehide', () => worker.terminate(), { once: true });
   // 파일 바이트를 워커로 옮긴다(복사하지 않는다). 받은 바이트가 큰 버퍼의 일부일 수도 있어 그 구간만 떼어 낸다.
   const buffer = bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength ? bytes.buffer : bytes.slice().buffer;
   worker.postMessage({ type: 'open', buffer }, [buffer]);
@@ -118,7 +125,13 @@ function openInWorker(bytes) {
       else await new Promise((resolve) => (wake = resolve));
     }
   }
-  return { meta, segments: segments() };
+  return {
+    meta,
+    segments: segments(),
+    get failure() {
+      return failure;
+    },
+  };
 }
 
 /**
