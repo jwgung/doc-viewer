@@ -18,6 +18,7 @@
   "bundle": {
     "active": true,
     "targets": ["msi", "nsis"],
+    "createUpdaterArtifacts": true,
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
     "fileAssociations": [
       { "ext": ["pdf"], "name": "DocViewer.pdf", "role": "Viewer" },
@@ -41,6 +42,13 @@
     "windows": {
       "webviewInstallMode": { "type": "downloadBootstrapper" },
       "nsis": { "installerIcon": "icons/icon.ico" }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDNCN0Q1MUZFNzg2RDM2MjkKUldRcE5tMTQvbEY5TzRBSk9LemZHRGRiOU1PYXpjbTJTbFF3SVJXdW82WGtkSDJIL1VoLy9MaWEK",
+      "endpoints": ["https://github.com/jwgung/doc-viewer/releases/latest/download/latest.json"],
+      "windows": { "installMode": "passive" }
     }
   }
 }

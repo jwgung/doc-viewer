@@ -43,7 +43,8 @@ PDF, 한글, 워드, 엑셀, 파워포인트 문서를 보는 데스크톱 뷰�
 | **Linux** (Ubuntu 22.04 이상 등) | `…-linux-amd64.deb` 또는 `…-linux-amd64.AppImage` | AppImage는 실행 권한을 주고(`chmod +x`) 실행 |
 
 > [!NOTE]
-> WebView2가 없는 구형 Windows 10은 설치할 때 한 번 내려받습니다. 인터넷이 필요한 건 그때뿐입니다.
+> WebView2가 없는 구형 Windows 10은 설치할 때 한 번 내려받습니다.
+> 문서는 인터넷 없이 엽니다. 앱은 켤 때 새 버전이 있는지 GitHub에서 확인할 때만 인터넷을 쓰고, 새 버전이 있으면 **지금 업데이트**를 눌러 받아 설치할 수 있습니다. 인터넷이 없으면 확인을 조용히 건너뜁니다. 업데이트는 Windows 설치 파일, macOS, AppImage에서 되고, `.deb`는 새 버전을 직접 받아 설치합니다.
 > macOS·Linux 판은 새로 나왔습니다. 이상한 점이 있으면 [이슈](https://github.com/jwgung/doc-viewer/issues)로 알려 주세요.
 
 ## 여는 형식
@@ -117,7 +118,7 @@ pnpm tauri build    # 지금 운영체제용 설치 파일
 
 - `web/`: 문서 렌더러(pdf.js, rhwp, web-ppt 수정 사본 등). Android 앱과 같은 코드입니다.
 - `desktop/`: [Tauri](https://tauri.app) 셸. 탭·폴더 탐색기·화면 나누기는 `desktop/src/`, 파일 읽기·형식 판별·문서 내주기(`doc` 스킴)는 `desktop/src-tauri/`.
-- 배포: `v*` 태그를 올리면 Windows·macOS·Linux 설치 파일을 만들어 GitHub Release에 붙입니다.
+- 배포: `v*` 태그를 올리면 Windows·macOS·Linux 설치 파일을 만들어 GitHub Release에 붙입니다. 서명한 업데이트 파일과 `latest.json`도 함께 올려, 앱이 이것으로 새 버전을 알립니다.
 
 ## 사용한 오픈소스
 

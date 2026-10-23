@@ -29,6 +29,12 @@
         <button type="button" id="print" class="icon-button" data-icon="print" data-label-attr="print"></button>
       </span>
     </header>
+    <!-- 새 버전 알림(shell.js의 앱 업데이트). '지금 업데이트'를 누르면 받아서 설치하고 다시 시작한다. -->
+    <div id="update-bar" class="update-bar" role="status" hidden>
+      <span id="update-text"></span>
+      <button type="button" id="update-now" class="text-button primary" data-label="updateNow"></button>
+      <button type="button" id="update-later" class="text-button" data-label="updateLater"></button>
+    </div>
     <div class="workspace">
       <aside id="explorer">
         <div class="explorer-head" id="explorer-head">
