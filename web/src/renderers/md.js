@@ -54,17 +54,37 @@ function batchesOf(tokens) {
 }
 
 /**
- * HTML 조각이 열고 닫지 않은 요소 수(닫기만 했으면 음수). 주석 안의 태그는 세지 않는다. 태그 안에 '<'가 없다고 보고 찾아
- * ('>'가 없는 '<a<a<a…'에서도 입력 길이에 비례하는 시간만 쓴다) 속성 값 안의 '<'·'>'는 어긋날 수 있다(그러면 덜 나눌 뿐이다).
+ * HTML 조각이 열고 닫지 않은 요소 수(닫기만 했으면 음수). 주석 안의 태그는 세지 않는다. 정규식 대신 앞으로만 훑어 입력 길이에
+ * 비례하는 시간만 쓴다('<a-a-a-…'처럼 '>' 없는 긴 이름에 정규식은 제곱 시간이 걸렸다). 태그는 '<' 이름 … '>'이고 그 사이에
+ * '<'가 없는 것으로 본다(속성 값 안의 '<'·'>'는 어긋날 수 있다: 그러면 덜 나눌 뿐이다).
  */
 function openedBy(html) {
+  const text = withoutComments(html);
   let count = 0;
-  for (const [, close, name, selfClosing] of withoutComments(html).matchAll(/<(\/?)([a-zA-Z][\w-]*)\b[^<>]*?(\/?)>/g)) {
+  let gt = -1; // 다음 '>' 위치(뒤로 가지 않으므로 한 번 찾은 것을 이어 쓴다)
+  for (let lt = text.indexOf('<'); lt >= 0; lt = text.indexOf('<', lt + 1)) {
+    let i = lt + 1;
+    const close = text[i] === '/';
+    if (close) i++;
+    if (!isLetter(text.charCodeAt(i))) continue;
+    const nameStart = i;
+    while (i < text.length && isNameChar(text.charCodeAt(i))) i++;
+    if (gt < i) gt = text.indexOf('>', i);
+    if (gt < 0) break; // 닫는 '>'가 더 없다
+    const next = text.indexOf('<', i);
+    if (next >= 0 && next < gt) {
+      lt = next - 1; // 이 태그는 끝나지 않았다: 다음 '<'부터 다시
+      continue;
+    }
     if (close) count--;
-    else if (!selfClosing && !VOID_TAGS.has(name.toLowerCase())) count++;
+    else if (text[gt - 1] !== '/' && !VOID_TAGS.has(text.slice(nameStart, i).toLowerCase())) count++;
+    lt = gt;
   }
   return count;
 }
+
+const isLetter = (code) => (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+const isNameChar = (code) => isLetter(code) || (code >= 48 && code <= 57) || code === 45 || code === 95;
 
 /** HTML 주석을 뺀 글자. 닫히지 않은 주석은 끝까지 주석으로 본다(브라우저와 같다). */
 function withoutComments(html) {
