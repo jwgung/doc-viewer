@@ -281,11 +281,16 @@ export function parseStyles(
     offset = alignEven(stdEnd);
   }
 
+  // doc-viewer: 스타일 번호마다 한 번만 풀어 둔다. 문단마다 다시 풀면 같은 스타일도 매번 새 배열이 되어, 큰 문서에서
+  // 시간이 들고 글자 상태를 기억해 둘 수 없다(parser.ts buildCharSegments). 풀린 배열은 읽기만 한다.
+  const resolved = new Map<number | null | undefined, ResolvedStyle>();
   return {
     header,
     styles,
     resolveStyle(istd: number | null | undefined): ResolvedStyle {
-      return resolveStyle(styles, istd);
+      let style = resolved.get(istd);
+      if (!style) resolved.set(istd, (style = resolveStyle(styles, istd)));
+      return style;
     },
   };
 }

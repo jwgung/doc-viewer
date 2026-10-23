@@ -115,3 +115,13 @@
 - `pages[i]`에 `bodyHtml`(본문 + 그 쪽 각주·미주), `headerHtml`, `footerHtml`, `firstOfSection`을 더한다. `html`은 그대로다.
 - 결과에 `sectionHeaders`(구역마다 머리말·꼬리말의 첫 쪽·기본·짝수 쪽 HTML과 `titlePage`)를 더한다.
 - `core.ts`에서 번호 서식 함수 `formatListNumber`를 `formatPageNumber`로 내보낸다(구역의 쪽 번호 서식: 로마 숫자 등).
+
+### 큰 문서 읽기 속도
+
+수백 쪽짜리 문서는 같은 서식이 수만 번 나와 같은 계산을 되풀이했다. 결과는 같고 계산만 줄였다.
+
+- `msdoc/styles.ts`: 스타일 상속을 푼 결과(`resolveStyle`)를 스타일 번호마다 한 번만 계산한다.
+- `msdoc/fkp.ts`: 바이트가 같은 CHPX는 한 번만 풀고 그 속성 배열을 함께 쓴다.
+- `msdoc/parser.ts`: 문단 기본 글자 모양과 CHPX 속성 배열이 같으면 글자 상태(스타일 병합·글꼴 해석 포함)를 다시 쓴다.
+- 이웃 조각을 합칠지 정하는 비교(`shallowEqual`)는 상태 안의 객체 값을 참조로 비교한다. 상태를 함께 쓰므로, 예전에는
+  참조가 달라 따로 남던 같은 모양의 이웃 글자 묶음이 하나의 `<span>`으로 합쳐질 수 있다. 글자마다의 모양은 같다.

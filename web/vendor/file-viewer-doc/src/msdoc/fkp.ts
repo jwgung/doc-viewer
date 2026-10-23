@@ -143,6 +143,10 @@ export function readChpxRuns(wordBytes: Uint8Array, tableBytes: Uint8Array, fib:
     fib.pnChpFirst || 0, fib.cpnBteChp || 0,
   );
   const runs: ChpxRun[] = [];
+  // doc-viewer: 바이트가 같은 CHPX는 한 번만 풀어 그 배열을 함께 쓴다(큰 문서는 같은 서식이 수만 번 나온다). 푼 결과는 바이트와
+  // 문서 형식(이 문서 안에서 하나)에만 달려 있고, 쓰는 쪽은 읽기만 한다. 같은 배열이어야 parser.ts가 글자 상태도 다시 쓴다.
+  const shared = new Map<string, DecodedProperty[]>();
+  const noProperties: DecodedProperty[] = [];
   for (const pn of plc.pages) {
     const fkp = readChpxFkp(wordBytes, pn);
     if (!fkp) continue;
@@ -152,7 +156,14 @@ export function readChpxRuns(wordBytes: Uint8Array, tableBytes: Uint8Array, fib:
       const cpStart = fcToCp(clx, fcStart);
       const cpEnd = fcToCp(clx, fcEnd);
       if (cpStart == null || cpEnd == null || cpEnd <= cpStart) continue;
-      const properties = fkp.chpxOffsets[i] ? readChpxProperties(wordBytes, fkp.chpxOffsets[i], format) : [];
+      const offset = fkp.chpxOffsets[i];
+      let properties = noProperties;
+      if (offset) {
+        const cb = offset >= 0 && offset < wordBytes.length ? (wordBytes[offset] ?? 0) : 0;
+        const key = String.fromCharCode(...wordBytes.subarray(offset, Math.min(wordBytes.length, offset + 1 + cb)));
+        properties = shared.get(key) ?? readChpxProperties(wordBytes, offset, format);
+        shared.set(key, properties);
+      }
       runs.push({ cpStart, cpEnd, fcStart, fcEnd, properties });
     }
   }
