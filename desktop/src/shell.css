@@ -547,6 +547,14 @@ body.resizing iframe {
   box-shadow: inset 0 2px var(--accent);
 }
 
+/* 여는 중인 탭: 아이콘 자리에 작은 스피너 */
+.tab .tab-spinner {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-width: 2px;
+}
+
 /* 잠든 탭(렌더러를 내려 둔 탭): 아이콘만 흐리게 */
 .tab.asleep .file-icon {
   opacity: 0.45;

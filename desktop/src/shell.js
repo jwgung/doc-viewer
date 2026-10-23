@@ -344,35 +344,144 @@ function focusPane(pane) {
   syncActive();
 }
 
-/** 상단바가 다룰 탭을 초점 칸의 보이는 탭으로 맞춘다. */
+/** 상단바가 다룰 탭을 초점 칸의 보이는 탭으로 맞춘다(여는 중인 탭을 보고 있으면 없음). */
 function syncActive() {
-  active = focused?.active ?? null;
+  active = focused?.shownPending ? null : (focused?.active ?? null);
   showToolbar();
 }
 
 function showPaneLoading(pane) {
-  const tab = pane.active;
-  pane.loading.hidden = !tab?.loading;
-  if (tab) pane.loading.querySelector('.loading-name').textContent = tab.name;
+  const shown = pane.shownPending ?? pane.active;
+  pane.loading.hidden = !(pane.shownPending || pane.active?.loading);
+  if (shown) pane.loading.querySelector('.loading-name').textContent = shown.name;
+}
+
+// ---- 여는 중인 탭: 문서를 고르자마자 탭을 만들고 그 탭에서 로딩 화면을 보인다. 앱이 파일을 열어 형식을 가리는 동안
+// (Windows는 백신 검사 등으로 몇 초 걸릴 수 있다) 다른 탭을 봐도 되고, 끝나면 그 자리에 진짜 탭이 들어선다.
+// 여는 중인 탭은 tabs에 넣지 않는다(문서 번호·형식이 아직 없어 세션·상단바·단축키가 다루지 않는다).
+
+/** @type {Array<{ pane: object, name: string, button: HTMLElement, canceled: boolean }>} */
+const pendingTabs = [];
+
+function addPendingTab(pane, name, index = Infinity) {
+  const pending = { pane, name, canceled: false };
+  const button = document.createElement('div');
+  button.className = 'tab pending';
+  button.setAttribute('role', 'tab');
+  button.tabIndex = 0;
+  button.title = name;
+  const label = Object.assign(document.createElement('span'), { className: 'tab-name', textContent: name });
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'tab-close';
+  close.appendChild(lineIcon('close'));
+  close.setAttribute('aria-label', t.closeTab);
+  close.title = t.closeTab;
+  close.addEventListener('click', (e) => {
+    e.stopPropagation();
+    pending.canceled = true;
+    removePendingTab(pending);
+  });
+  button.append(Object.assign(document.createElement('span'), { className: 'spinner tab-spinner' }), label, close);
+  button.addEventListener('click', () => showPendingTab(pending));
+  button.addEventListener('keydown', (e) => (e.key === 'Enter' || e.key === ' ') && showPendingTab(pending));
+  button.addEventListener('auxclick', (e) => e.button === 1 && close.click());
+  pane.bar.insertBefore(button, tabsOf(pane)[index]?.button ?? null);
+  pending.button = button;
+  pendingTabs.push(pending);
+  showPendingTab(pending);
+  return pending;
+}
+
+function showPendingTab(pending) {
+  const { pane } = pending;
+  pane.shownPending = pending;
+  for (const other of tabsOf(pane)) {
+    other.button.classList.remove('active');
+    other.button.setAttribute('aria-selected', 'false');
+  }
+  for (const other of pendingTabs) if (other.pane === pane) other.button.classList.toggle('active', other === pending);
+  pending.button.setAttribute('aria-selected', 'true');
+  pending.button.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  showPaneLoading(pane);
+  focused = null;
+  focusPane(pane);
+}
+
+/** 여는 중인 탭을 걷는다. 그 탭을 보고 있었으면 칸의 보이는 탭(없으면 빈 칸)으로 돌아간다. */
+function removePendingTab(pending) {
+  pendingTabs.splice(pendingTabs.indexOf(pending), 1);
+  pending.button.remove();
+  const { pane } = pending;
+  if (pane.shownPending !== pending) return;
+  pane.shownPending = null;
+  restorePane(pane);
 }
 
 /**
- * 문서를 고르자마자 그 칸에 로딩 화면을 띄우고, 앱이 파일을 열어 형식을 가리는 동안(open) 기다린다. Windows는 파일을 처음
- * 열 때 백신 검사 등으로 몇 초 걸릴 수 있어, 탭이 생길 때까지 아무 반응이 없으면 앱이 멈춘 것처럼 보였다.
- * 끝나면(실패해도) 그 칸의 로딩 화면을 보이는 탭 상태대로 되돌린다.
+ * 여는 중인 탭을 보던 칸을 그 칸의 보이는 탭으로 되돌린다(초점은 옮기지 않는다: 다른 칸을 보고 있을 수 있다).
+ * 탭도 여는 중인 탭도 없으면 빈 칸을 거둔다(칸이 하나뿐이면 빈 안내).
  */
-async function whileOpening(pane, name, open) {
-  pane.opening = (pane.opening ?? 0) + 1; // 같은 칸에서 여럿을 연달아 열면 마지막 것이 끝날 때 정리한다
-  pane.loading.hidden = false;
-  pane.loading.querySelector('.loading-name').textContent = name;
-  $('empty').hidden = true; // 탭이 하나도 없을 때의 안내 문구가 로딩 화면과 겹치지 않게
+function restorePane(pane) {
+  if (!panes.includes(pane)) return;
+  const other = pendingTabs.find((each) => each.pane === pane);
+  if (!pane.active && other) return showPendingTab(other);
+  if (!pane.active && tabsOf(pane).length) return activate(tabsOf(pane)[0]); // 뒤에서 연 탭만 있던 칸
+  if (pane.active) {
+    pane.active.button.classList.add('active');
+    pane.active.button.setAttribute('aria-selected', 'true');
+  } else if (panes.length > 1) return removePane(pane);
+  showPaneLoading(pane);
+  if (focused === pane) syncActive();
+  else showToolbar();
+}
+
+/** 새 탭을 그 칸 탭 줄의 index 자리로 옮긴다(보이게 하지는 않는다). */
+function placeTab(tab, index) {
+  const before = tabsOf(tab.pane).filter((other) => other !== tab)[index] ?? null;
+  tabs.splice(tabs.indexOf(tab), 1);
+  tabs.splice(before ? tabs.indexOf(before) : tabs.length, 0, tab);
+  tab.pane.bar.insertBefore(tab.button, before?.button ?? null);
+}
+
+/** 탭 줄에서 여는 중인 탭 앞에 있는 진짜 탭 수(진짜 탭이 들어설 자리) */
+const pendingIndex = (pending) => tabsOf(pending.pane).filter((tab) => tab.button.compareDocumentPosition(pending.button) & Node.DOCUMENT_POSITION_FOLLOWING).length;
+
+/**
+ * 여는 중인 탭을 pane에 만들고 앱이 파일을 열게(open) 한 뒤, 그 자리에 진짜 탭을 둔다. 여는 중 그 탭을 닫았으면 연 문서를
+ * 바로 닫고, 이미 열린 문서면 그 탭으로 간다. 기다리는 동안 다른 탭을 보고 있었으면 새 탭은 뒤에서 열린다.
+ */
+async function openWithPendingTab(pane, name, open, index = Infinity) {
+  const pending = addPendingTab(pane, name, index);
+  let opened;
   try {
-    return await open();
-  } finally {
-    pane.opening -= 1;
-    if (!pane.opening && panes.includes(pane)) showPaneLoading(pane);
-    if (!panes.some((each) => each.opening)) $('empty').hidden = tabs.length > 0;
+    opened = await open();
+  } catch {
+    if (!pending.canceled) removePendingTab(pending);
+    toast(t.folderFailed);
+    return;
   }
+  const existing = tabs.find((tab) => tab.id === opened.id);
+  if (pending.canceled) {
+    if (!existing) invoke('close_document', { id: opened.id, remember: false });
+    return;
+  }
+  const shown = pending.pane.shownPending === pending;
+  const at = pendingIndex(pending);
+  const home = panes.includes(pending.pane) ? pending.pane : focused;
+  // 보던 여는 중인 탭이면 그 자리에 들어선 탭(또는 이미 열린 탭)을 보이고, 아니면 뒤에서 연다.
+  if (existing) {
+    removePendingTab(pending);
+    if (shown) activate(existing);
+    return;
+  }
+  const tab = openTab(opened, null, false, home);
+  if (tab) placeTab(tab, at);
+  if (tab && shown) {
+    pendingTabs.splice(pendingTabs.indexOf(pending), 1);
+    pending.button.remove();
+    activate(tab);
+  } else removePendingTab(pending); // 열지 못했으면(지원하지 않는 형식) openTab이 알린다
 }
 
 /**
@@ -634,6 +743,8 @@ function loadTab(tab) {
 function activate(tab) {
   const pane = tab.pane;
   pane.active = tab;
+  pane.shownPending = null;
+  for (const other of pendingTabs) if (other.pane === pane) other.button.classList.remove('active');
   for (const other of tabsOf(pane)) {
     other.frame.hidden = other !== tab;
     other.button.classList.toggle('active', other === tab);
@@ -655,6 +766,8 @@ function afterLeave(pane, index) {
   const rest = tabsOf(pane);
   pane.active = null;
   if (rest.length) return activate(rest[Math.min(index, rest.length - 1)]);
+  const pending = pendingTabs.find((other) => other.pane === pane);
+  if (pending) return showPendingTab(pending);
   if (panes.length > 1) removePane(pane);
   else {
     pane.loading.hidden = true;
@@ -970,11 +1083,10 @@ async function endFileDrag(e) {
   setTimeout(() => (dragJustEnded = false), 0);
   const target = e.type === 'pointerup' ? current.target : null;
   if (!target) return;
-  try {
-    placeOpened([await whileOpening(target.pane, current.entry.name, () => invoke('open_file', { path: current.entry.path }))], target);
-  } catch {
-    toast(t.folderFailed);
-  }
+  if (!panes.includes(target.pane)) return;
+  // 가장자리에 놓았으면 칸을 먼저 나눠 그 칸에 여는 중인 탭을 만든다.
+  const pane = target.side && panes.length < MAX_PANES ? splitPane(target.pane, target.side) : target.pane;
+  await openWithPendingTab(pane, current.entry.name, () => invoke('open_file', { path: current.entry.path }), target.side ? Infinity : (target.index ?? Infinity));
 }
 
 // Windows 탐색기에서 끌어오는 파일: Rust가 끄는 자리(drop-over)와 놓은 자리(documents의 값)를 알려 준다.
@@ -1057,7 +1169,7 @@ function showToolbar() {
   const tab = active;
   document.body.classList.toggle('has-doc', !!tab);
   document.body.classList.toggle('paged', !!tab && isPaged(tab.fmt));
-  $('empty').hidden = tabs.length > 0;
+  $('empty').hidden = tabs.length > 0 || pendingTabs.length > 0;
   if (!tab) return;
   viewButton.replaceChildren(
     lineIcon(VIEW_ICONS[tab.mode]),
@@ -1389,11 +1501,7 @@ function entryItem(entry) {
 }
 
 async function openEntry(entry) {
-  try {
-    openTab(await whileOpening(focused, entry.name, () => invoke('open_file', { path: entry.path })));
-  } catch {
-    toast(t.folderFailed);
-  }
+  await openWithPendingTab(focused, entry.name, () => invoke('open_file', { path: entry.path }));
 }
 
 // ---- 파일 관리: 우클릭 메뉴(F2 이름 바꾸기, Del 휴지통). Rust가 고른 폴더 밖은 막는다.
