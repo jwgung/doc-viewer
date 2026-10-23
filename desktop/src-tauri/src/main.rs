@@ -130,14 +130,14 @@ impl DropAt {
     }
 }
 
-/// 셸 밖에서 들어온 문서를 셸에 넘긴다: 쌓아 두고 알린다(셸이 아직 뜨는 중이면 뜬 뒤 take_documents로 가져간다).
-/// at은 창에 끌어다 놓은 자리(실행 인자·두 번째 실행이면 None: 초점 칸에 연다).
 /// deliver를 주 스레드 밖에서 한다(끌어다 놓기·두 번째 실행). 파일을 열어 형식을 가리는 동안 창이 멈추지 않게.
 fn deliver_later(app: &AppHandle, paths: Vec<PathBuf>, at: Option<DropAt>) {
     let app = app.clone();
     tauri::async_runtime::spawn_blocking(move || deliver(&app, paths, at));
 }
 
+/// 셸 밖에서 들어온 문서를 셸에 넘긴다: 쌓아 두고 알린다(셸이 아직 뜨는 중이면 뜬 뒤 take_documents로 가져간다).
+/// at은 창에 끌어다 놓은 자리(실행 인자·두 번째 실행이면 None: 초점 칸에 연다).
 fn deliver(app: &AppHandle, paths: impl IntoIterator<Item = PathBuf>, at: Option<DropAt>) {
     let opened: Vec<Opened> = paths.into_iter().filter(|p| p.is_file()).map(|p| register(app, p)).collect();
     if opened.is_empty() {
@@ -280,7 +280,7 @@ async fn reopen_document(app: AppHandle, id: u64) -> Result<Opened, String> {
     .await
 }
 
-/// 파일을 여는 명령(형식 판별)을 주 스레드 밖에서 한다. 동기 명령은 주 스레드에서 돌아, Windows에서 파일을 처음 열 때
+/// 파일을 여는 명령(형식 판별: 문서 열기·복제·다시 열기·지난 탭 되살리기)을 주 스레드 밖에서 한다. 동기 명령은 주 스레드에서 돌아, Windows에서 파일을 처음 열 때
 /// 백신 검사 등으로 늦어지면 그동안 앱의 다른 일(다른 명령·창 메시지)까지 함께 기다렸다.
 async fn off_main<T: Send + 'static>(work: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
     tauri::async_runtime::spawn_blocking(work).await.map_err(|e| e.to_string())?
@@ -317,11 +317,16 @@ fn save_session(app: AppHandle, tabs: Vec<TabState>, active: Option<u64>, docs: 
     }
 }
 
-/// 지난번에 열려 있던 탭(아직 있는 파일만)을 다시 연다. 셸이 시작할 때 한 번 부른다.
+/// 지난번에 열려 있던 탭(아직 있는 파일만)을 다시 연다. 셸이 시작할 때 한 번 부른다. 탭마다 파일을 열어 형식을 가리므로
+/// 주 스레드 밖에서 한다(그동안 사용자가 고른 문서를 여는 명령이 뒤에서 기다리지 않게).
 #[tauri::command]
-fn restore_session(app: AppHandle) -> Restored {
+async fn restore_session(app: AppHandle) -> Result<Restored, String> {
+    off_main(move || Ok(restore(&app))).await
+}
+
+fn restore(app: &AppHandle) -> Restored {
     let session: Session =
-        config_file(&app, SESSION_FILE).and_then(|f| std::fs::read(f).ok()).and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+        config_file(app, SESSION_FILE).and_then(|f| std::fs::read(f).ok()).and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
     let mut active = None;
     // 같은 파일을 탭 여럿에 띄워 두었으면(탭 복제) 탭마다 따로 번호를 붙여 모두 되살린다.
     let mut seen = HashSet::new();
@@ -331,7 +336,7 @@ fn restore_session(app: AppHandle) -> Restored {
         .enumerate()
         .filter(|(_, tab)| tab.path.is_file())
         .map(|(index, tab)| {
-            let opened = register_as(&app, tab.path.clone(), seen.insert(tab.path.clone()));
+            let opened = register_as(app, tab.path.clone(), seen.insert(tab.path.clone()));
             if session.active == Some(index) {
                 active = Some(opened.id);
             }
