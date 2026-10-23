@@ -2,7 +2,9 @@
 // JSON은 한 줄로 압축된 것이 많아 항상 다시 들여쓴다(JSON.parse를 쓰지 않아 큰 정수·키 순서·잘못된 JSON도 그대로 보인다).
 // XML은 본문 공백이 뜻을 가질 수 있어 압축된 파일(태그 3개 이상이고 태그 4개당 줄바꿈 1개 미만)만 다시 들여쓴다. TOML·YAML은 원문 그대로 색만 입힌다.
 // JSON의 {}·[]와 XML 요소는 줄 번호 옆 표시를 눌러 접는다.
-// 큰 파일: 처음 조각만 바로 보이고 나머지는 쉬어 가며 넣는다. MAX_DECORATED_LINES를 넘는 줄은 색·줄 번호 없이 글자만 잇고,
+// 큰 파일: 처음 조각만 바로 보이고 나머지는 쉬어 가며 넣는다. 조각마다 따로 된 블록(.chunk)에 넣어 화면 밖 블록은 배치를
+// 건너뛴다(한 <pre>에 계속 붙이면 붙일 때마다 쌓인 전체를 다시 배치해, 저사양에서 조각마다 0.5초씩 멈췄다).
+// MAX_DECORATED_LINES를 넘는 줄은 색·줄 번호 없이 글자만 잇고,
 // MAX_CHARS를 넘는 글자는 보이지 않는다(각각 안내 문구). 로그는 끝이 중요하므로 앞이 아니라 뒤를 남긴다. 토크나이저는 모두 입력 길이에 비례하는 시간만 쓴다(만든 파일로 멈추지 않게).
 import { nextTurn } from '../next-turn.js';
 import { t } from '../strings.js';
@@ -26,8 +28,10 @@ const newlineFor = (counter, depth) => `\n${counter.n++ < MAX_DECORATED_LINES ? 
 /** 처음 화면에 바로 넣는 줄 수. 나머지는 뒤에서 조각마다 쉬어 가며 넣는다(스크롤·탭을 막지 않게). */
 const FIRST_CHUNK = 1_500;
 const CHUNK = 1_000;
-/** 상한을 넘긴 색 없는 글자를 한 번에 넣는 길이 */
-const REST_CHUNK_CHARS = 200_000;
+/** 블록(.chunk) 하나의 줄 수. 화면에 들어온 블록은 통째로 배치하므로 작게 둔다(1,500줄이면 저사양에서 0.3초). */
+const CHUNK_LINES = 200;
+/** 상한을 넘긴 색 없는 글자를 한 번에 넣는 길이. 조각마다 블록 하나가 되므로 블록처럼 작게 둔다. */
+const REST_CHUNK_CHARS = 20_000;
 
 export async function render(bytes, container, ctx) {
   const text = decodeText(bytes);
@@ -42,9 +46,17 @@ export async function render(bytes, container, ctx) {
   article.className = 'flow code';
   const pre = document.createElement('pre');
   pre.style.setProperty('--gutter', `${String(Math.min(lines, MAX_DECORATED_LINES)).length}ch`);
+  /** 접은 묶음 번호. 아직 넣지 않은 조각에서 이어지는 묶음도 접힌 채로 넣는다. */
+  const folded = new Set();
   pre.addEventListener('click', (event) => {
     const line = event.target.closest('.fold')?.parentElement;
-    line?.classList.toggle('folded');
+    if (!line) return;
+    const id = line.dataset.b;
+    const fold = line.classList.toggle('folded');
+    if (fold) folded.add(id);
+    else folded.delete(id);
+    // 묶음이 조각 경계를 넘으면 조각마다 이어지는 blk가 있다. 첫 blk는 CSS(.folded + .blk)가, 나머지는 여기서 숨긴다.
+    pre.querySelectorAll(`.blk[data-b="${id}"]`).forEach((blk, index) => index > 0 && blk.classList.toggle('fold-hidden', fold));
   });
   article.appendChild(pre);
   const notes = [];
@@ -57,11 +69,11 @@ export async function render(bytes, container, ctx) {
     article.appendChild(p);
   }
 
-  const sink = new DomSink(pre);
+  const sink = new DomSink(pre, (id) => folded.has(String(id)));
   const builder = buildLines(tokens, sink);
   let step = builder.next();
-  sink.flush();
   container.appendChild(article);
+  sink.flush(); // 줄 높이를 재야 해서(조각의 자리 높이) 문서에 붙인 뒤에 넣는다
   ctx.markFirstPage();
   while (!step.done) {
     await nextTurn();
@@ -89,26 +101,49 @@ function countLines(tokens) {
  * ['close', '']는 묶음이 닫힌다는 뜻이다. 같은 줄에서 열리고 닫힌 묶음은 접지 않는다.
  */
 
+const blkTag = (id, hidden) => `<span class="blk${hidden ? ' fold-hidden' : ''}" data-b="${id}">`;
+
 /**
- * HTML 조각을 모아 두었다가 한 번에 넣는다. 접는 묶음(<span class="blk">)은 조각 경계를 넘어 열려 있을 수 있어,
+ * HTML 조각을 모아 두었다가 한 번에 넣는다. 접는 묶음(<span class="blk" data-b="번호">)은 조각 경계를 넘어 열려 있을 수 있어,
  * 넣은 뒤에는 아직 닫히지 않은 가장 안쪽 blk를 다음 조각을 넣을 자리로 삼고, 앞 조각에서 연 묶음을 닫을 때는 그 부모로 올라간다.
+ * 줄은 CHUNK_LINES줄씩 블록(.chunk)에 넣는다. 열린 묶음은 새 블록에서 같은 번호의 blk로 다시 열어 잇는다.
+ * 블록은 화면 밖에 있으면 배치를 건너뛰므로(content-visibility), 그 동안 쓸 높이를 줄 수로 어림해 둔다.
  */
 class DomSink {
-  constructor(root) {
-    this.cursor = root;
+  constructor(root, isFolded) {
+    this.root = root;
+    this.isFolded = isFolded;
     this.buffer = [];
     this.localOpen = 0; // 아직 넣지 않은 글에서 연 blk 수
+    this.openIds = []; // 열려 있는 blk 번호(바깥부터)
+    this.lineHeight = 0;
+    this.newChunk();
   }
-  text(html) {
+  newChunk() {
+    this.chunk = this.cursor = document.createElement('div');
+    this.chunk.className = 'chunk';
+    this.root.appendChild(this.chunk);
+    this.lines = 0;
+    for (const id of this.openIds) this.buffer.push(blkTag(id, this.isFolded(id)));
+    this.localOpen = this.openIds.length;
+  }
+  /** html: 줄 lines개. 블록이 차면 새 블록에 넣는다(줄 앞에서만 나눠, 접는 줄과 그 첫 blk가 같은 블록에 있게). */
+  text(html, lines = 1) {
+    if (this.lines >= CHUNK_LINES) this.split();
     this.buffer.push(html);
+    this.lines += lines;
   }
-  open(count) {
-    if (!count) return;
-    this.buffer.push('<span class="blk">'.repeat(count));
-    this.localOpen += count;
+  /** 이 줄에서 여는 묶음들(바깥부터) */
+  open(ids) {
+    for (const id of ids) {
+      this.buffer.push(blkTag(id, false));
+      this.openIds.push(id);
+    }
+    this.localOpen += ids.length;
   }
   close(count) {
     for (; count > 0; count--) {
+      this.openIds.pop();
       if (this.localOpen > 0) {
         this.buffer.push('</span>');
         this.localOpen--;
@@ -126,6 +161,13 @@ class DomSink {
     this.localOpen = 0;
     // 닫히지 않은 blk는 파서가 닫아 두었다. 각각 그 자리의 마지막 요소이므로 따라 내려가 이어 넣을 자리를 잡는다.
     for (let k = 0; k < pending; k++) this.cursor = this.cursor.lastElementChild;
+    this.lineHeight ||= Number.parseFloat(getComputedStyle(this.root).lineHeight) || 20;
+    this.chunk.style.containIntrinsicSize = `auto ${Math.round(this.lines * this.lineHeight)}px`;
+  }
+  /** 지금 블록을 끝내고 새 블록을 연다. */
+  split() {
+    this.flush();
+    this.newChunk();
   }
 }
 
@@ -139,6 +181,7 @@ function* buildLines(tokens, sink) {
   let line = '';
   /** 열린 묶음: 연 줄 번호, 접었을 때 보일 닫는 글자, 실제로 blk 요소를 만들었는지 */
   const stack = [];
+  let blkCount = 0; // blk 번호(접은 줄과 조각마다 이어지는 blk를 잇는다)
   let closing = 0; // 이 줄 끝에서 닫을 blk 요소 수
   let budget = FIRST_CHUNK;
   const endLine = () => {
@@ -149,12 +192,13 @@ function* buildLines(tokens, sink) {
     const foldable = opened > 0 && closing === 0;
     const first = foldable ? stack[stack.length - opened] : null;
     for (let k = stack.length - opened; k < stack.length; k++) stack[k].blk = foldable;
+    const ids = foldable ? stack.slice(stack.length - opened).map(() => ++blkCount) : [];
     sink.text(
-      `<span class="l${foldable ? ' has-fold' : ''}" data-n="${lineNo}"${foldable ? ` data-close="${escapeHtml(first.close)}"` : ''}>` +
+      `<span class="l${foldable ? ' has-fold' : ''}" data-n="${lineNo}"${foldable ? ` data-close="${escapeHtml(first.close)}" data-b="${ids[0]}"` : ''}>` +
         `${foldable ? '<b class="fold"></b>' : ''}${line || '\n'}</span>`, // 빈 줄도 한 줄 높이를 갖게
     );
     sink.close(closing);
-    if (foldable) sink.open(opened);
+    sink.open(ids);
     line = '';
     closing = 0;
     lineNo++;
@@ -189,15 +233,18 @@ function* buildLines(tokens, sink) {
   // 상한을 넘긴 나머지: 색 없는 글자로(줄 번호 칸만큼 들여 맞춘다)
   let plain = '';
   for (; i < tokens.length; i++) {
+    if (tokens[i][0] === 'open') continue; // 접기 표시 토큰의 글자는 접었을 때 보일 닫는 글자일 뿐, 원문이 아니다
     plain += tokens[i][1];
     if (plain.length > REST_CHUNK_CHARS) {
-      sink.text(`<span class="rest">${escapeHtml(plain)}</span>`);
+      sink.text(`<span class="rest">${escapeHtml(plain)}</span>`, lineCount(plain));
       plain = '';
       yield;
     }
   }
-  if (plain) sink.text(`<span class="rest">${escapeHtml(plain)}</span>`);
+  if (plain) sink.text(`<span class="rest">${escapeHtml(plain)}</span>`, lineCount(plain));
 }
+
+const lineCount = (text) => text.split('\n').length;
 
 function escapeHtml(text) {
   return text.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);

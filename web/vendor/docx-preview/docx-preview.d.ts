@@ -49,8 +49,11 @@ export interface LazyPage {
     element: HTMLElement;
     /** 이미지 등 비동기로 채워지는 것이 모두 끝나면 resolve한다. */
     settled: Promise<void>;
-    /** 탭 간격을 맞춘다. 문서에 붙어 있어야 잴 수 있고, 쪽을 확대(zoom)하기 전에 불러야 원래 크기로 정확히 잰다. */
-    refreshTabs(): void;
+    /**
+     * 탭 간격을 맞춘다. 문서에 붙어 있어야 잴 수 있고, 쪽을 확대(zoom)하기 전에 불러야 원래 크기로 정확히 잰다.
+     * root를 주면 그 안의 탭만 맞춘다(탭은 제 문단 안에서만 잰다). 한 번 맞춘 탭은 다시 맞추지 않는다.
+     */
+    refreshTabs(root?: Element): void;
 }
 export interface LazyDocument {
     /** 구역·쪽 나누기 기준 쪽 수. renderAsync가 만드는 section.docx 수와 같다. */
@@ -59,8 +62,11 @@ export interface LazyDocument {
     styleNodes: Node[];
     /** 용지 크기(px). 내용이 용지보다 길면 실제 쪽은 더 길다. */
     estimatedSize(index: number): { width: number; height: number };
-    /** index번째 쪽을 만든다(동기). 본문 조각을 그때 파싱하므로 부를 때마다 새 요소가 나온다. */
-    renderPage(index: number): LazyPage;
+    /**
+     * index번째 쪽을 만든다. 본문 조각을 그때 파싱하므로 부를 때마다 새 요소가 나온다. pause를 주면 파싱 묶음과
+     * 최상위 요소 사이마다 기다린다(쉬어 가며 그리기). 앞 쪽이 끝나기 전에 다음 쪽을 부르면 안 된다.
+     */
+    renderPage(index: number, pause?: () => Promise<void> | void): Promise<LazyPage>;
     dispose(): void;
 }
 /**

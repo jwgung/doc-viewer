@@ -1,0 +1,25 @@
+{
+  "bundle": {
+    "macOS": {
+      "files": {
+        "Resources/pdf.icns": "icons/files/pdf.icns",
+        "Resources/hwp.icns": "icons/files/hwp.icns",
+        "Resources/hwpx.icns": "icons/files/hwpx.icns",
+        "Resources/doc.icns": "icons/files/doc.icns",
+        "Resources/docx.icns": "icons/files/docx.icns",
+        "Resources/xls.icns": "icons/files/xls.icns",
+        "Resources/xlsx.icns": "icons/files/xlsx.icns",
+        "Resources/csv.icns": "icons/files/csv.icns",
+        "Resources/ppt.icns": "icons/files/ppt.icns",
+        "Resources/pptx.icns": "icons/files/pptx.icns",
+        "Resources/md.icns": "icons/files/md.icns",
+        "Resources/txt.icns": "icons/files/txt.icns",
+        "Resources/log.icns": "icons/files/log.icns",
+        "Resources/json.icns": "icons/files/json.icns",
+        "Resources/xml.icns": "icons/files/xml.icns",
+        "Resources/toml.icns": "icons/files/toml.icns",
+        "Resources/yaml.icns": "icons/files/yaml.icns"
+      }
+    }
+  }
+}

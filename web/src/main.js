@@ -27,6 +27,7 @@ const RENDERERS = {
   toml: () => import('./renderers/code.js'),
   yaml: () => import('./renderers/code.js'),
   log: () => import('./renderers/code.js'),
+  image: () => import('./renderers/image.js'),
 };
 
 const PASSWORD_CANCELLED = 'password cancelled';
@@ -58,6 +59,8 @@ let outlineLoader = null;
 let notesOf = null;
 /** 발표자 노트 칸(켰을 때만 있다) */
 let notesPanel = null;
+/** 확대·축소를 스스로 하는 렌더러(그림)가 ctx.setZoomer로 준다: (비율, focusX, focusY) → 적용된 비율 */
+let zoomer = null;
 /** 쪽 없는 문서의 확대 비율(CSS zoom) */
 let flowZoom = 1;
 let zoomTimer = null;
@@ -119,10 +122,16 @@ window.viewer = {
 };
 
 /**
- * 쪽 있는 문서는 쪽 칸을 키우거나 줄이고(멈추면 그 크기로 다시 그려 선명하다), 나머지는 문서 영역을 CSS zoom으로 바꾼다.
+ * 쪽 있는 문서는 쪽 칸을 키우거나 줄이고(멈추면 그 크기로 다시 그려 선명하다), 그림은 렌더러가 그림 크기를 바꾸고,
+ * 나머지는 문서 영역을 CSS zoom으로 바꾼다.
  * 바뀐 비율은 'shrink'로 알린다(쪽 뷰어는 viewershrink 이벤트로).
  */
 function setZoom(value, focusX = innerWidth / 2, focusY = innerHeight / 2) {
+  if (zoomer) {
+    const applied = zoomer(value, focusX, focusY);
+    report('shrink', { value: applied });
+    return applied;
+  }
   if (viewer) {
     viewer.maxShrink = MAX_ZOOM;
     viewer.setShrink(value, focusY, focusX);
@@ -213,6 +222,8 @@ const heap = () => (performance.memory ? { jsHeapUsedBytes: performance.memory.u
 
 /** 문서를 통째로 받지 않고 스스로 읽는 형식(renderers/pdf.js의 구간 읽기) */
 const SELF_READING = new Set(['pdf']);
+/** 본문 글자가 없어 최후 대안(글자 뽑기)을 건너뛰고 바로 오류 안내를 보이는 형식. 깨진 SVG의 원문이 글자로 보이지 않게. */
+const NO_FALLBACK = new Set(['image']);
 
 async function fetchDocument(url) {
   const response = await fetch(url);
@@ -277,6 +288,10 @@ async function open({ fmt: format, src, name = '', mode = 'scroll', fit, page = 
     setPrinter(fn) {
       printer = fn;
     },
+    /** 확대·축소를 스스로 하는 렌더러(그림). 윈도우 셸의 setZoom이 CSS zoom 대신 이 함수를 부른다. */
+    setZoomer(fn) {
+      zoomer = fn;
+    },
     /** 문서 이름(머리글·바닥글의 &F 등) */
     name,
     /** 목차가 있는 렌더러가 항목을 돌려주는 함수를 준다. 앱은 이 알림을 받으면 '목차' 메뉴를 보인다. */
@@ -336,12 +351,12 @@ async function open({ fmt: format, src, name = '', mode = 'scroll', fit, page = 
   } catch (error) {
     // 암호 입력을 취소했거나 너무 큰 문서면 대안 없이 안내만 한다. 그 밖의 실패는 본문 글자라도 보여 준다(최후 대안).
     const cancelled = error?.message === PASSWORD_CANCELLED;
-    const tooLarge = error instanceof TooLargeError;
-    const fallback = cancelled ? 'cancelled' : tooLarge ? 'tooLarge' : await showFallback(src).catch(() => 'failed');
+    const tooLarge = error instanceof TooLargeError || error?.tooLarge === true;
+    const fallback = cancelled ? 'cancelled' : tooLarge ? 'tooLarge' : NO_FALLBACK.has(fmt) ? 'failed' : await showFallback(src).catch(() => 'failed');
     report('error', { message: String(error?.message ?? error), stack: String(error?.stack ?? '').slice(0, 1000), fallback });
     if (fallback === 'text') return;
     status.dataset.kind = 'error';
-    status.textContent = { cancelled: t.passwordRequired, encrypted: t.encryptedUnsupported, tooLarge: t.tooLargeExpanded }[fallback] ?? t.renderFailed;
+    status.textContent = { cancelled: t.passwordRequired, encrypted: t.encryptedUnsupported, tooLarge: fmt === 'image' ? t.tooLargeImage : t.tooLargeExpanded }[fallback] ?? t.renderFailed;
   }
 }
 
