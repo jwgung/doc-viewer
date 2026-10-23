@@ -43,19 +43,25 @@ function svg(viewBox, inner, className) {
   return el;
 }
 
-/** 목록용 문서 아이콘. label은 보통 파일의 형식(fmt) 이름이다. */
-export function fileIcon(fmt) {
+/**
+ * 문서 아이콘의 SVG 내용(viewBox 0 0 24 30). label은 보통 파일의 형식(fmt) 이름이다.
+ * 운영체제 파일 아이콘(scripts/make-file-icons.js)도 이 그림을 쓴다. labelY는 글자 기준선(앱 배지를 얹으면 위로 올린다).
+ */
+export function fileIconMarkup(fmt, { labelY = 21.5, font = 'Segoe UI, system-ui, sans-serif' } = {}) {
   const color = COLORS[fmt] ?? COLORS.txt;
   const label = LABELS[fmt] ?? (fmt ?? '').toUpperCase().slice(0, 4);
   // 24×30 문서: 오른쪽 위 7만큼 접힘, 모서리 반지름 2. 글자는 접힌 귀퉁이 아래 가운데.
   const size = label.length > 3 ? 7.4 : 8.6;
-  return svg(
-    '0 0 24 30',
+  return (
     `<path d="M2 0H17L24 7V28Q24 30 22 30H2Q0 30 0 28V2Q0 0 2 0Z" fill="${color}"/>` +
-      `<path d="M17 0V5.5Q17 7 18.5 7H24Z" fill="${lighten(color, 0.45)}"/>` +
-      `<text x="12" y="21.5" text-anchor="middle" font-family="Segoe UI, system-ui, sans-serif" font-weight="700" font-size="${size}" fill="#fff">${label}</text>`,
-    'file-icon',
+    `<path d="M17 0V5.5Q17 7 18.5 7H24Z" fill="${lighten(color, 0.45)}"/>` +
+    `<text x="12" y="${labelY}" text-anchor="middle" font-family="${font}" font-weight="700" font-size="${size}" fill="#fff">${label}</text>`
   );
+}
+
+/** 목록용 문서 아이콘 */
+export function fileIcon(fmt) {
+  return svg('0 0 24 30', fileIconMarkup(fmt), 'file-icon');
 }
 
 export function folderIcon() {

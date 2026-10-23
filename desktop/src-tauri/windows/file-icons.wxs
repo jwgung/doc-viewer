@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 이 파일은 desktop/scripts/make-file-icons.js가 만든다. 손으로 고치지 말고 스크립트를 고쳐 다시 실행한다. -->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Fragment>
+    <DirectoryRef Id="INSTALLDIR">
+      <Component Id="FileTypeIcons" Guid="5E0B4C7A-2F7D-4C59-9C1E-6A0F3D2B8E41">
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.pdf\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\pdf.ico" KeyPath="yes" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.hwp\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\hwp.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.hwt\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\hwp.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.hwpx\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\hwpx.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.doc\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\doc.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.dot\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\doc.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.docx\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\docx.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.docm\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\docx.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.dotx\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\docx.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.dotm\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\docx.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.xls\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\xls.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.xlt\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\xls.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.xlsx\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\xlsx.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.xlsm\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\xlsx.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.xltx\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\xlsx.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.xltm\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\xlsx.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.csv\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\csv.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.tsv\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\csv.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.ppt\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\ppt.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.pps\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\ppt.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.pot\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\ppt.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.pptx\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\pptx.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.pptm\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\pptx.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.ppsx\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\pptx.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.potx\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\pptx.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.md\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\md.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.markdown\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\md.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.txt\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\txt.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.text\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\txt.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.log\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\log.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.json\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\json.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.jsonc\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\json.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.xml\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\xml.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.toml\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\toml.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.yaml\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\yaml.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.yml\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\yaml.ico" />
+      </Component>
+    </DirectoryRef>
+  </Fragment>
+</Wix>
