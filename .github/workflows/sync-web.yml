@@ -1,6 +1,7 @@
 # 웹 렌더러(web/)는 이 저장소가 원본이다. dev에 web/ 변경이 들어오면 Android 앱 저장소(jwgung/doc-viewer-mobile)의
 # web/을 똑같이 맞추는 PR을 그 저장소 dev로 연다(이미 열려 있으면 같은 브랜치를 갱신한다). 모바일에서는 web/을 고치지 않는다.
 # 모바일 저장소는 비공개라 secret MOBILE_SYNC_TOKEN(그 저장소의 Contents·Pull requests 쓰기 권한 토큰)으로 접근한다.
+# 모바일의 sync/web 브랜치는 돌 때마다 새 dev에서 다시 만들어 덮어쓰므로 거기에 손으로 커밋하지 않는다.
 name: Sync web to mobile
 
 on:
@@ -18,6 +19,8 @@ permissions:
 
 jobs:
   sync:
+    # 손으로 돌릴 때도 dev의 web/만 보낸다.
+    if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -27,6 +30,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           path: desktop
+          persist-credentials: false
 
       - uses: actions/checkout@v4
         with:
@@ -44,8 +48,11 @@ jobs:
           GH_TOKEN: ${{ secrets.MOBILE_SYNC_TOKEN }}
           SOURCE: ${{ github.sha }}
         run: |
+          open=$(gh pr list --repo "$MOBILE_REPO" --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
           if [ -z "$(git status --porcelain -- web)" ]; then
             echo "모바일 web/이 이미 같다."
+            # 그 사이 다른 길로 맞춰졌으면 남은 동기화 PR은 낡았으므로 닫는다.
+            if [ -n "$open" ]; then gh pr close "$open" --repo "$MOBILE_REPO" --comment '모바일 web/이 이미 원본과 같아 닫습니다.' --delete-branch; fi
             exit 0
           fi
           git config user.name 'github-actions[bot]'
@@ -54,9 +61,9 @@ jobs:
           git add -A web
           git commit -q -m "chore(web): sync from jwgung/doc-viewer@${SOURCE::7}" -m "Synced automatically from https://github.com/jwgung/doc-viewer/commit/$SOURCE"
           git push -f origin "$BRANCH"
-          body="jwgung/doc-viewer의 web/을 그대로 옮긴다(원본 커밋 https://github.com/jwgung/doc-viewer/commit/$SOURCE). 이 PR은 Sync web to mobile 워크플로가 연다."
-          if [ -n "$(gh pr list --repo "$MOBILE_REPO" --head "$BRANCH" --state open --json number --jq '.[].number')" ]; then
-            gh pr edit "$BRANCH" --repo "$MOBILE_REPO" --body "$body"
+          body="jwgung/doc-viewer의 web/을 그대로 옮긴다(원본 커밋 https://github.com/jwgung/doc-viewer/commit/$SOURCE). 이 PR은 Sync web to mobile 워크플로가 열고 갱신한다. 이 브랜치에 직접 올린 커밋은 다음 동기화 때 덮어써진다."
+          if [ -n "$open" ]; then
+            gh pr edit "$open" --repo "$MOBILE_REPO" --body "$body"
           else
             gh pr create --repo "$MOBILE_REPO" --base dev --head "$BRANCH" --title "chore(web): sync renderer from doc-viewer" --body "$body"
           fi
