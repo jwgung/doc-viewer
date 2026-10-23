@@ -895,6 +895,14 @@ export interface MsDocRenderResult {
   parsed: MsDocParseResult;
 }
 
+/** doc-viewer: 쪽을 하나씩 그리는 렌더러(createMsDocRenderer). next()는 앞쪽부터 차례로 그리고 끝나면 null이다. */
+export interface MsDocPageRenderer {
+  css: string;
+  sectionHeaders: MsDocSectionHeaders[];
+  count: number;
+  next(): MsDocRenderedPage | null;
+}
+
 export interface MsDocParseToHtmlOptions {
   workerClient?: MsDocWorkerClientLike;
   parseOptions?: MsDocParseOptions;
