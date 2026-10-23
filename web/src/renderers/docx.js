@@ -1,7 +1,7 @@
 import { openLazyAsync, renderAsync } from 'docx-preview';
 import { readZip } from '../containers.js';
 import { placePage } from '../fit-page.js';
-import { HTML_PRINT_LIMIT, createPager, fillPages, loadPage } from '../paginate.js';
+import { HTML_PRINT_LIMIT, breathe, createPager, fillPages, loadPage } from '../paginate.js';
 import { PagedViewer } from '../paged-viewer.js';
 import { t } from '../strings.js';
 
@@ -97,7 +97,7 @@ async function openByPage(bytes, holder) {
   holder.append(...lazy.styleNodes);
   let first;
   try {
-    first = lazy.renderPage(0);
+    first = await lazy.renderPage(0);
   } catch (error) {
     console.warn('docx 첫 쪽을 쪽 단위로 그리지 못해 한 번에 그립니다:', error);
     holder.replaceChildren();
@@ -108,17 +108,18 @@ async function openByPage(bytes, holder) {
     for (let index = 0; index < lazy.pageCount; index++) {
       let page;
       try {
-        page = index === 0 ? first : lazy.renderPage(index);
+        // 뒤에서 그리는 쪽은 파싱·그리기 사이사이에 쉰다(쪽 나누기가 드문 문서는 쪽 하나가 수 MB다).
+        page = index === 0 ? first : await lazy.renderPage(index, breathe);
       } catch (error) {
         console.warn(`docx ${index + 1}쪽을 그리지 못했습니다:`, error);
-        yield failedPage(holder, lazy.estimatedSize(index));
+        yield { section: failedPage(holder, lazy.estimatedSize(index)) };
         continue;
       }
       holder.appendChild(page.element);
       // 탭 간격과 쪽 나눔은 글자 크기에 따라 달라지므로, 이미지·글꼴이 자리 잡은 뒤 화면 밖 원래 크기에서 잰다.
+      // 탭은 쪽 전체를 한 번에 맞추지 않고 쪽을 나눌 때 맞춘다(pageElements).
       await Promise.all([page.settled, loadFonts()]);
-      page.refreshTabs();
-      yield page.element;
+      yield { section: page.element, refreshTabs: page.refreshTabs };
     }
   }
   return { byPage: true, sections: sections(), dispose: () => lazy.dispose() };
@@ -130,7 +131,7 @@ async function openWhole(bytes, holder) {
   await loadFonts(); // 문서에 담긴 글꼴이 자리 잡은 뒤에 쪽을 나눈다
   const all = [...holder.querySelectorAll('section.docx')];
   async function* sections() {
-    yield* all;
+    for (const section of all) yield { section }; // 탭 간격은 renderAsync가 이미 맞췄다
   }
   return { byPage: false, sections: sections() };
 }
@@ -159,11 +160,14 @@ function failedPage(holder, size) {
  * 쪽(section.docx)마다 본문(article)의 블록을 용지 높이로 채워 쪽 요소를 차례로 내놓는다.
  * 나눈 쪽마다 머리말·꼬리말(header·footer)만 복사하고, 본문 뒤에 붙는 각주·미주 목록(ol)은 본문 끝에 이어
  * 흐르게 한다(쪽마다 복사하면 쪽마다 각주가 자리를 차지한다). 본문이 없는 쪽은 그대로 한 쪽이다.
+ * 탭 간격(refreshTabs가 있을 때)은 블록을 떼어 내 가벼워진 쪽에서 머리말·꼬리말 것을, 블록을 쪽에 채울 때 그
+ * 블록 것을 맞춘다. 쪽 나누기가 드문 문서는 구역 하나가 수 MB라 통째로 배치하면 1초 넘게 멈췄다.
  */
 async function* pageElements(sections, holder) {
-  for await (const section of sections) {
+  for await (const { section, refreshTabs } of sections) {
     const body = section.querySelector(':scope > article');
     if (!body) {
+      refreshTabs?.();
       yield section;
       continue;
     }
@@ -171,6 +175,9 @@ async function* pageElements(sections, holder) {
     const parts = [...section.childNodes].filter((node) => node === body || repeated(node));
     const notes = [...section.childNodes].filter((node) => node !== body && !repeated(node));
     const blocks = [...body.childNodes, ...notes];
+    body.replaceChildren();
+    for (const note of notes) note.remove();
+    for (const part of parts) if (part !== body) refreshTabs?.(part);
     section.remove();
     const shell = () => {
       const page = section.cloneNode(false);
@@ -179,7 +186,7 @@ async function* pageElements(sections, holder) {
       holder.appendChild(page);
       return { page, body: target };
     };
-    yield* fillPages(blocks, shell);
+    yield* fillPages(blocks, shell, refreshTabs && ((block) => block.nodeType === Node.ELEMENT_NODE && refreshTabs(block)));
   }
 }
 
