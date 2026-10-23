@@ -1,4 +1,4 @@
-import { formatPageNumber, parseMsDoc, renderMsDoc } from '@file-viewer/doc/core';
+import { formatPageNumber } from '@file-viewer/doc/core';
 import { placePage } from '../fit-page.js';
 import { HTML_PRINT_LIMIT, createPager, fillPages, loadPage } from '../paginate.js';
 import { PagedViewer } from '../paged-viewer.js';
@@ -13,8 +13,8 @@ const DEFAULT_PAPER = { width: 12240, height: 15840, left: 1800, right: 1800, to
 const TWIPS_PER_PX = 15;
 
 export async function render(bytes, container, ctx) {
-  const parsed = parseMsDoc(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
-  const rendered = renderMsDoc(parsed);
+  const { meta, segments } = openInWorker(bytes);
+  const rendered = await meta;
   // 쪽 뷰어가 문서 영역을 비우고 다시 채우므로 스타일은 문서 영역 밖에 둔다.
   const style = document.createElement('style');
   style.textContent = rendered.css;
@@ -24,7 +24,7 @@ export async function render(bytes, container, ctx) {
   document.body.appendChild(holder);
   await document.fonts.ready;
 
-  const pager = createPager(pageElements(rendered, parsed.sections ?? [], holder));
+  const pager = createPager(pageElements(segments, rendered, holder));
   const sizes = [];
   const sync = () => {
     for (let index = sizes.length; index < pager.pages.length; index++) sizes.push(pager.pages[index].size);
@@ -75,19 +75,61 @@ export async function render(bytes, container, ctx) {
   }, () => viewer.settled());
   return {
     pages: sizes.length,
-    extra: { warnings: parsed.warnings?.length ?? 0, wordVersion: parsed.meta?.fib?.version ?? null, docSegments: rendered.pages?.length ?? 1 },
+    extra: { warnings: rendered.warnings, wordVersion: rendered.wordVersion, docSegments: rendered.count },
   };
+}
+
+/**
+ * 워커에 문서를 넘겨 파싱하고 HTML을 만들게 한다. meta는 쪽을 그리기 전의 정보(CSS·구역 설정·머리말·꼬리말)이고,
+ * segments는 렌더러가 나눈 쪽(쪽 나누기 단위)을 워커가 그리는 대로 앞에서부터 내놓는다.
+ */
+function openInWorker(bytes) {
+  const worker = new Worker(new URL('../workers/doc-worker.js', import.meta.url), { type: 'module' });
+  const arrived = [];
+  let ended = false;
+  let failure = null;
+  let wake = null;
+  let gotMeta, failMeta;
+  const meta = new Promise((resolve, reject) => ((gotMeta = resolve), (failMeta = reject)));
+  const fail = (error) => {
+    failure = error;
+    failMeta(error);
+    worker.terminate();
+    wake?.();
+  };
+  worker.onmessage = ({ data }) => {
+    if (data.type === 'meta') gotMeta(data);
+    else if (data.type === 'page') arrived.push(data.page);
+    else if (data.type === 'end') {
+      ended = true;
+      worker.terminate();
+    } else if (data.type === 'error') return fail(new Error(data.message));
+    wake?.();
+  };
+  worker.onerror = (event) => fail(new Error(event.message || '문서 워커를 시작하지 못했습니다'));
+  // 파일 바이트를 워커로 옮긴다(복사하지 않는다). 받은 바이트가 큰 버퍼의 일부일 수도 있어 그 구간만 떼어 낸다.
+  const buffer = bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength ? bytes.buffer : bytes.slice().buffer;
+  worker.postMessage({ type: 'open', buffer }, [buffer]);
+  async function* segments() {
+    for (;;) {
+      if (arrived.length) yield arrived.shift();
+      else if (failure) throw failure;
+      else if (ended) return;
+      else await new Promise((resolve) => (wake = resolve));
+    }
+  }
+  return { meta, segments: segments() };
 }
 
 /**
  * 렌더러가 나눈 쪽(쪽 나누기 단위)마다 본문 블록을 용지 높이로 채워 쪽 요소를 차례로 내놓는다.
  * 쪽 번호는 구역 설정(다시 시작·시작 번호·서식)을 따라 나눈 쪽마다 매긴다.
  */
-async function* pageElements(rendered, sections, holder) {
-  const segments = rendered.pages?.length ? rendered.pages : [{ html: rendered.html, sectionIndex: 0, firstOfSection: true }];
+async function* pageElements(segments, rendered, holder) {
+  const { sections } = rendered;
   const kinds = rendered.sectionHeaders ?? [];
   let pageNumber = 0;
-  for (const segment of segments) {
+  for await (const segment of segments) {
     const section = sections[segment.sectionIndex];
     const headers = kinds[segment.sectionIndex];
     const paper = paperOf(section);
