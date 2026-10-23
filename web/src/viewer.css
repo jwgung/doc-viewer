@@ -544,6 +544,12 @@ body.reading .scrubber {
   max-width: 100%;
 }
 
+/* 큰 마크다운: 화면 밖 최상위 요소는 배치를 건너뛰고 어림한 높이를 쓴다(renderers/md.js LARGE_CHILDREN). */
+.markdown.large > * {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 3em;
+}
+
 /* 최후 대안: 원래 모양 없이 본문 글자만 */
 .flow.fallback {
   max-width: 760px;
@@ -717,6 +723,11 @@ body.searching #doc {
   tab-size: 4;
 }
 
+/* 줄 묶음(블록) 하나. 화면 밖이면 배치를 건너뛰고 renderers/txt.js가 어림한 높이(contain-intrinsic-size)를 쓴다. */
+.plaintext .chunk {
+  content-visibility: auto;
+}
+
 /* 설정·소스 코드·diff: 들여쓰기가 맞아 보이게 고정폭. 색은 없다. */
 .plaintext.mono pre {
   font: 13px/1.55 ui-monospace, 'Roboto Mono', 'Droid Sans Mono', monospace;
@@ -786,8 +797,14 @@ body.searching #doc {
   border-radius: 4px;
 }
 
-.code .l.folded + .blk {
+.code .l.folded + .blk,
+.code .blk.fold-hidden {
   display: none;
+}
+
+/* 줄 묶음(조각) 하나. 화면 밖이면 배치를 건너뛰고 renderers/code.js가 어림한 높이(contain-intrinsic-size)를 쓴다. */
+.code .chunk {
+  content-visibility: auto;
 }
 
 .code .blk {
