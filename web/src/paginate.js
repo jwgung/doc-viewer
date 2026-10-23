@@ -20,14 +20,16 @@ const SLICE_MS = 12;
 /**
  * blocks(떼어 낸 본문 블록)를 차례로 쪽에 채운다. shell()은 화면 밖에 붙인 빈 쪽을 { page, body }로 돌려준다.
  * body 다음 요소(꼬리말 등)가 있으면 그 위까지, 없으면 쪽 아래 여백 위까지 채운다. 쪽이 하나 차면 내보낸다.
+ * prepare(선택)는 블록을 쪽에 붙인 뒤 재기 전에 부른다(docx의 탭 간격 맞추기: 블록 하나만 배치하면 되어 가볍다).
  */
-export async function* fillPages(blocks, shell) {
+export async function* fillPages(blocks, shell, prepare = null) {
   const queue = [...blocks];
   let current = open(shell);
   while (queue.length) {
     const block = queue.shift();
     await breathe();
     current.body.appendChild(block);
+    prepare?.(block);
     await imagesReady(block);
     if (bottomOf(current.body) <= current.limit + SLACK) continue;
     const alone = current.body.firstChild === block;
@@ -321,9 +323,10 @@ export function loadPage(saved) {
 /**
  * 뒤에서 나눌 때는 블록 사이에서도 SLICE_MS마다 쉬어, 저사양 기기에서 쪽 하나를 만드는 동안(100ms 넘게)
  * 화면에 들어온 쪽을 못 그려 빈 쪽이 보이지 않게 한다. 처음 보일 쪽을 만드는 동안은 쉬지 않는다.
+ * 렌더러가 쪽 재료(구역)를 만드는 동안에도 같은 박자로 쉬게 내보낸다(renderers/docx.js).
  */
 const pace = { background: false, since: 0 };
-async function breathe() {
+export async function breathe() {
   if (!pace.background || performance.now() - pace.since < SLICE_MS) return;
   await nextTurn();
   pace.since = performance.now();
@@ -370,7 +373,7 @@ export function createPager(iterator) {
     /**
      * 나머지를 뒤에서 조금씩(SLICE_MS) 만든다. 쪽이 늘거나 다 나누면 onGrow를 부른다.
      * idle(선택)은 조각마다 기다릴 약속: 쪽 뷰어의 settled()를 주면 스크롤하는 동안은 쉰다. 구역 하나를 그리는 일은
-     * 쪼갤 수 없어(표가 많은 docx는 1초 넘게) 넘기는 중에 시작하면 화면이 그만큼 멈췄다.
+     * 렌더러가 breathe로 쪼개지 않으면(표가 많은 docx는 1초 넘게) 넘기는 중에 시작했을 때 화면이 그만큼 멈췄다.
      */
     async background(onGrow, idle) {
       pace.background = true;

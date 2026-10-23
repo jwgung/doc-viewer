@@ -4042,6 +4042,11 @@ class LazyUnavailable extends Error {
 }
 /** 이보다 작은 본문(XML 글자 수)은 한 번에 파싱하는 편이 빠르고 단순하다. */
 const LAZY_MIN_BODY_LENGTH = 256 * 1024;
+/**
+ * 쪽 하나의 본문 조각을 이만큼(XML 글자 수)씩 나눠 파싱한다. 쪽 나누기가 드문 문서는 쪽 하나가 수 MB라 한 번에
+ * 파싱하면 메인 스레드가 수 초 멈춘다(13MB 본문에서 2.7초). 나눈 사이사이에 renderPage의 pause를 기다린다.
+ */
+const LAZY_PARSE_BATCH_LENGTH = 32 * 1024;
 /** 쪽을 가를 수 있는 문단에 반드시 들어 있는 글자들(속성 이름은 접두사와 무관하게 로컬 이름으로 찾는다). */
 const PAGE_BREAK_HINTS = ['sectPr', 'pageBreakBefore', '"page"', "'page'"];
 const PARAGRAPH_STYLE_REF = /pStyle\b[^>]*?\bval\s*=\s*(?:"([^"]*)"|'([^']*)')/;
@@ -4372,25 +4377,40 @@ class LazyHtmlRenderer extends HtmlRenderer {
     parseFragment(list) {
         return this.parser.parseBodyElements(globalXmlParser.element(this.parseRoot(list), 'body'));
     }
-    /** i번째 쪽의 section.docx를 만든다. 본문은 원본 renderSections와 같은 순서·같은 메서드로 그린다. */
-    renderPage(index) {
+    /**
+     * i번째 쪽의 section.docx를 만든다. 본문은 원본 renderSections와 같은 순서·같은 메서드로 그린다.
+     * pause(선택)는 파싱 묶음 사이와 최상위 요소를 그린 사이마다 기다릴 약속을 돌려준다(쉬어 가며 그리기).
+     * 쉬는 동안 다른 쪽을 그리면 안 된다(그리는 중인 쪽의 상태를 렌더러에 둔다).
+     */
+    async renderPage(index, pause = null) {
         const page = this.pages[index];
         const prevProps = index > 0 ? this.pages[index - 1][this.pages[index - 1].length - 1].sectProps : null;
-        // 이 쪽에서 아직 읽지 않은 본문 조각을 한 번에 파싱해 자리표시와 바꾼다.
+        // 이 쪽에서 아직 읽지 않은 본문 조각을 묶음으로 나눠 파싱해 자리표시와 바꾼다.
         const pending = page.flatMap(sect => sect.elements.filter(e => e.lazy));
-        const parsed = pending.length ? this.parseFragment(pending.map(e => e.lazy)) : [];
-        if (parsed.length !== pending.length)
-            throw new Error('본문 조각의 요소 수가 맞지 않는다');
         const parsedOf = new Map();
-        pending.forEach((e, i) => {
-            const elem = parsed[i];
-            elem.parent = this.body;
-            if (elem.type == DomType.Table)
-                this.processTable(elem);
-            else
-                this.processElement(elem);
-            parsedOf.set(e, elem);
-        });
+        for (let from = 0; from < pending.length;) {
+            let to = from + 1;
+            for (let length = pending[from].lazy.end - pending[from].lazy.start; to < pending.length; to++) {
+                length += pending[to].lazy.end - pending[to].lazy.start;
+                if (length > LAZY_PARSE_BATCH_LENGTH)
+                    break;
+            }
+            const batch = pending.slice(from, to);
+            const parsed = this.parseFragment(batch.map(e => e.lazy));
+            if (parsed.length !== batch.length)
+                throw new Error('본문 조각의 요소 수가 맞지 않는다');
+            batch.forEach((e, i) => {
+                const elem = parsed[i];
+                elem.parent = this.body;
+                if (elem.type == DomType.Table)
+                    this.processTable(elem);
+                else
+                    this.processElement(elem);
+                parsedOf.set(e, elem);
+            });
+            from = to;
+            await pause?.();
+        }
         this.tasks = [];
         this.currentTabs = [];
         this.currentFootnoteIds = [];
@@ -4399,7 +4419,11 @@ class LazyHtmlRenderer extends HtmlRenderer {
         this.options.renderHeaders && this.renderHeaderFooter(props.headerRefs, props, index, prevProps != props, pageElement);
         for (const sect of page) {
             const contentElement = this.createSectionContent(sect.sectProps);
-            this.renderElements(sect.elements.map(e => parsedOf.get(e) ?? e), contentElement);
+            // renderElements를 요소마다 부르는 것은 한 번에 부르는 것과 같다(차례대로 그려 붙인다).
+            for (const e of sect.elements) {
+                this.renderElements([parsedOf.get(e) ?? e], contentElement);
+                await pause?.();
+            }
             pageElement.appendChild(contentElement);
             props = sect.sectProps;
         }
@@ -4408,19 +4432,29 @@ class LazyHtmlRenderer extends HtmlRenderer {
             notes && pageElement.appendChild(notes);
         }
         this.options.renderFooters && this.renderHeaderFooter(props.footerRefs, props, index, prevProps != props, pageElement);
-        const tabs = this.currentTabs;
+        // 아직 맞추지 않은 탭(탭 span → 탭). 맞춘 탭은 빼서, 나중에 나뉜 문단 조각에서 다시 맞추지 않는다.
+        const tabs = new Map(this.currentTabs.map(tab => [tab.span, tab]));
+        const tabClass = this.tabStopClass();
+        let pixelToPoint = null;
         return {
             element: pageElement,
             // 이미지 등 비동기로 채워지는 것이 모두 끝나면 resolve한다.
             settled: Promise.allSettled(this.tasks).then(() => undefined),
             // 탭 간격을 맞춘다(원본 refreshTabStops와 같은 계산). 문서에 붙어 있어야 잴 수 있고, 쪽 전체를 확대(zoom)하기
-            // 전에 불러야 원래 크기로 정확히 잰다.
-            refreshTabs: () => {
-                if (!this.options.experimental || tabs.length == 0)
+            // 전에 불러야 원래 크기로 정확히 잰다. root를 주면 그 안의 탭만 맞춘다: 탭은 제 문단 안에서만 재므로, 큰 쪽을
+            // 통째로 배치하지 않고 문단·표를 작은 상자에 옮길 때마다 맞출 수 있다(수 MB 쪽을 한 번에 재면 1초 넘게 멈췄다).
+            refreshTabs: (root = null) => {
+                if (!this.options.experimental || tabs.size == 0)
                     return;
-                const pixelToPoint = computePixelToPoint();
-                for (const tab of tabs)
+                const spans = root ? root.querySelectorAll(`.${tabClass}`) : [...tabs.keys()];
+                for (const span of spans) {
+                    const tab = tabs.get(span);
+                    if (!tab)
+                        continue;
+                    pixelToPoint ??= computePixelToPoint();
                     updateTabStop(tab.span, tab.stops, this.defaultTabSize, pixelToPoint);
+                    tabs.delete(span);
+                }
             },
         };
     }
@@ -4459,7 +4493,7 @@ async function openLazyAsync(data, userOptions, lazyOptions = {}) {
             const px = (length, fallback) => Number.isFinite(parseFloat(length)) ? Math.round(parseFloat(length) * 96 / 72) : fallback;
             return { width: px(size?.width, 794), height: px(size?.height, 1123) };
         },
-        renderPage: (index) => renderer.renderPage(index),
+        renderPage: (index, pause) => renderer.renderPage(index, pause),
         dispose() {
             renderer.pages = renderer.source = renderer.body = null;
         },
