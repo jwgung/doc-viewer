@@ -25,14 +25,17 @@ export function placePage(page, index, el, sizes, viewer) {
   fit();
   let slotWidth = el.clientWidth;
   const refit = () => {
-    if (page.parentNode !== el) {
-      // 칸에서 떼어 냈다(화면에서 멀어진 쪽). 더 지켜보지 않아 쪽 요소를 붙들지 않는다.
+    // 칸에서 떼어 냈거나 칸째 화면에서 빠졌다(화면에서 멀어진 쪽, 한 쪽씩 보기에서 넘겨 보낸 쪽). 더 지켜보지 않아 쪽 요소를
+    // 붙들지 않는다. 화면 밖에서 재면 크기가 0이라, 그 값을 쪽 크기로 남기면 다시 올 때 쪽이 한없이 커졌다.
+    if (page.parentNode !== el || !el.isConnected) {
       resized.unobserve(page);
       fitters.delete(page);
       if (fitters.get(el) === refit) {
         resized.unobserve(el);
         fitters.delete(el);
       }
+    } else if (!page.offsetWidth) {
+      // 보이지 않는 동안(숨긴 탭)은 잴 수 없다. 다시 보이면 그때 맞춘다.
     } else if (page.offsetWidth !== sizes[index].width || page.offsetHeight !== sizes[index].height || el.clientWidth !== slotWidth) {
       slotWidth = el.clientWidth;
       fit();

@@ -13,6 +13,7 @@ import type {
   ImageAsset,
   InlineNode,
   MsDocBlock,
+  MsDocPageRenderer,
   MsDocParseResult,
   MsDocRenderOptions,
   MsDocRenderResult,
@@ -857,6 +858,26 @@ function renderNotes(notes: NoteInfo[], context: RenderContext, title = ''): str
  * to customize styles or consume the AST directly.
  */
 export function renderMsDoc(parsed: MsDocParseResult, options: MsDocRenderOptions = {}): MsDocRenderResult {
+  const renderer = createMsDocRenderer(parsed, options);
+  const pages = Array.from({ length: renderer.count }, () => renderer.next()!);
+  const html = pages.map((page) => `<section class="msdoc-page">${page.html}</section>`).join('');
+  return {
+    pages,
+    sectionHeaders: renderer.sectionHeaders,
+    html,
+    css: renderer.css,
+    warnings: parsed.warnings || [],
+    meta: parsed.meta,
+    assets: parsed.assets || [],
+    parsed,
+  };
+}
+
+/**
+ * doc-viewer: 쪽(쪽 나누기·구역 나누기 단위)을 하나씩 그린다. 큰 문서는 전체 HTML을 만드는 데 오래 걸려, 앱은 앞쪽부터
+ * 받아 첫 쪽을 먼저 보인다. 각주는 처음 참조한 쪽에 붙으므로 next()로 앞에서부터 차례로만 그린다.
+ */
+export function createMsDocRenderer(parsed: MsDocParseResult, options: MsDocRenderOptions = {}): MsDocPageRenderer {
   const css = options.css ?? defaultMsDocCss();
   const baseContext: RenderContext = {
     reviewMode: options.reviewMode ?? 'all',
@@ -871,10 +892,15 @@ export function renderMsDoc(parsed: MsDocParseResult, options: MsDocRenderOption
   const labels = pageLabels(drafts, sections);
   const footnotes = new Map((parsed.notes?.footnotes ?? []).map((note) => [note.id, note]));
   const placedFootnotes = new Set<string>();
-  const pages: MsDocRenderedPage[] = drafts.map((draft, index) => {
+  const inSection = new Map<number, number>(); // 구역마다 지금까지 그린 쪽 수
+  let index = 0;
+  const next = (): MsDocRenderedPage | null => {
+    if (index >= drafts.length) return null;
+    const draft = drafts[index]!;
     const context: RenderContext = { ...baseContext, pageLabel: labels[index], pageCount: drafts.length, noteRefs: [] };
     const section = sections[draft.sectionIndex] ?? sections[0]!;
-    const pageNumberInSection = drafts.slice(0, index + 1).filter((page, k) => page.sectionIndex === draft.sectionIndex && k <= index).length;
+    const pageNumberInSection = (inSection.get(draft.sectionIndex) ?? 0) + 1;
+    inSection.set(draft.sectionIndex, pageNumberInSection);
     const pick = (map: SectionInfo['headers']) => {
       if (section.titlePage && draft.firstOfSection) return map.first;
       if (map.even && pageNumberInSection % 2 === 0) return map.even;
@@ -899,6 +925,7 @@ export function renderMsDoc(parsed: MsDocParseResult, options: MsDocRenderOption
       + (isLast ? renderNotes(parsed.notes?.endnotes ?? [], context, 'endnotes') : '');
     const headerHtml = header?.length ? `<header class="msdoc-header">${renderBlockList(header, context, { tabColumns: true })}</header>` : '';
     const footerHtml = footer?.length ? `<footer class="msdoc-footer">${renderBlockList(footer, context, { tabColumns: true })}</footer>` : '';
+    index += 1;
     return {
       html: headerHtml + body + notesHtml + footerHtml,
       sectionIndex: draft.sectionIndex,
@@ -907,8 +934,7 @@ export function renderMsDoc(parsed: MsDocParseResult, options: MsDocRenderOption
       headerHtml,
       footerHtml,
     };
-  });
-  const html = pages.map((page) => `<section class="msdoc-page">${page.html}</section>`).join('');
+  };
   // doc-viewer: 앱이 자동 쪽 나눔으로 쪽을 더 나누면 나눈 쪽마다 머리말·꼬리말(첫 쪽·기본·짝수 쪽)을 고를 수 있게 구역마다 함께 낸다.
   const variants = (map: SectionInfo['headers'], tag: 'header' | 'footer') => {
     const context: RenderContext = { ...baseContext, noteRefs: [] };
@@ -924,14 +950,5 @@ export function renderMsDoc(parsed: MsDocParseResult, options: MsDocRenderOption
     header: variants(section.headers, 'header'),
     footer: variants(section.footers, 'footer'),
   }));
-  return {
-    pages,
-    sectionHeaders,
-    html,
-    css,
-    warnings: parsed.warnings || [],
-    meta: parsed.meta,
-    assets: parsed.assets || [],
-    parsed,
-  };
+  return { css, sectionHeaders, count: drafts.length, next };
 }
