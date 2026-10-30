@@ -62,6 +62,7 @@ Android의 `buildWebViewer` 작업은 `web/vendor/`도 입력으로 보므로 �
 | '마스터 구성표 따름'(SlideFlags bit 1) 플래그를 보지 않고 슬라이드에 남은 ColorSchemeAtom(대개 기본 흰 구성표)을 써서 파란 배경·흰 글자 디자인이 흰 배경·검은 글자로 나왔다. 플래그가 켜져 있으면 마스터(제목 마스터는 다시 그 마스터) 구성표를 쓴다(LibreOffice `GetColorFromPalette`와 같다). | `parser.ts` `parseSlide`, `parseMaster` |
 | 배경 도형이 '채움'을 명시했는데 색이 없으면 건너뛰어 구성표 0번 색으로 칠했다. [MS-ODRAW] 기본 채우기색인 흰색으로 칠한다. | `parser.ts` `drawingBackground` |
 | 빈 문단에도 글머리표를 그렸다. | `parser.ts` `buildTextBody` |
+| pptx `bgRef idx="1001"`(배경 채우기 목록의 1번째)을 `min(idx, 개수)`로 잘라 마지막(3번째) 방사형 그라데이션으로 칠했다. 흰 배경이 회색 그라데이션으로 나온 원인이다. 1000 이상이면 1000을 뺀 번호를 쓴다. | `parser.ts` 배경 해석(`bgRef`) |
 
 ### 그림
 

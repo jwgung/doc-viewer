@@ -583,6 +583,14 @@ export class PagedViewer {
       if (this.mode === 'scroll') return;
       if (e.key === 'ArrowRight' || e.key === 'PageDown') this.next();
       if (e.key === 'ArrowLeft' || e.key === 'PageUp') this.prev();
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        // 쪽이 화면보다 길어 스크롤 중이면 끝에 닿았을 때만 넘긴다.
+        const { scrollTop, scrollHeight, clientHeight } = this.container;
+        if (e.key === 'ArrowDown' && scrollTop + clientHeight >= scrollHeight - 1) this.next();
+        else if (e.key === 'ArrowUp' && scrollTop <= 1) this.prev();
+        else return;
+        e.preventDefault();
+      }
     });
   }
 

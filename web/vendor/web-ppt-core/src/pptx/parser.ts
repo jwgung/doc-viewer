@@ -1625,9 +1625,11 @@ function parseSlide(
     } else {
       const bgRef = kid(bg, 'bgRef');
       if (bgRef) {
+        // bgRef idx: 1001~1003이 배경 채우기 목록의 1~3번째다(1000을 빼야 한다. 그냥 min으로 자르면 1001이 마지막 그라데이션이 된다).
         const idx = Number(attr(bgRef, 'idx') ?? '0');
         const phClr = childColor(bgRef, ctx);
-        const styleEl = theme.bgFillStyles[Math.min(idx, theme.bgFillStyles.length) - 1] ?? null;
+        const slot = idx >= 1000 ? idx - 1000 : idx;
+        const styleEl = theme.bgFillStyles[Math.min(Math.max(slot, 1), theme.bgFillStyles.length) - 1] ?? null;
         background = styleEl ? parseFillElement(styleEl, withPhClr(env, phClr)) : (phClr ? { type: 'solid', color: phClr } : null);
       }
     }
