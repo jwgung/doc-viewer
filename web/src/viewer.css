@@ -855,6 +855,11 @@ body.searching #doc {
     background: #fff !important;
   }
 
+  /* 인쇄·PDF 저장에서 배경색·배경 그림을 브라우저가 임의로 빼거나 바꾸지 않게 한다. */
+  * {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
   /* 쪽 있는 문서: 인쇄용 층만 */
   body.printing:has(.print-root) > :not(.print-root) {
     display: none !important;
@@ -862,8 +867,12 @@ body.searching #doc {
 
   /* 쪽 하나가 용지 한 장에 꼭 들어가게 너비·높이 중 작은 쪽에 맞춘다(넘치면 빈 장이 생긴다). */
   .print-page {
-    width: min(100vw, calc(100vh * var(--ratio) * 0.995)) !important;
+    --print-w: min(100vw, calc(100vh * var(--ratio) * 0.995));
+    width: var(--print-w) !important;
     margin: 0 auto !important;
+    /* 용지와 비율이 안 맞으면 위로 붙지 않게 세로 가운데로 내린다(쪽 나눔 여백 잘림을 피해 top 이동 사용). */
+    position: relative;
+    top: max(0px, calc((100vh - var(--print-w) / var(--ratio)) / 2));
     overflow: hidden;
     box-shadow: none !important;
     break-inside: avoid;
