@@ -25,6 +25,11 @@ dunce = "1"
 # 앱 업데이트 확인·설치(src/update.rs)
 tauri-plugin-updater = "2"
 
+# 예전 설치 프로그램이 덮은 확장자 기본값 되돌리기(src/assoc.rs)
+[target.'cfg(windows)'.dependencies]
+winreg = "0.56"
+windows-sys = { version = "0.61", features = ["Win32_UI_Shell"] }
+
 [profile.release]
 codegen-units = 1
 lto = true

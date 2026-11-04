@@ -3,44 +3,156 @@
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
   <Fragment>
     <DirectoryRef Id="INSTALLDIR">
-      <Component Id="FileTypeIcons" Guid="5E0B4C7A-2F7D-4C59-9C1E-6A0F3D2B8E41">
-        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.pdf\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\pdf.ico" KeyPath="yes" />
+      <Component Id="FileAssociations" Guid="3FD19C82-04BA-4F58-8575-5355205BB175">
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.pdf" Type="string" Value="PDF document" KeyPath="yes" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.pdf\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\pdf.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.pdf\shell\open\command" Type="string" Value="&quot;[#Path]&quot; &quot;%1&quot;" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\.pdf\OpenWithProgids" Name="Doc Viewer.pdf" Type="string" Value="Doc Viewer" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.hwp" Type="string" Value="HWP document" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.hwp\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\hwp.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.hwp\shell\open\command" Type="string" Value="&quot;[#Path]&quot; &quot;%1&quot;" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\.hwp\OpenWithProgids" Name="Doc Viewer.hwp" Type="string" Value="Doc Viewer" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.hwt" Type="string" Value="HWP document" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.hwt\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\hwp.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.hwt\shell\open\command" Type="string" Value="&quot;[#Path]&quot; &quot;%1&quot;" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\.hwt\OpenWithProgids" Name="Doc Viewer.hwt" Type="string" Value="Doc Viewer" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.hwpx" Type="string" Value="HWPX document" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.hwpx\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\hwpx.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.hwpx\shell\open\command" Type="string" Value="&quot;[#Path]&quot; &quot;%1&quot;" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\.hwpx\OpenWithProgids" Name="Doc Viewer.hwpx" Type="string" Value="Doc Viewer" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.doc" Type="string" Value="DOC document" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.doc\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\doc.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.doc\shell\open\command" Type="string" Value="&quot;[#Path]&quot; &quot;%1&quot;" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\.doc\OpenWithProgids" Name="Doc Viewer.doc" Type="string" Value="Doc Viewer" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.dot" Type="string" Value="DOC document" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.dot\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\doc.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.dot\shell\open\command" Type="string" Value="&quot;[#Path]&quot; &quot;%1&quot;" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\.dot\OpenWithProgids" Name="Doc Viewer.dot" Type="string" Value="Doc Viewer" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.docx" Type="string" Value="DOCX document" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.docx\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\docx.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.docx\shell\open\command" Type="string" Value="&quot;[#Path]&quot; &quot;%1&quot;" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\.docx\OpenWithProgids" Name="Doc Viewer.docx" Type="string" Value="Doc Viewer" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.docm" Type="string" Value="DOCX document" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.docm\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\docx.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.docm\shell\open\command" Type="string" Value="&quot;[#Path]&quot; &quot;%1&quot;" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\.docm\OpenWithProgids" Name="Doc Viewer.docm" Type="string" Value="Doc Viewer" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.dotx" Type="string" Value="DOCX document" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.dotx\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\docx.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.dotx\shell\open\command" Type="string" Value="&quot;[#Path]&quot; &quot;%1&quot;" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\.dotx\OpenWithProgids" Name="Doc Viewer.dotx" Type="string" Value="Doc Viewer" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.dotm" Type="string" Value="DOCX document" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.dotm\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\docx.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.dotm\shell\open\command" Type="string" Value="&quot;[#Path]&quot; &quot;%1&quot;" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\.dotm\OpenWithProgids" Name="Doc Viewer.dotm" Type="string" Value="Doc Viewer" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.xls" Type="string" Value="XLS document" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.xls\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\xls.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.xls\shell\open\command" Type="string" Value="&quot;[#Path]&quot; &quot;%1&quot;" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\.xls\OpenWithProgids" Name="Doc Viewer.xls" Type="string" Value="Doc Viewer" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.xlt" Type="string" Value="XLS document" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.xlt\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\xls.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.xlt\shell\open\command" Type="string" Value="&quot;[#Path]&quot; &quot;%1&quot;" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\.xlt\OpenWithProgids" Name="Doc Viewer.xlt" Type="string" Value="Doc Viewer" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.xlsx" Type="string" Value="XLSX document" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.xlsx\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\xlsx.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.xlsx\shell\open\command" Type="string" Value="&quot;[#Path]&quot; &quot;%1&quot;" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\.xlsx\OpenWithProgids" Name="Doc Viewer.xlsx" Type="string" Value="Doc Viewer" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.xlsm" Type="string" Value="XLSX document" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.xlsm\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\xlsx.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.xlsm\shell\open\command" Type="string" Value="&quot;[#Path]&quot; &quot;%1&quot;" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\.xlsm\OpenWithProgids" Name="Doc Viewer.xlsm" Type="string" Value="Doc Viewer" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.xltx" Type="string" Value="XLSX document" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.xltx\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\xlsx.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.xltx\shell\open\command" Type="string" Value="&quot;[#Path]&quot; &quot;%1&quot;" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\.xltx\OpenWithProgids" Name="Doc Viewer.xltx" Type="string" Value="Doc Viewer" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.xltm" Type="string" Value="XLSX document" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.xltm\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\xlsx.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.xltm\shell\open\command" Type="string" Value="&quot;[#Path]&quot; &quot;%1&quot;" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\.xltm\OpenWithProgids" Name="Doc Viewer.xltm" Type="string" Value="Doc Viewer" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.csv" Type="string" Value="CSV document" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.csv\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\csv.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.csv\shell\open\command" Type="string" Value="&quot;[#Path]&quot; &quot;%1&quot;" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\.csv\OpenWithProgids" Name="Doc Viewer.csv" Type="string" Value="Doc Viewer" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.tsv" Type="string" Value="CSV document" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.tsv\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\csv.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.tsv\shell\open\command" Type="string" Value="&quot;[#Path]&quot; &quot;%1&quot;" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\.tsv\OpenWithProgids" Name="Doc Viewer.tsv" Type="string" Value="Doc Viewer" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.ppt" Type="string" Value="PPT document" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.ppt\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\ppt.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.ppt\shell\open\command" Type="string" Value="&quot;[#Path]&quot; &quot;%1&quot;" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\.ppt\OpenWithProgids" Name="Doc Viewer.ppt" Type="string" Value="Doc Viewer" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.pps" Type="string" Value="PPT document" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.pps\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\ppt.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.pps\shell\open\command" Type="string" Value="&quot;[#Path]&quot; &quot;%1&quot;" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\.pps\OpenWithProgids" Name="Doc Viewer.pps" Type="string" Value="Doc Viewer" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.pot" Type="string" Value="PPT document" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.pot\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\ppt.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.pot\shell\open\command" Type="string" Value="&quot;[#Path]&quot; &quot;%1&quot;" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\.pot\OpenWithProgids" Name="Doc Viewer.pot" Type="string" Value="Doc Viewer" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.pptx" Type="string" Value="PPTX document" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.pptx\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\pptx.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.pptx\shell\open\command" Type="string" Value="&quot;[#Path]&quot; &quot;%1&quot;" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\.pptx\OpenWithProgids" Name="Doc Viewer.pptx" Type="string" Value="Doc Viewer" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.pptm" Type="string" Value="PPTX document" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.pptm\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\pptx.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.pptm\shell\open\command" Type="string" Value="&quot;[#Path]&quot; &quot;%1&quot;" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\.pptm\OpenWithProgids" Name="Doc Viewer.pptm" Type="string" Value="Doc Viewer" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.ppsx" Type="string" Value="PPTX document" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.ppsx\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\pptx.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.ppsx\shell\open\command" Type="string" Value="&quot;[#Path]&quot; &quot;%1&quot;" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\.ppsx\OpenWithProgids" Name="Doc Viewer.ppsx" Type="string" Value="Doc Viewer" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.potx" Type="string" Value="PPTX document" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.potx\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\pptx.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.potx\shell\open\command" Type="string" Value="&quot;[#Path]&quot; &quot;%1&quot;" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\.potx\OpenWithProgids" Name="Doc Viewer.potx" Type="string" Value="Doc Viewer" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.md" Type="string" Value="MD document" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.md\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\md.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.md\shell\open\command" Type="string" Value="&quot;[#Path]&quot; &quot;%1&quot;" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\.md\OpenWithProgids" Name="Doc Viewer.md" Type="string" Value="Doc Viewer" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.markdown" Type="string" Value="MD document" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.markdown\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\md.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.markdown\shell\open\command" Type="string" Value="&quot;[#Path]&quot; &quot;%1&quot;" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\.markdown\OpenWithProgids" Name="Doc Viewer.markdown" Type="string" Value="Doc Viewer" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.txt" Type="string" Value="TXT document" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.txt\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\txt.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.txt\shell\open\command" Type="string" Value="&quot;[#Path]&quot; &quot;%1&quot;" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\.txt\OpenWithProgids" Name="Doc Viewer.txt" Type="string" Value="Doc Viewer" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.text" Type="string" Value="TXT document" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.text\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\txt.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.text\shell\open\command" Type="string" Value="&quot;[#Path]&quot; &quot;%1&quot;" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\.text\OpenWithProgids" Name="Doc Viewer.text" Type="string" Value="Doc Viewer" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.log" Type="string" Value="LOG document" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.log\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\log.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.log\shell\open\command" Type="string" Value="&quot;[#Path]&quot; &quot;%1&quot;" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\.log\OpenWithProgids" Name="Doc Viewer.log" Type="string" Value="Doc Viewer" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.json" Type="string" Value="JSON document" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.json\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\json.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.json\shell\open\command" Type="string" Value="&quot;[#Path]&quot; &quot;%1&quot;" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\.json\OpenWithProgids" Name="Doc Viewer.json" Type="string" Value="Doc Viewer" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.jsonc" Type="string" Value="JSON document" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.jsonc\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\json.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.jsonc\shell\open\command" Type="string" Value="&quot;[#Path]&quot; &quot;%1&quot;" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\.jsonc\OpenWithProgids" Name="Doc Viewer.jsonc" Type="string" Value="Doc Viewer" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.xml" Type="string" Value="XML document" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.xml\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\xml.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.xml\shell\open\command" Type="string" Value="&quot;[#Path]&quot; &quot;%1&quot;" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\.xml\OpenWithProgids" Name="Doc Viewer.xml" Type="string" Value="Doc Viewer" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.toml" Type="string" Value="TOML document" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.toml\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\toml.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.toml\shell\open\command" Type="string" Value="&quot;[#Path]&quot; &quot;%1&quot;" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\.toml\OpenWithProgids" Name="Doc Viewer.toml" Type="string" Value="Doc Viewer" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.yaml" Type="string" Value="YAML document" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.yaml\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\yaml.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.yaml\shell\open\command" Type="string" Value="&quot;[#Path]&quot; &quot;%1&quot;" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\.yaml\OpenWithProgids" Name="Doc Viewer.yaml" Type="string" Value="Doc Viewer" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.yml" Type="string" Value="YAML document" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.yml\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\files\yaml.ico" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Doc Viewer.yml\shell\open\command" Type="string" Value="&quot;[#Path]&quot; &quot;%1&quot;" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\.yml\OpenWithProgids" Name="Doc Viewer.yml" Type="string" Value="Doc Viewer" />
       </Component>
     </DirectoryRef>
+    <CustomAction Id="RepairFileAssociations" FileKey="Path" ExeCommand="--repair-file-associations pdf hwp hwt hwpx doc dot docx docm dotx dotm xls xlt xlsx xlsm xltx xltm csv tsv ppt pps pot pptx pptm ppsx potx md markdown txt text log json jsonc xml toml yaml yml" Execute="deferred" Impersonate="no" Return="ignore" />
+    <InstallExecuteSequence>
+      <Custom Action="RepairFileAssociations" After="WriteRegistryValues">NOT (REMOVE~="ALL")</Custom>
+    </InstallExecuteSequence>
   </Fragment>
 </Wix>
