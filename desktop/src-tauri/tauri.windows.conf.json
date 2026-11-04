@@ -1,9 +1,10 @@
 {
   "bundle": {
+    "fileAssociations": [],
     "resources": { "icons/files/*.ico": "icons/files/" },
     "windows": {
       "nsis": { "installerHooks": "windows/file-icons.nsh" },
-      "wix": { "fragmentPaths": ["windows/file-icons.wxs"], "componentRefs": ["FileTypeIcons"] }
+      "wix": { "fragmentPaths": ["windows/file-icons.wxs"], "componentRefs": ["FileAssociations"] }
     }
   }
 }

@@ -1,7 +1,8 @@
 // 운영체제 파일 아이콘과 파일 연결을 만든다. 사이드바 문서 아이콘(src/icons.js fileIconMarkup)에 오른쪽 아래 앱 배지를 얹어
 // 형식마다 .ico(Windows)·.icns(macOS)를 그리고, 같은 표(ASSOCIATIONS)로 파일 연결 설정을 함께 쓴다:
-//   src-tauri/icons/files/<형식>.ico·.icns, tauri.conf.json의 bundle.fileAssociations,
-//   src-tauri/windows/file-icons.nsh(설치 프로그램 exe가 형식마다 아이콘을 지정), src-tauri/windows/file-icons.wxs(msi),
+//   src-tauri/icons/files/<형식>.ico·.icns, tauri.conf.json의 bundle.fileAssociations(macOS·Linux),
+//   src-tauri/windows/file-icons.nsh(설치 프로그램 exe), src-tauri/windows/file-icons.wxs(msi): Windows 연결을 직접 등록한다.
+//     Tauri 기본 연결은 확장자 기본값을 덮어 Office 등의 "새로 만들기"를 없애므로 tauri.windows.conf.json에서 끈다(src-tauri/src/assoc.rs).
 //   src-tauri/Info.plist(macOS 문서 형식과 아이콘; Tauri가 만드는 목록에는 아이콘 칸이 없어 이것으로 통째로 바꾼다),
 //   src-tauri/tauri.macos.conf.json(.icns를 앱의 Contents/Resources에 넣는다). Windows 쪽 설정은 tauri.windows.conf.json에 손으로 둔다.
 // 아이콘 색·글자나 연결할 확장자를 바꾸면 다시 실행해 결과를 함께 커밋한다(web의 playwright 크로미움으로 그린다).
@@ -18,9 +19,9 @@ const { chromium } = createRequire(resolve(root, '../web/package.json'))('playwr
 
 /**
  * 형식 → 연결할 확장자. 형식마다 아이콘이 다르므로 연결도 형식마다 하나다(이름이 Windows ProgID가 되므로 한 번 내보낸 뒤에는
- * 바꾸지 않는다). 스크립트·소스 코드(bat·ps1·js·py 등)와 프로그램 설정 파일(ini·cfg·conf 등)은 넣지 않는다: 설치 프로그램이
- * 연결한 확장자의 기본 앱을 이 앱으로 바꾸므로, 넣으면 더블클릭이 실행·편집 대신 보기가 된다. json·xml·toml·yaml은 보는 일이 많은
- * 데이터 파일이라 넣는다. 그림도 사진 앱을 빼앗지 않게 넣지 않는다.
+ * 바꾸지 않는다). 스크립트·소스 코드(bat·ps1·js·py 등)와 프로그램 설정 파일(ini·cfg·conf 등)은 넣지 않는다: macOS·Linux에서는
+ * 연결한 확장자의 기본 앱 후보가 되므로, 넣으면 더블클릭이 실행·편집 대신 보기가 될 수 있다. json·xml·toml·yaml은 보는 일이 많은
+ * 데이터 파일이라 넣는다. 그림도 사진 앱을 빼앗지 않게 넣지 않는다. Windows에서는 "연결 프로그램" 후보로만 더한다.
  */
 const ASSOCIATIONS = {
   pdf: ['pdf'],
@@ -42,8 +43,14 @@ const ASSOCIATIONS = {
   yaml: ['yaml', 'yml'],
 };
 const PRODUCT = JSON.parse(readFileSync(resolve(tauri, 'tauri.conf.json'), 'utf8')).productName;
-/** exe 설치 프로그램의 ProgID(연결 이름). msi는 Tauri가 "제품 이름.확장자"로 만든다. */
+/** exe 설치 프로그램의 ProgID(연결 이름). msi는 예전 Tauri 연결과 같은 "제품 이름.확장자"를 그대로 쓴다(사용자가 고른 기본 앱이 유지된다). */
 const progId = (fmt) => `DocViewer.${fmt}`;
+const msiProgId = (ext) => `${PRODUCT}.${ext}`;
+/** 형식 이름(ProgID 설명). macOS 문서 형식 이름과 같다. */
+const typeName = (fmt) => `${fmt.toUpperCase()} document`;
+const allExts = Object.values(ASSOCIATIONS).flat();
+/** 설치 뒤 앱을 이 인자로 불러 예전 설치 프로그램이 덮은 확장자 기본값을 되돌린다(src-tauri/src/assoc.rs REPAIR_FLAG). */
+const repairArgs = `--repair-file-associations ${allExts.join(' ')}`;
 
 for (const [fmt, exts] of Object.entries(ASSOCIATIONS)) {
   for (const ext of exts) if (formatOf(`a.${ext}`) !== fmt) throw new Error(`${ext}는 ${fmt}로 열리지 않는다(formats.js와 맞춘다)`);
@@ -157,29 +164,74 @@ writeFileSync(confPath, replaced);
 const generated = '이 파일은 desktop/scripts/make-file-icons.js가 만든다. 손으로 고치지 말고 스크립트를 고쳐 다시 실행한다.';
 mkdirSync(resolve(tauri, 'windows'), { recursive: true });
 
-// exe(NSIS): Tauri가 연결을 만든 뒤(아이콘은 실행 파일 것) 형식마다 아이콘을 바꾸고 탐색기에 알린다. 지울 때는 Tauri가 연결 키를 통째로 지운다.
+// Windows 연결: 이 앱의 ProgID(설명·아이콘·여는 명령)를 만들고 확장자의 OpenWithProgids에 더한다. 확장자 기본값은 건드리지 않는다:
+// 탐색기 "새로 만들기"가 기본값이 가리키는 ProgID 아래 ShellNew를 찾으므로, 바꾸면 Office 등의 새로 만들기 항목이 사라진다.
+// 설치 뒤 앱을 불러 예전 설치 프로그램이 덮은 기본값을 되돌린다.
+const pairs = Object.entries(ASSOCIATIONS).flatMap(([fmt, exts]) => exts.map((ext) => [fmt, ext]));
+const notify = "  System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'";
+
+// exe(NSIS): SHCTX는 설치 범위(기본은 사용자 키)다. 업데이트(/UPDATE)는 제거 없이 다시 설치하므로 같은 값을 다시 쓴다.
+const nsisClass = (fmt) => `Software\\Classes\\${progId(fmt)}`;
 writeFileSync(
   resolve(tauri, 'windows/file-icons.nsh'),
-  `; ${generated}\n!macro NSIS_HOOK_POSTINSTALL\n` +
-    Object.keys(ASSOCIATIONS)
-      .map((fmt) => `  WriteRegStr SHCTX "Software\\Classes\\${progId(fmt)}\\DefaultIcon" "" "$INSTDIR\\icons\\files\\${fmt}.ico"`)
-      .join('\n') +
-    "\n  System::Call 'shell32::SHChangeNotify(i 0x08000000, i 0, p 0, p 0)'\n!macroend\n",
+  [
+    `; ${generated}`,
+    '!macro NSIS_HOOK_POSTINSTALL',
+    ...Object.keys(ASSOCIATIONS).flatMap((fmt) => [
+      `  WriteRegStr SHCTX "${nsisClass(fmt)}" "" "${typeName(fmt)}"`,
+      `  WriteRegStr SHCTX "${nsisClass(fmt)}\\DefaultIcon" "" "$INSTDIR\\icons\\files\\${fmt}.ico"`,
+      `  WriteRegStr SHCTX "${nsisClass(fmt)}\\shell\\open\\command" "" \`"$INSTDIR\\\${MAINBINARYNAME}.exe" "%1"\``,
+    ]),
+    ...pairs.map(([fmt, ext]) => `  WriteRegStr SHCTX "Software\\Classes\\.${ext}\\OpenWithProgids" "${progId(fmt)}" ""`),
+    `  ExecWait \`"$INSTDIR\\\${MAINBINARYNAME}.exe" ${repairArgs}\``,
+    notify,
+    '!macroend',
+    '!macro NSIS_HOOK_POSTUNINSTALL',
+    ...pairs.flatMap(([fmt, ext]) => [
+      `  DeleteRegValue SHCTX "Software\\Classes\\.${ext}\\OpenWithProgids" "${progId(fmt)}"`,
+      `  DeleteRegKey /ifempty SHCTX "Software\\Classes\\.${ext}\\OpenWithProgids"`,
+    ]),
+    ...Object.keys(ASSOCIATIONS).map((fmt) => `  DeleteRegKey SHCTX "${nsisClass(fmt)}"`),
+    notify,
+    '!macroend',
+    '',
+  ].join('\n'),
 );
 
-// msi(WiX): Tauri는 확장자마다 "제품 이름.확장자" ProgID를 만들고 아이콘을 비워 둔다. 같은 키에 아이콘을 더한다(지우면 msi가 함께 지운다).
-// 구성 요소의 KeyPath(설치 여부를 판단하는 값)는 첫 값 하나에만 둔다.
-const wixValues = Object.entries(ASSOCIATIONS)
-  .flatMap(([fmt, exts]) => exts.map((ext) => [fmt, ext]))
-  .map(
-    ([fmt, ext], i) =>
-      `        <RegistryValue Root="HKLM" Key="Software\\Classes\\${PRODUCT}.${ext}\\DefaultIcon" Type="string" Value="[INSTALLDIR]icons\\files\\${fmt}.ico"${i === 0 ? ' KeyPath="yes"' : ''} />`,
-  );
+// msi(WiX): 컴퓨터 전체 설치(HKLM). 지우면 msi가 이 값들을 함께 지운다. OpenWithProgids 값의 내용은 Windows가 읽지 않는다(WiX는 빈 값을 받지 않는다).
+// 구성 요소의 KeyPath(설치 여부를 판단하는 값)는 첫 값 하나에만 둔다. [#Path]는 Tauri main.wxs의 실행 파일이다.
+// 복구는 파일과 레지스트리를 쓴 뒤 시스템 권한(Impersonate="no")으로 돌리고, 실패해도 설치는 마친다.
+const attr = (s) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+const wixClass = (ext) => `Software\\Classes\\${msiProgId(ext)}`;
+const wixValues = pairs.flatMap(([fmt, ext]) => [
+  [wixClass(ext), '', typeName(fmt)],
+  [`${wixClass(ext)}\\DefaultIcon`, '', `[INSTALLDIR]icons\\files\\${fmt}.ico`],
+  [`${wixClass(ext)}\\shell\\open\\command`, '', '"[#Path]" "%1"'],
+  [`Software\\Classes\\.${ext}\\OpenWithProgids`, msiProgId(ext), PRODUCT],
+]);
 writeFileSync(
   resolve(tauri, 'windows/file-icons.wxs'),
-  `<?xml version="1.0" encoding="utf-8"?>\n<!-- ${generated} -->\n<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">\n  <Fragment>\n    <DirectoryRef Id="INSTALLDIR">\n` +
-    `      <Component Id="FileTypeIcons" Guid="5E0B4C7A-2F7D-4C59-9C1E-6A0F3D2B8E41">\n${wixValues.join('\n')}\n      </Component>\n` +
-    '    </DirectoryRef>\n  </Fragment>\n</Wix>\n',
+  [
+    '<?xml version="1.0" encoding="utf-8"?>',
+    `<!-- ${generated} -->`,
+    '<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">',
+    '  <Fragment>',
+    '    <DirectoryRef Id="INSTALLDIR">',
+    '      <Component Id="FileAssociations" Guid="3FD19C82-04BA-4F58-8575-5355205BB175">',
+    ...wixValues.map(
+      ([key, name, value], i) =>
+        `        <RegistryValue Root="HKLM" Key="${attr(key)}"${name ? ` Name="${attr(name)}"` : ''} Type="string" Value="${attr(value)}"${i === 0 ? ' KeyPath="yes"' : ''} />`,
+    ),
+    '      </Component>',
+    '    </DirectoryRef>',
+    `    <CustomAction Id="RepairFileAssociations" FileKey="Path" ExeCommand="${repairArgs}" Execute="deferred" Impersonate="no" Return="ignore" />`,
+    '    <InstallExecuteSequence>',
+    '      <Custom Action="RepairFileAssociations" After="WriteRegistryValues">NOT (REMOVE~="ALL")</Custom>',
+    '    </InstallExecuteSequence>',
+    '  </Fragment>',
+    '</Wix>',
+    '',
+  ].join('\n'),
 );
 
 // macOS: 문서 형식마다 아이콘(Contents/Resources/<형식>.icns, tauri.macos.conf.json이 넣는다)
@@ -187,7 +239,7 @@ const xml = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
 const types = Object.entries(ASSOCIATIONS).map(
   ([fmt, exts]) =>
     '    <dict>\n' +
-    `      <key>CFBundleTypeName</key>\n      <string>${xml(fmt.toUpperCase())} document</string>\n` +
+    `      <key>CFBundleTypeName</key>\n      <string>${xml(typeName(fmt))}</string>\n` +
     `      <key>CFBundleTypeExtensions</key>\n      <array>\n${exts.map((ext) => `        <string>${ext}</string>`).join('\n')}\n      </array>\n` +
     `      <key>CFBundleTypeIconFile</key>\n      <string>${fmt}.icns</string>\n` +
     '      <key>CFBundleTypeRole</key>\n      <string>Viewer</string>\n' +
