@@ -93,6 +93,7 @@ const LINE = {
   close: '<path d="M7 7l10 10M17 7L7 17"/>',
   minus: '<path d="M6 12h12"/>',
   plus: '<path d="M6 12h12M12 6v12"/>',
+  more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
 };
 
 export function lineIcon(name) {

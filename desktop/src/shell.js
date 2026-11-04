@@ -55,6 +55,13 @@ const STRINGS = {
     updateDownloading: (percent) => (percent === null ? '새 버전을 받는 중…' : `새 버전을 받는 중… ${percent}%`),
     updateInstalling: '설치하고 다시 시작합니다…',
     updateFailed: '업데이트하지 못했습니다. 잠시 뒤 다시 시도해 주세요.',
+    more: '더보기',
+    appVersion: (version) => `Doc Viewer ${version}`,
+    checkUpdate: '업데이트 확인',
+    updateChecking: '업데이트를 확인하는 중…',
+    upToDate: '최신 버전입니다.',
+    updateDevBuild: '시험 빌드는 업데이트를 확인하지 않습니다.',
+    updateCheckFailed: '업데이트를 확인하지 못했습니다. 인터넷 연결을 확인하고 다시 시도해 주세요.',
   },
   en: {
     openFolder: 'Open folder',
@@ -107,6 +114,13 @@ const STRINGS = {
     updateDownloading: (percent) => (percent === null ? 'Downloading the update…' : `Downloading the update… ${percent}%`),
     updateInstalling: 'Installing and restarting…',
     updateFailed: "Couldn't update. Please try again later.",
+    more: 'More',
+    appVersion: (version) => `Doc Viewer ${version}`,
+    checkUpdate: 'Check for updates',
+    updateChecking: 'Checking for updates…',
+    upToDate: "You're on the latest version.",
+    updateDevBuild: "Test builds don't check for updates.",
+    updateCheckFailed: "Couldn't check for updates. Check your connection and try again.",
   },
 };
 const t = STRINGS[navigator.language?.slice(0, 2)] ?? STRINGS.en;
@@ -1399,17 +1413,49 @@ function toast(message) {
   toastTimer = setTimeout(() => el.classList.remove('shown'), 4000);
 }
 
+function hideToast() {
+  clearTimeout(toastTimer);
+  $('toast').classList.remove('shown');
+}
+
 // ---- 앱 업데이트(src-tauri/src/update.rs). 처음 뜰 때 한 번 확인해, 새 버전이 있으면 상단바 아래 띠로 알린다.
+// 더보기 메뉴의 '업데이트 확인'으로 언제든 다시 확인하고, 그때는 새 버전이 없거나 확인하지 못한 것도 알린다.
 
 const updateBar = $('update-bar');
 const updateText = $('update-text');
+let updateChecking = false;
 
-async function checkUpdate() {
-  const found = await invoke('check_update').catch(() => null);
-  if (!found) return;
-  updateText.textContent = t.updateAvailable(found.version);
-  updateBar.hidden = false;
+async function checkUpdate(manual = false) {
+  // 확인하는 중이거나 받는 중(update-now가 막힘)에는 다시 확인하지 않는다. 받는 중에 확인하면 받을 업데이트가 바뀐다.
+  if (updateChecking || $('update-now').disabled) return;
+  updateChecking = true;
+  if (manual) toast(t.updateChecking);
+  let result;
+  try {
+    result = await invoke('check_update');
+  } catch {
+    if (manual) toast(t.updateCheckFailed);
+    return;
+  } finally {
+    updateChecking = false;
+  }
+  if (result.status === 'available') {
+    updateText.textContent = t.updateAvailable(result.version);
+    updateBar.hidden = false;
+    if (manual) hideToast();
+  } else if (manual) toast(result.status === 'upToDate' ? t.upToDate : t.updateDevBuild);
 }
+
+const moreButton = $('more-menu');
+moreButton.addEventListener('click', async () => {
+  const version = await window.__TAURI__.app.getVersion().catch(() => null);
+  const rect = moreButton.getBoundingClientRect();
+  // 오른쪽 끝 단추라 메뉴 오른쪽을 단추 오른쪽에 맞춘다(showMenu가 화면 안으로 당긴다).
+  showMenu(rect.right, rect.bottom + 4, [
+    ...(version ? [{ heading: t.appVersion(version) }] : []),
+    { label: t.checkUpdate, icon: 'refresh', run: () => checkUpdate(true) },
+  ]);
+});
 
 $('update-later').addEventListener('click', () => (updateBar.hidden = true));
 /** 받는 동안 단추를 막는다. */

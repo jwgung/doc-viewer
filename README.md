@@ -44,7 +44,7 @@ Get the latest version from **[Releases](https://github.com/jwgung/doc-viewer/re
 
 > [!NOTE]
 > On older Windows 10 without WebView2, the installer downloads it once.
-> Documents are opened offline. The app goes online only to check GitHub for a new version when it starts; if there is one, it offers **Update now**, which downloads, verifies and installs it. Without a connection the check is skipped quietly. Updates work for the Windows installers, macOS and the AppImage; for the `.deb`, download the new version yourself.
+> Documents are opened offline. The app goes online only to check GitHub for a new version, when it starts and when you choose **Check for updates** in the **More** (⋯) menu at the top right; if there is one, it offers **Update now**, which downloads, verifies and installs it. Without a connection the startup check is skipped quietly. Updates work for the Windows installers, macOS and the AppImage; for the `.deb`, download the new version yourself.
 > The macOS and Linux builds are new; please [open an issue](https://github.com/jwgung/doc-viewer/issues) if something looks wrong.
 
 ## Supported formats
