@@ -1381,9 +1381,10 @@ function onKey(e) {
   else if (ctrl && key === 'f' && active) viewer()?.openSearch();
   else if (ctrl && key === 'p' && active) requestPrint();
   else if (e.key === 'Escape' && active) viewer()?.closeOverlay();
-  else if (ctrl && (key === '=' || key === '+') && active) setZoom(active.zoom * ZOOM_STEP);
-  else if (ctrl && key === '-' && active) setZoom(active.zoom / ZOOM_STEP);
-  else if (ctrl && key === '0' && active) setZoom(1);
+  // 확대 키는 문서가 없어도 막는다(WebView2 확대 조작을 켜 두어 막지 않으면 셸 전체가 커진다. main.rs 참고).
+  else if (ctrl && (key === '=' || key === '+')) active && setZoom(active.zoom * ZOOM_STEP);
+  else if (ctrl && key === '-') active && setZoom(active.zoom / ZOOM_STEP);
+  else if (ctrl && key === '0') setZoom(1);
   else return;
   e.preventDefault();
 }
