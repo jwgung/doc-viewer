@@ -82,7 +82,7 @@ PDF, 한글, 워드, 엑셀, 파워포인트 문서를 보는 데스크톱 뷰�
 | 다음 / 이전 탭 | <kbd>Ctrl</kbd>+<kbd>Tab</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Tab</kbd> |
 | 오른쪽으로 나누기 | <kbd>Ctrl</kbd>+<kbd>\\</kbd> (또는 탭을 가장자리로 끌기) |
 | 탭 복제 | 탭 우클릭 → **탭 복제**, 또는 <kbd>Ctrl</kbd>(macOS는 <kbd>Option</kbd>)을 누른 채 끌기 |
-| 확대·축소 | <kbd>Ctrl</kbd>+휠, <kbd>Ctrl</kbd>+<kbd>=</kbd> / <kbd>Ctrl</kbd>+<kbd>-</kbd>, 원래대로 <kbd>Ctrl</kbd>+<kbd>0</kbd> |
+| 확대·축소 | <kbd>Ctrl</kbd>+휠, 터치패드 오므리기·벌리기, <kbd>Ctrl</kbd>+<kbd>=</kbd> / <kbd>Ctrl</kbd>+<kbd>-</kbd>, 원래대로 <kbd>Ctrl</kbd>+<kbd>0</kbd> |
 | 찾기 / 인쇄 | <kbd>Ctrl</kbd>+<kbd>F</kbd> / <kbd>Ctrl</kbd>+<kbd>P</kbd> |
 | 이름 바꾸기 / 휴지통 (사이드바) | <kbd>F2</kbd> / <kbd>Del</kbd> |
 

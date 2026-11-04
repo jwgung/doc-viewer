@@ -595,6 +595,9 @@ fn main() {
                 .title("Doc Viewer")
                 .inner_size(1280.0, 860.0)
                 .min_inner_size(480.0, 360.0)
+                // 끄면 wry가 WebView2 핀치(SetIsPinchZoomEnabled)까지 꺼서 터치패드 오므리기가 페이지에 오지 않는다.
+                // 켜도 브라우저 자체 확대는 셸·문서의 Ctrl+휠·Ctrl+± 처리(shell.js onWheel·onKey)가 막는다.
+                .zoom_hotkeys_enabled(true)
                 .build()?;
             Ok(())
         })

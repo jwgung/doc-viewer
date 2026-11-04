@@ -82,7 +82,7 @@ Files with a wrong or missing extension are recognized by their content. Passwor
 | Next / previous tab | <kbd>Ctrl</kbd>+<kbd>Tab</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Tab</kbd> |
 | Split right | <kbd>Ctrl</kbd>+<kbd>\\</kbd> (or drag a tab to an edge) |
 | Duplicate tab | Right-click a tab → **Duplicate tab**, or drag with <kbd>Ctrl</kbd> (<kbd>Option</kbd> on macOS) |
-| Zoom | <kbd>Ctrl</kbd>+wheel, <kbd>Ctrl</kbd>+<kbd>=</kbd> / <kbd>Ctrl</kbd>+<kbd>-</kbd>, reset with <kbd>Ctrl</kbd>+<kbd>0</kbd> |
+| Zoom | <kbd>Ctrl</kbd>+wheel, touchpad pinch, <kbd>Ctrl</kbd>+<kbd>=</kbd> / <kbd>Ctrl</kbd>+<kbd>-</kbd>, reset with <kbd>Ctrl</kbd>+<kbd>0</kbd> |
 | Find / print | <kbd>Ctrl</kbd>+<kbd>F</kbd> / <kbd>Ctrl</kbd>+<kbd>P</kbd> |
 | Rename / move to trash (sidebar) | <kbd>F2</kbd> / <kbd>Del</kbd> |
 
