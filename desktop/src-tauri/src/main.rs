@@ -3,6 +3,7 @@
 // 주소 규칙은 Android ViewerWebClient와 같다: <주소>?length → 길이, ?start=&end= → 구간(end 미포함), 그 밖에는 파일 전체.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod assoc;
 mod detect;
 mod update;
 
@@ -526,6 +527,11 @@ fn serve_file(path: &Path, query: &str) -> Response<Vec<u8>> {
 }
 
 fn main() {
+    // 설치 프로그램이 부르는 연결 복구: 창·단일 실행 확인 없이 고치고 끝낸다.
+    if let Some(exts) = assoc::repair_args(std::env::args()) {
+        assoc::repair(&exts);
+        return;
+    }
     update::init(tauri::Builder::default())
         // 이미 떠 있으면 새 프로세스 대신 기존 창에 탭으로 연다. 문서 없이 실행하면 창을 앞으로 가져온다.
         .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
