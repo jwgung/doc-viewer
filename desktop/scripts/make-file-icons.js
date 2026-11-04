@@ -43,6 +43,8 @@ const ASSOCIATIONS = {
   yaml: ['yaml', 'yml'],
 };
 const PRODUCT = JSON.parse(readFileSync(resolve(tauri, 'tauri.conf.json'), 'utf8')).productName;
+/** 설치되는 실행 파일 이름(Cargo 패키지 이름. Tauri 설치 프로그램이 그대로 쓴다) */
+const BINARY = readFileSync(resolve(tauri, 'Cargo.toml'), 'utf8').match(/^name = "([^"]+)"/m)[1];
 /** exe 설치 프로그램의 ProgID(연결 이름). msi는 예전 Tauri 연결과 같은 "제품 이름.확장자"를 그대로 쓴다(사용자가 고른 기본 앱이 유지된다). */
 const progId = (fmt) => `DocViewer.${fmt}`;
 const msiProgId = (ext) => `${PRODUCT}.${ext}`;
@@ -199,14 +201,15 @@ writeFileSync(
 );
 
 // msi(WiX): 컴퓨터 전체 설치(HKLM). 지우면 msi가 이 값들을 함께 지운다. OpenWithProgids 값의 내용은 Windows가 읽지 않는다(WiX는 빈 값을 받지 않는다).
-// 구성 요소의 KeyPath(설치 여부를 판단하는 값)는 첫 값 하나에만 둔다. [#Path]는 Tauri main.wxs의 실행 파일이다.
+// 구성 요소의 KeyPath(설치 여부를 판단하는 값)는 첫 값 하나에만 둔다. 여는 명령은 [#Path](Tauri main.wxs의 실행 파일)로 쓰면
+// 실행 파일이 다른 기능(feature)에 있어 light가 ICE69로 멈추므로 설치 폴더 경로로 쓴다. 복구 동작(FileKey)은 그대로 [#Path]를 쓴다.
 // 복구는 파일과 레지스트리를 쓴 뒤 시스템 권한(Impersonate="no")으로 돌리고, 실패해도 설치는 마친다.
 const attr = (s) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 const wixClass = (ext) => `Software\\Classes\\${msiProgId(ext)}`;
 const wixValues = pairs.flatMap(([fmt, ext]) => [
   [wixClass(ext), '', typeName(fmt)],
   [`${wixClass(ext)}\\DefaultIcon`, '', `[INSTALLDIR]icons\\files\\${fmt}.ico`],
-  [`${wixClass(ext)}\\shell\\open\\command`, '', '"[#Path]" "%1"'],
+  [`${wixClass(ext)}\\shell\\open\\command`, '', `"[INSTALLDIR]${BINARY}.exe" "%1"`],
   [`Software\\Classes\\.${ext}\\OpenWithProgids`, msiProgId(ext), PRODUCT],
 ]);
 writeFileSync(
