@@ -53,9 +53,12 @@ body {
   font-family: system-ui, sans-serif;
 }
 
-/* 쪽 이동은 오른쪽 빠른 이동 손잡이로 하므로 자체 스크롤바는 숨긴다. */
+/* 쪽 이동은 오른쪽 빠른 이동 손잡이로 하므로 자체 스크롤바는 숨긴다.
+   터치패드 두 손가락 스크롤이 끝에 닿아도 화면이 튕기지 않게 탄성 오버스크롤을 끈다(문서 전체와 모든 스크롤 영역). */
+html,
 * {
   scrollbar-width: none;
+  overscroll-behavior: none;
 }
 
 ::-webkit-scrollbar {
@@ -367,7 +370,7 @@ body.searching .flip-stage {
   color: var(--text);
   background: var(--surface);
   border-top: 1px solid var(--border);
-  overscroll-behavior: contain;
+  overscroll-behavior: none;
 }
 
 .notes-panel h2 {

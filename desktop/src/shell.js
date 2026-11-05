@@ -1310,8 +1310,12 @@ function startPrint(tab, size) {
 
 /** 단추·단축키 한 번에 바꾸는 배수 */
 const ZOOM_STEP = 1.25;
-/** 휠(터치패드 오므리기 포함) 1px당 확대 정도 */
+/** 마우스 Ctrl+휠 1px당 확대 정도(한 칸 100px에 약 16%) */
 const WHEEL_ZOOM_RATE = 0.0015;
+/** 터치패드 오므리기 1px당 확대 정도. 오므리기는 작은 소수 delta로 오므로 크게 잡아 손가락 벌린 만큼 바로 따라오게 한다. */
+const PINCH_ZOOM_RATE = 0.01;
+/** 이보다 작은 Ctrl+휠 delta는 터치패드 오므리기로 본다. 마우스 휠은 한 칸에 100px(화면 배율 200%에서도 50px)이고 오므리기는 한 번에 몇 px다. */
+const PINCH_DELTA_MAX = 30;
 
 function setZoom(value, focusX, focusY) {
   // 첫 쪽을 그리기 전에는 렌더러가 쪽 있는 문서인지 아직 모른다(쪽 없는 문서처럼 CSS 확대가 걸려 풀리지 않는다).
@@ -1331,9 +1335,11 @@ function onWheel(e) {
   if (tab) focusPane(tab.pane);
   if (!active) return;
   const dy = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? e.deltaY * WHEEL_LINE_PX : e.deltaY;
+  const pinch = e.deltaMode === WheelEvent.DOM_DELTA_PIXEL && Math.abs(dy) < PINCH_DELTA_MAX;
+  const rate = pinch ? PINCH_ZOOM_RATE : WHEEL_ZOOM_RATE;
   // 문서 안에서 온 휠이면 마우스 자리를 기준으로, 셸(상단바·탐색기)에서 온 휠이면 문서 가운데를 기준으로 키운다.
   const inDoc = e.view !== window;
-  setZoom(active.zoom * Math.exp(-dy * WHEEL_ZOOM_RATE), inDoc ? e.clientX : undefined, inDoc ? e.clientY : undefined);
+  setZoom(active.zoom * Math.exp(-dy * rate), inDoc ? e.clientX : undefined, inDoc ? e.clientY : undefined);
 }
 
 $('zoom-in').addEventListener('click', () => active && setZoom(active.zoom * ZOOM_STEP));
