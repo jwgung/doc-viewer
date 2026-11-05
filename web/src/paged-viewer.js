@@ -641,7 +641,10 @@ export class PagedViewer {
     );
   }
 
-  /** 한 쪽씩·두 쪽씩: 휠(마우스·터치패드)로 쪽을 넘긴다. 쪽이 화면보다 커서 세로로 스크롤되면 끝에 닿은 뒤에 넘긴다. */
+  /**
+   * 한 쪽씩·두 쪽씩: 휠(마우스·터치패드)로 쪽을 넘긴다. 위아래·좌우 중 더 많이 움직인 쪽을 따른다(터치패드를 왼쪽으로 밀면 다음 쪽).
+   * 쪽이 화면보다 커서 그 방향으로 스크롤되면 끝에 닿은 뒤에 넘긴다.
+   */
   bindWheel() {
     let sum = 0;
     let last = 0;
@@ -653,24 +656,28 @@ export class PagedViewer {
       (e) => {
         if (this.mode === 'scroll' || e.ctrlKey) return; // Ctrl+휠은 셸의 확대·축소
         if (e.target instanceof Element && e.target.closest(`${UI_SELECTOR}, .search-bar`)) return;
-        const dy = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? e.deltaY * WHEEL_LINE_PX : e.deltaY;
-        if (!dy) return;
+        const scale = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? WHEEL_LINE_PX : 1;
+        const horizontal = Math.abs(e.deltaX) > Math.abs(e.deltaY);
+        const d = (horizontal ? e.deltaX : e.deltaY) * scale;
+        if (!d) return;
         const now = performance.now();
         if (now - last > WHEEL_GAP_MS) {
           streamStart = now;
           sum = 0;
         }
         last = now;
-        const { scrollTop, scrollHeight, clientHeight } = this.container;
-        if (dy > 0 ? scrollTop + clientHeight < scrollHeight - 1 : scrollTop > 1) return; // 쪽 안에서 스크롤
+        const { scrollTop, scrollHeight, clientHeight, scrollLeft, scrollWidth, clientWidth } = this.container;
+        const [pos, size, view] = horizontal ? [scrollLeft, scrollWidth, clientWidth] : [scrollTop, scrollHeight, clientHeight];
+        if (d > 0 ? pos + view < size - 1 : pos > 1) return; // 쪽 안에서 스크롤
         e.preventDefault();
         // 넘긴 뒤 이어지는 같은 휠 동작(관성)은 무시한다. 휠이 잠깐 멈췄거나 마우스 휠 한 칸이면 다시 넘긴다.
-        const notch = Math.abs(dy) >= WHEEL_FLIP_PX && now - flippedAt > WHEEL_REPEAT_MS;
+        const notch = Math.abs(d) >= WHEEL_FLIP_PX && now - flippedAt > WHEEL_REPEAT_MS;
         if (flippedAt >= streamStart && !notch) return;
-        sum += dy;
+        sum += d;
         if (Math.abs(sum) < WHEEL_FLIP_PX) return;
-        if (sum > 0) this.next({ y: 1 });
-        else this.prev({ y: -1 });
+        const axis = horizontal ? 'x' : 'y';
+        if (sum > 0) this.next({ [axis]: 1 });
+        else this.prev({ [axis]: -1 });
         sum = 0;
         flippedAt = now;
       },

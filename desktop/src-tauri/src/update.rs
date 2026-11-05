@@ -1,4 +1,5 @@
-// 앱 업데이트: 셸이 처음 뜰 때 새 버전을 확인하고(check_update), 사용자가 '지금 업데이트'를 누르면 받아서 설치한 뒤
+// 앱 업데이트: 셸이 처음 뜰 때와 사용자가 메뉴의 '업데이트 확인'을 누를 때 새 버전을 확인하고(check_update),
+// 사용자가 '지금 업데이트'를 누르면 받아서 설치한 뒤
 // 다시 시작한다(install_update). 새 버전 정보는 GitHub Release의 latest.json(tauri.conf.json plugins.updater)에서 읽고,
 // 받은 설치 파일은 앱에 넣은 공개 키로 서명을 확인한다. Windows는 설치 프로그램이 앱을 닫고 설치한 뒤 다시 띄운다.
 use std::sync::Mutex;
@@ -13,9 +14,14 @@ use crate::MAIN_WINDOW;
 #[derive(Default)]
 pub struct PendingUpdate(Mutex<Option<Update>>);
 
+/// 확인 결과. 셸은 처음 뜰 때는 Available만 알리고, 사용자가 직접 확인했을 때는 모두 알린다.
 #[derive(Serialize)]
-pub struct UpdateInfo {
-    version: String,
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum UpdateCheck {
+    Available { version: String },
+    UpToDate,
+    /// 시험·개발 빌드라 확인하지 않았다(is_release).
+    DevBuild,
 }
 
 #[derive(Clone, Serialize)]
@@ -31,19 +37,19 @@ fn is_release(app: &AppHandle) -> bool {
     version.major > 0 || version.minor > 0
 }
 
-/// 새 버전이 있으면 그 버전을, 없거나 확인할 수 없으면(오프라인, 이 설치 형식의 업데이트 파일이 없음 등) None을 돌려준다.
+/// 새 버전이 있는지 확인한다. 확인할 수 없으면(오프라인, 이 설치 형식의 업데이트 파일이 없음 등) 오류 글을 돌려준다.
 #[tauri::command]
-pub async fn check_update(app: AppHandle, pending: State<'_, PendingUpdate>) -> Result<Option<UpdateInfo>, String> {
+pub async fn check_update(app: AppHandle, pending: State<'_, PendingUpdate>) -> Result<UpdateCheck, String> {
     if !is_release(&app) {
-        return Ok(None);
+        return Ok(UpdateCheck::DevBuild);
     }
-    let update = match app.updater().map_err(|e| e.to_string())?.check().await {
-        Ok(update) => update,
-        Err(_) => return Ok(None),
+    let update = app.updater().map_err(|e| e.to_string())?.check().await.map_err(|e| e.to_string())?;
+    let result = match &update {
+        Some(u) => UpdateCheck::Available { version: u.version.clone() },
+        None => UpdateCheck::UpToDate,
     };
-    let info = update.as_ref().map(|u| UpdateInfo { version: u.version.clone() });
     *pending.0.lock().unwrap() = update;
-    Ok(info)
+    Ok(result)
 }
 
 /// 확인해 둔 새 버전을 받아(진행은 'update-progress' 알림) 설치하고 다시 시작한다. 실패하면 오류 글을 돌려준다.

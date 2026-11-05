@@ -36,6 +36,15 @@ const APP_ORIGIN: &str = "http://tauri.localhost";
 const APP_ORIGIN: &str = "tauri://localhost";
 
 pub(crate) const MAIN_WINDOW: &str = "main";
+/// 셸과 모든 문서 iframe에서 다른 스크립트보다 먼저 돈다. WebView 자체 확대(Ctrl+휠·핀치·Ctrl+=/-/0, 터치 핀치)를
+/// 문서를 읽는 동안에도 막는다. 기본 동작만 막고 전파는 두므로 셸의 확대(shell.js onWheel·onKey)와 웹의 줄이기는 그대로 받는다.
+const ZOOM_GUARD_SCRIPT: &str = r#"
+addEventListener('wheel', (e) => { if (e.ctrlKey) e.preventDefault(); }, { passive: false, capture: true });
+addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && ['=', '+', '-', '0'].includes(e.key)) e.preventDefault();
+}, true);
+addEventListener('touchmove', (e) => { if (e.touches.length > 1) e.preventDefault(); }, { passive: false, capture: true });
+"#;
 /// 마지막으로 연 폴더를 적어 두는 파일(앱 설정 폴더 안)
 const FOLDER_FILE: &str = "folder.txt";
 /// 닫을 때 열려 있던 탭(파일 경로와 탭마다 보던 상태)을 적어 두는 파일(앱 설정 폴더 안)
@@ -595,6 +604,10 @@ fn main() {
                 .title("Doc Viewer")
                 .inner_size(1280.0, 860.0)
                 .min_inner_size(480.0, 360.0)
+                // 끄면 wry가 WebView2 핀치(SetIsPinchZoomEnabled)까지 꺼서 터치패드 오므리기가 페이지에 오지 않는다.
+                // 켜면 WebView 자체 확대도 켜지므로 ZOOM_GUARD_SCRIPT가 모든 프레임에서 막는다.
+                .zoom_hotkeys_enabled(true)
+                .initialization_script_for_all_frames(ZOOM_GUARD_SCRIPT)
                 .build()?;
             Ok(())
         })

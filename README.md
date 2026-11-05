@@ -44,7 +44,7 @@ Get the latest version from **[Releases](https://github.com/jwgung/doc-viewer/re
 
 > [!NOTE]
 > On older Windows 10 without WebView2, the installer downloads it once.
-> Documents are opened offline. The app goes online only to check GitHub for a new version when it starts; if there is one, it offers **Update now**, which downloads, verifies and installs it. Without a connection the check is skipped quietly. Updates work for the Windows installers, macOS and the AppImage; for the `.deb`, download the new version yourself.
+> Documents are opened offline. The app goes online only to check GitHub for a new version, when it starts and when you choose **Check for updates** in the **More** (⋯) menu at the top right; if there is one, it offers **Update now**, which downloads, verifies and installs it. Without a connection the startup check is skipped quietly. Updates work for the Windows installers, macOS and the AppImage; for the `.deb`, download the new version yourself.
 > The macOS and Linux builds are new; please [open an issue](https://github.com/jwgung/doc-viewer/issues) if something looks wrong.
 
 ## Supported formats
@@ -82,7 +82,7 @@ Files with a wrong or missing extension are recognized by their content. Passwor
 | Next / previous tab | <kbd>Ctrl</kbd>+<kbd>Tab</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Tab</kbd> |
 | Split right | <kbd>Ctrl</kbd>+<kbd>\\</kbd> (or drag a tab to an edge) |
 | Duplicate tab | Right-click a tab → **Duplicate tab**, or drag with <kbd>Ctrl</kbd> (<kbd>Option</kbd> on macOS) |
-| Zoom | <kbd>Ctrl</kbd>+wheel, <kbd>Ctrl</kbd>+<kbd>=</kbd> / <kbd>Ctrl</kbd>+<kbd>-</kbd>, reset with <kbd>Ctrl</kbd>+<kbd>0</kbd> |
+| Zoom | <kbd>Ctrl</kbd>+wheel, touchpad pinch, <kbd>Ctrl</kbd>+<kbd>=</kbd> / <kbd>Ctrl</kbd>+<kbd>-</kbd>, reset with <kbd>Ctrl</kbd>+<kbd>0</kbd> |
 | Find / print | <kbd>Ctrl</kbd>+<kbd>F</kbd> / <kbd>Ctrl</kbd>+<kbd>P</kbd> |
 | Rename / move to trash (sidebar) | <kbd>F2</kbd> / <kbd>Del</kbd> |
 
