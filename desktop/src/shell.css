@@ -37,6 +37,12 @@ body {
   margin: 0;
 }
 
+/* 터치패드 두 손가락 스크롤이 끝에 닿아도 셸(탭 줄·탐색기 등)이 튕기지 않게 탄성 오버스크롤을 끈다. */
+html,
+* {
+  overscroll-behavior: none;
+}
+
 body {
   display: flex;
   flex-direction: column;

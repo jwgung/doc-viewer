@@ -54,7 +54,7 @@
   flex: 1;
   min-height: 0;
   overflow: auto;
-  overscroll-behavior: contain;
+  overscroll-behavior: none;
   color-scheme: light;
   color: #000;
   background: #fff;
