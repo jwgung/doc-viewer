@@ -28,6 +28,8 @@ const EDGE_TAP_RATIO = 0.3;
 // 남은 시간 동안 천천히 자리 잡아 울렁거렸다. 조금만 밀면서 앞 쪽은 사라지고 새 쪽은 나타나게 한다.
 const FLIP_MS = 180;
 const FLIP_SHIFT_PX = 48;
+// 앞 쪽은 FLIP_MS의 이 비율 만에 사라진다. 새 쪽보다 먼저 사라져 두 쪽의 글자가 겹쳐 보이지 않게 한다.
+const FLIP_LEAVE_RATIO = 0.6;
 // 한 쪽씩·두 쪽씩에서 휠을 이만큼(px) 굴리면 쪽을 넘긴다. 마우스 휠 한 칸은 보통 100px이다.
 const WHEEL_FLIP_PX = 50;
 // 넘긴 뒤 휠이 이만큼(ms) 멈춰야 다시 넘긴다(터치패드 관성으로 여러 쪽이 넘어가지 않게). 마우스 휠 한 칸은 WHEEL_REPEAT_MS 뒤 바로 넘긴다.
@@ -529,10 +531,12 @@ export class PagedViewer {
     old.classList.add('flip-leaving');
     old.style.top = `${this.container.scrollTop - oldScroll}px`; // 넘기기 전 보던 자리 그대로
     this.container.appendChild(old);
-    // 앞 쪽은 먼저 빠르게 사라져 두 쪽의 글자가 겹쳐 보이지 않게 한다.
     const easing = 'cubic-bezier(0.4, 0, 0.2, 1)';
-    old.animate([{ translate: '0 0', opacity: 1 }, { translate: `${-dx}px ${-dy}px`, opacity: 0 }], {
-      duration: FLIP_MS * 0.6,
+    // 넘기는 도중 또 넘기면 앞 쪽은 아직 나타나던 중이다. 지금 보이는 자리·투명도에서 멈춰 세운 뒤 사라지게 한다.
+    const { translate, opacity } = getComputedStyle(old);
+    for (const running of old.getAnimations()) running.cancel();
+    old.animate([{ translate, opacity }, { translate: `${-dx}px ${-dy}px`, opacity: 0 }], {
+      duration: FLIP_MS * FLIP_LEAVE_RATIO,
       easing,
       fill: 'forwards',
     }).onfinish = () => old.remove();
