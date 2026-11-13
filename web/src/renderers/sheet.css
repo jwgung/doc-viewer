@@ -171,6 +171,40 @@
   border-bottom: 1px solid #d4d4d4;
 }
 
+.sg-resize {
+  position: absolute;
+  z-index: 1;
+  touch-action: none;
+}
+
+.sg-resize-col {
+  top: 0;
+  right: 0;
+  width: 7px;
+  height: 100%;
+  cursor: col-resize;
+}
+
+.sg-resize-row {
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 7px;
+  cursor: row-resize;
+}
+
+.sheet-body.sg-resizing {
+  user-select: none;
+}
+
+.sheet-body[data-resize-axis='col'] {
+  cursor: col-resize;
+}
+
+.sheet-body[data-resize-axis='row'] {
+  cursor: row-resize;
+}
+
 /* ---- 셀 ----------------------------------------------------------------
    셀은 시트 좌표에서 왼쪽·위로 1px 넓게 놓는다. 이웃 셀의 테두리, 눈금선과 같은 자리에 겹쳐 선이 하나로 보인다.
    글자는 엑셀 기본값처럼 아래쪽에 붙이고, 서식(x번호 클래스)이 정렬·글꼴·채우기·테두리를 덮어쓴다. */

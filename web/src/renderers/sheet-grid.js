@@ -17,6 +17,7 @@ const MAX_INFLIGHT = 3;
 const MAX_SPILL_COLS = 64;
 const MAX_COLS = 16384;
 const MAX_ROW_HEIGHT = 545; // 엑셀 행 높이 상한(409pt)
+const MAX_COL_WIDTH = 1000;
 const GROW_LIMIT = 2.2; // 줄바꿈 칸에 맞춰 행을 늘리는 상한(저장된 높이의 배수)
 // 바이트가 아니라 XML로 오고 화면에서 그리는 항목(차트, 도형·글상자)
 const DRAWN = new Set(['chart', 'chartex', 'shapes']);
@@ -86,7 +87,14 @@ export class SheetGrid {
     this.styleMeta = new Map();
     this.frame = 0;
     this.force = false;
-    scroller.addEventListener('scroll', () => this.schedule(), { passive: true });
+    scroller.addEventListener('scroll', () => {
+      this.extendSheet();
+      this.schedule();
+    }, { passive: true });
+    scroller.addEventListener('pointerdown', (e) => this.startResize(e));
+    scroller.addEventListener('pointermove', (e) => this.moveResize(e));
+    scroller.addEventListener('pointerup', (e) => this.endResize(e));
+    scroller.addEventListener('pointercancel', (e) => this.endResize(e));
     addEventListener('resize', () => {
       if (!this.meta) return;
       this.layout();
@@ -129,6 +137,10 @@ export class SheetGrid {
     // 사용자가 높이를 정하지 않은 행은 그려 본 뒤 넘치면 늘린다(LibreOffice도 다시 계산한다).
     this.grown = new Map();
     this.growth = new Map();
+    this.resizedRows = new Map();
+    this.resizedCols = new Map();
+    this.minRows = 100;
+    this.minCols = 30;
     this.customRows = new Set(payload.meta.customRows);
     this.found = null; // 검색 결과 표시는 그 시트에만 있다
     this.setMedia(payload.media);
@@ -205,8 +217,8 @@ export class SheetGrid {
     const vw = this.scroller.clientWidth;
     const vh = this.scroller.clientHeight;
     // 데이터가 적어도 화면을 채울 만큼 빈 칸을 그린다(엑셀처럼). 그림이 놓인 자리까지도 그린다.
-    let nRows = Math.min(1_048_576, Math.max(m.rowCount, m.freezeRows + 1, Math.ceil(vh / Math.max(8, m.defaultRowHeight)) + 1));
-    let nCols = Math.min(MAX_COLS, Math.max(m.colCount, m.freezeCols + 1, Math.ceil(vw / Math.max(8, m.defaultColWidth)) + 1));
+    let nRows = Math.min(1_048_576, Math.max(m.rowCount, this.minRows, m.freezeRows + 1, Math.ceil(vh / Math.max(8, m.defaultRowHeight)) + 1));
+    let nCols = Math.min(MAX_COLS, Math.max(m.colCount, this.minCols, m.freezeCols + 1, Math.ceil(vw / Math.max(8, m.defaultColWidth)) + 1));
     for (const p of m.pictures) {
       const end = p.to ?? p.from;
       if (!end) continue;
@@ -251,11 +263,13 @@ export class SheetGrid {
     const heights = new Float32Array(nRows).fill(m.defaultRowHeight);
     for (let i = 0; i < m.rowHeights.index.length; i++) if (m.rowHeights.index[i] < nRows) heights[m.rowHeights.index[i]] = m.rowHeights.value[i];
     for (const [r, h] of this.grown) if (r < nRows) heights[r] = h;
+    for (const [r, h] of this.resizedRows) if (r < nRows) heights[r] = h;
     rowTop[0] = 1;
     for (let r = 0; r < nRows; r++) rowTop[r + 1] = rowTop[r] + heights[r];
     const colLeft = new Float64Array(nCols + 1);
     const widths = new Float32Array(nCols).fill(m.defaultColWidth);
     for (let i = 0; i < m.colWidths.index.length; i++) if (m.colWidths.index[i] < nCols) widths[m.colWidths.index[i]] = m.colWidths.value[i];
+    for (const [c, w] of this.resizedCols) if (c < nCols) widths[c] = w;
     colLeft[0] = 1;
     for (let c = 0; c < nCols; c++) colLeft[c + 1] = colLeft[c] + widths[c];
     return { rowTop, colLeft };
@@ -416,6 +430,56 @@ export class SheetGrid {
     this.canvas = canvas;
     this.scroller.replaceChildren(canvas);
     this.buildPictures();
+  }
+
+  /** 마지막 빈 칸에 다가가면 표를 늘려 일반 스프레드시트처럼 계속 이동할 수 있게 한다. */
+  extendSheet() {
+    if (!this.geo || this.resize) return;
+    const sc = this.scroller;
+    const rows = sc.scrollTop + sc.clientHeight * 2 >= sc.scrollHeight && this.geo.nRows < 1_048_576;
+    const cols = sc.scrollLeft + sc.clientWidth * 2 >= sc.scrollWidth && this.geo.nCols < MAX_COLS;
+    if (!rows && !cols) return;
+    if (rows) this.minRows = Math.min(1_048_576, this.geo.nRows + Math.max(100, Math.ceil(sc.clientHeight / this.meta.defaultRowHeight)));
+    if (cols) this.minCols = Math.min(MAX_COLS, this.geo.nCols + Math.max(30, Math.ceil(sc.clientWidth / this.meta.defaultColWidth)));
+    this.layout();
+  }
+
+  startResize(e) {
+    const handle = e.target.closest?.('.sg-resize');
+    if (!handle || e.button !== 0) return;
+    const index = Number(handle.dataset.index);
+    const axis = handle.dataset.axis;
+    const edges = axis === 'col' ? this.geo.colLeft : this.geo.rowTop;
+    this.resize = { axis, index, start: axis === 'col' ? e.clientX : e.clientY, size: edges[index + 1] - edges[index] };
+    this.scroller.setPointerCapture(e.pointerId);
+    this.scroller.classList.add('sg-resizing');
+    this.scroller.dataset.resizeAxis = axis;
+    e.preventDefault();
+  }
+
+  moveResize(e) {
+    if (!this.resize || !this.scroller.hasPointerCapture(e.pointerId)) return;
+    const { axis, index, start, size } = this.resize;
+    const next = Math.round(Math.max(axis === 'col' ? 20 : 12, Math.min(axis === 'col' ? MAX_COL_WIDTH : MAX_ROW_HEIGHT,
+      size + (axis === 'col' ? e.clientX : e.clientY) - start)));
+    const sizes = axis === 'col' ? this.resizedCols : this.resizedRows;
+    if (sizes.get(index) === next) return;
+    sizes.set(index, next);
+    if (axis === 'row') {
+      this.customRows.add(index);
+      this.grown.delete(index);
+      this.growth.delete(index);
+    }
+    this.layout();
+    this.schedule(true);
+  }
+
+  endResize(e) {
+    if (!this.resize) return;
+    this.resize = null;
+    if (this.scroller.hasPointerCapture(e.pointerId)) this.scroller.releasePointerCapture(e.pointerId);
+    this.scroller.classList.remove('sg-resizing');
+    delete this.scroller.dataset.resizeAxis;
   }
 
   /** 넘친 줄바꿈 칸에 맞춰 행을 늘리고, 화면 위쪽에서 늘어난 만큼 스크롤을 옮겨 보던 자리를 지킨다. */
@@ -628,7 +692,7 @@ export class SheetGrid {
     let html = '';
     for (let c = c0; c <= c1; c++) {
       const w = colLeft[c + 1] - colLeft[c];
-      if (w > 0) html += `<div class="sg-hc" style="left:${colLeft[c] - ox}px;width:${w}px">${columnName(c)}</div>`;
+      if (w > 0) html += `<div class="sg-hc" style="left:${colLeft[c] - ox}px;width:${w}px">${columnName(c)}<i class="sg-resize sg-resize-col" data-axis="col" data-index="${c}"></i></div>`;
     }
     return html;
   }
@@ -638,7 +702,7 @@ export class SheetGrid {
     let html = '';
     for (let r = r0; r <= r1; r++) {
       const h = rowTop[r + 1] - rowTop[r];
-      if (h > 0) html += `<div class="sg-hr" style="top:${rowTop[r] - oy}px;height:${h}px">${r + 1}</div>`;
+      if (h > 0) html += `<div class="sg-hr" style="top:${rowTop[r] - oy}px;height:${h}px">${r + 1}<i class="sg-resize sg-resize-row" data-axis="row" data-index="${r}"></i></div>`;
     }
     return html;
   }
