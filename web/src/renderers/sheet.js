@@ -28,6 +28,27 @@ export async function render(bytes, container, ctx) {
     onScroll: () => scrubber.follow(),
   });
   scrubber.grid = grid;
+  // 표만 확대한다. 탭과 안내 문구는 앱 UI이므로 원래 크기를 유지한다.
+  let sheetZoom = 1;
+  ctx.setZoomer((value, focusX, focusY) => {
+    const next = Math.min(4, Math.max(0.5, value));
+    if (next === sheetZoom) return next;
+    const rect = body.getBoundingClientRect();
+    const x = Math.min(rect.width, Math.max(0, focusX - rect.left));
+    const y = Math.min(rect.height, Math.max(0, focusY - rect.top));
+    const contentX = body.scrollLeft + x / sheetZoom;
+    const contentY = body.scrollTop + y / sheetZoom;
+    body.style.zoom = next === 1 ? '' : String(next);
+    sheetZoom = next;
+    if (grid.meta) {
+      grid.layout();
+      body.scrollLeft = contentX - x / next;
+      body.scrollTop = contentY - y / next;
+      grid.render(true);
+      scrubber.reset();
+    }
+    return next;
+  });
 
   // 숨긴 시트는 엑셀처럼 탭에 두지 않는다(전부 숨겨져 있으면 모두 보인다).
   const all = opened.sheets.map((sheet, index) => ({ ...sheet, index }));
