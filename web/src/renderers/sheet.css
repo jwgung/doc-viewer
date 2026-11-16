@@ -60,6 +60,12 @@
   background: #fff;
 }
 
+/* viewer.css가 모든 요소에 overscroll-behavior: none을 주는데, 표 안쪽의 overflow:hidden 상자(.sg-cells 등)가 휠 스크롤을
+   바깥 .sheet-body로 넘기지 못하고 막는다. 표 안쪽에서는 기본값으로 되돌려 스크롤이 이어지게 한다. */
+.sheet-body * {
+  overscroll-behavior: auto;
+}
+
 .sheet-note {
   flex: none;
   margin: 0;

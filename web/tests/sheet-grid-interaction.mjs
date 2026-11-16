@@ -8,7 +8,7 @@ const css = new URL('../src/renderers/sheet.css', import.meta.url);
 const server = createServer(async (req, res) => {
   res.setHeader('Content-Type', req.url === '/grid.js' ? 'text/javascript' : req.url === '/grid.css' ? 'text/css' : 'text/html');
   res.end(req.url === '/grid.js' ? await readFile(source) : req.url === '/grid.css' ? await readFile(css) : `<!doctype html><link rel="stylesheet" href="/grid.css"><style>
-    body { margin: 0 } .sheet-body { width: 500px; height: 300px }
+    * { overscroll-behavior: none } body { margin: 0 } .sheet-body { width: 500px; height: 300px }
   </style><div class="sheet-body"></div><script type="module">
     import { SheetGrid } from '/grid.js';
     const scroller = document.querySelector('.sheet-body');
@@ -19,7 +19,7 @@ const server = createServer(async (req, res) => {
       rowHeights: sparse(), colWidths: sparse(), rowStyles: sparse(), colStyles: sparse(),
       customRows: [], merges: [], freezeRows: 0, freezeCols: 0, showGrid: true,
       pictures: [], blockRows: 64,
-    }, blocks: [], styles: {}, media: [] });
+    }, blocks: [{ start: 0, count: 1, offsets: [0, 1], cols: [0], kinds: [2], texts: ['a fairly long cell text for autofit'], xfs: [0] }], styles: {}, media: [] });
     window.grid = grid;
   </script>`);
 });
@@ -51,13 +51,25 @@ try {
   await page.mouse.up();
   const afterRow = await page.locator('.sg-hr').first().boundingBox();
   assert.ok(afterRow.height > beforeRow.height + 15, `행 높이가 바뀌지 않음: ${beforeRow.height} → ${afterRow.height}`);
+  // 머리글 경계 더블클릭: 열 너비는 내용에 맞춰 늘고, 다시 더블클릭해도 같은 값이다.
+  const fitCol = await page.locator('.sg-hc').first().boundingBox();
+  const fitX = fitCol.x + fitCol.width - 2;
+  const fitY = fitCol.y + fitCol.height / 2;
+  await page.mouse.dblclick(fitX, fitY);
+  const fitted = await page.locator('.sg-hc').first().evaluate((el) => el.getBoundingClientRect().width);
+  assert.ok(fitted > 150 && fitted < 400, `열 더블클릭이 내용에 맞추지 않음: ${afterCol.width} → ${fitted}`);
+  const fitRow = await page.locator('.sg-hr').first().boundingBox();
+  await page.mouse.dblclick(fitRow.x + fitRow.width / 2, fitRow.y + fitRow.height - 2);
+  const fittedRow = await page.locator('.sg-hr').first().evaluate((el) => el.getBoundingClientRect().height);
+  assert.ok(fittedRow < beforeRow.height + 15 && fittedRow >= 12, `행 더블클릭이 내용에 맞추지 않음: ${afterRow.height} → ${fittedRow}`);
+  await page.evaluate(() => document.querySelector('.sheet-body').scrollTo(0, 0));
   const initialRows = await page.evaluate(() => window.grid.geo.nRows);
   await page.evaluate(() => {
     const el = document.querySelector('.sheet-body');
     el.scrollTop = el.scrollHeight;
   });
   await page.waitForFunction((count) => window.grid.geo.nRows > count, initialRows);
-  assert.equal(await page.locator('.sg-hc').first().evaluate((el) => el.getBoundingClientRect().width), afterCol.width);
+  assert.equal(await page.locator('.sg-hc').first().evaluate((el) => el.getBoundingClientRect().width), fitted);
   console.log('sheet scroll and row/column resize: ok');
 } finally {
   await browser.close();

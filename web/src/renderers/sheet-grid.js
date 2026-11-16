@@ -449,12 +449,82 @@ export class SheetGrid {
     if (!handle || e.button !== 0) return;
     const index = Number(handle.dataset.index);
     const axis = handle.dataset.axis;
+    // 같은 경계를 연달아 두 번 누르면 내용에 맞춰 크기를 고친다(엑셀의 머리글 경계 더블클릭).
+    const now = performance.now();
+    const last = this.lastHandle;
+    this.lastHandle = { axis, index, at: now };
+    if (last && last.axis === axis && last.index === index && now - last.at < 450) {
+      this.lastHandle = null;
+      e.preventDefault();
+      this.autoFit(axis, index);
+      return;
+    }
     const edges = axis === 'col' ? this.geo.colLeft : this.geo.rowTop;
     this.resize = { axis, index, start: axis === 'col' ? e.clientX : e.clientY, size: edges[index + 1] - edges[index] };
     this.scroller.setPointerCapture(e.pointerId);
     this.scroller.classList.add('sg-resizing');
     this.scroller.dataset.resizeAxis = axis;
     e.preventDefault();
+  }
+
+  /** 열 너비·행 높이를 그 줄에서 불러온 칸의 내용에 맞춘다. 내용이 없으면 기본 크기로 돌린다. */
+  autoFit(axis, index) {
+    const m = this.meta;
+    const B = m.blockRows;
+    const probe = div('sg-cells sg-probe');
+    probe.style.cssText = 'position:absolute;visibility:hidden;left:0;top:0;pointer-events:none';
+    this.canvas.appendChild(probe);
+    const measure = (block, i, maxWidth) => {
+      const text = block.texts[i];
+      if (!text) return null;
+      const st = this.style(block.xfs[i]);
+      const cell = div(`c x${block.xfs[i]}`);
+      const span = document.createElement('span');
+      span.textContent = shownText(text, st);
+      cell.style.cssText = `position:static;display:block;height:auto;width:${maxWidth ? `${maxWidth}px` : 'max-content'}`;
+      span.style.cssText = 'flex:none;max-height:none;overflow:visible';
+      if (st.wrap && maxWidth) span.style.cssText += ';white-space:pre-wrap;overflow-wrap:anywhere;flex:1 1 auto';
+      cell.appendChild(span);
+      probe.replaceChildren(cell);
+      return { w: Math.ceil(cell.getBoundingClientRect().width / this.zoomScale()), h: Math.ceil(cell.getBoundingClientRect().height / this.zoomScale()) };
+    };
+    let size = 0;
+    if (axis === 'col') {
+      for (const block of this.blocks.values()) {
+        for (let k = 0; k < block.count; k++) {
+          const i = lowerBoundCols(block.cols, block.offsets[k], block.offsets[k + 1], index);
+          if (i >= block.offsets[k + 1] || block.cols[i] !== index) continue;
+          const box = measure(block, i, 0);
+          if (box) size = Math.max(size, box.w + 1);
+        }
+      }
+      size = size ? Math.min(MAX_COL_WIDTH, Math.max(20, size)) : m.defaultColWidth;
+      this.resizedCols.set(index, size);
+    } else {
+      const row = this.rowData(index);
+      if (row) {
+        const { colLeft } = this.geo;
+        for (let i = row.from; i < row.to; i++) {
+          const c = row.block.cols[i];
+          const st = this.style(row.block.xfs[i]);
+          const box = measure(row.block, i, st.wrap ? Math.max(8, colLeft[c + 1] - colLeft[c]) : 0);
+          if (box) size = Math.max(size, box.h + 1);
+        }
+      }
+      size = size ? Math.min(MAX_ROW_HEIGHT, Math.max(12, size)) : m.defaultRowHeight;
+      this.resizedRows.set(index, size);
+      this.customRows.add(index);
+      this.grown.delete(index);
+      this.growth.delete(index);
+    }
+    probe.remove();
+    this.layout();
+    this.schedule(true);
+  }
+
+  /** 표에 걸린 CSS zoom(표만 확대할 때 쓴다). 잰 크기를 시트 좌표로 되돌릴 때 쓴다. */
+  zoomScale() {
+    return Number.parseFloat(this.scroller.style.zoom) || 1;
   }
 
   moveResize(e) {
