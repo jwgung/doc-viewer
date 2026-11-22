@@ -5,10 +5,14 @@ import { chromium } from 'playwright';
 
 const source = new URL('../src/renderers/sheet-grid.js', import.meta.url);
 const css = new URL('../src/renderers/sheet.css', import.meta.url);
+// 앱과 같은 전역 규칙(overscroll-behavior 등)에서 표 안쪽 휠이 막히지 않는지 보려고 viewer.css도 함께 싣는다.
+const viewerCss = new URL('../src/viewer.css', import.meta.url);
 const server = createServer(async (req, res) => {
-  res.setHeader('Content-Type', req.url === '/grid.js' ? 'text/javascript' : req.url === '/grid.css' ? 'text/css' : 'text/html');
-  res.end(req.url === '/grid.js' ? await readFile(source) : req.url === '/grid.css' ? await readFile(css) : `<!doctype html><link rel="stylesheet" href="/grid.css"><style>
-    * { overscroll-behavior: none } body { margin: 0 } .sheet-body { width: 500px; height: 300px }
+  const files = { '/grid.js': [source, 'text/javascript'], '/grid.css': [css, 'text/css'], '/viewer.css': [viewerCss, 'text/css'] };
+  const file = files[req.url];
+  res.setHeader('Content-Type', file ? file[1] : 'text/html');
+  res.end(file ? await readFile(file[0]) : `<!doctype html><link rel="stylesheet" href="/viewer.css"><link rel="stylesheet" href="/grid.css"><style>
+    body { margin: 0 } .sheet-body { width: 500px; height: 300px }
   </style><div class="sheet-body"></div><script type="module">
     import { SheetGrid } from '/grid.js';
     const scroller = document.querySelector('.sheet-body');
